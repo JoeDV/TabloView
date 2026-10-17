@@ -2,6 +2,7 @@
 
 import os
 import re
+import sys
 import time
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
@@ -39,7 +40,8 @@ def direct_download_url(url: str) -> str:
 async def check_for_update(force: bool = False) -> Dict[str, Any]:
     """Return {'current', 'latest', 'update_available', 'download_url', 'notes', 'error'}.
     Results are cached for CHECK_EVERY_SECONDS; failures never raise."""
-    url = "" if IS_STORE else update_url()  # the Store updates its own installs
+    # The Store updates its own installs, and the published download is a Windows installer
+    url = "" if IS_STORE or sys.platform != "win32" else update_url()
     base: Dict[str, Any] = {"current": APP_VERSION, "latest": None, "update_available": False,
                             "download_url": None, "notes": None, "error": None, "enabled": bool(url),
                             "store": IS_STORE}

@@ -13,6 +13,10 @@ Your password goes only to Tablo's sign-in service and is never saved. TabloView
 
 To uninstall, use **Settings → Apps → Installed apps → TabloView**. Your sign-in and cache stay in `%LOCALAPPDATA%\TabloView`; delete that folder to remove them too.
 
+### Mac
+
+There's no Mac app yet; Mac users can run it from source with `start-mac.sh`. See [MAC.md](MAC.md).
+
 ### Using it from a phone or another PC
 
 By default only the computer running TabloView can open it. To allow other devices on your home network, go to **Device → Network access**. If Windows asks about the firewall, allow **Private networks** only. Anyone on that network can then control your Tablo, so leave it off on shared Wi-Fi.
