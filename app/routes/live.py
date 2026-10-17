@@ -165,6 +165,24 @@ class StopRequest(BaseModel):
     session_id: str
 
 
+_model_tuner_count: Dict[str, int] = {}
+
+
+async def model_tuner_count() -> Optional[int]:
+    """Antenna tuners per the device model (e.g. 4 for a QUAD), cached per device.
+    /server/tuners lists more slots than that (8 on a 4G QUAD), so it can't be counted directly."""
+    sid = tablo_manager.device.sid
+    if sid not in _model_tuner_count:
+        try:
+            resp = await tablo_manager.request_local("GET", "/server/info")
+            count = (resp.json().get("model") or {}).get("tuners") if resp.status_code == 200 else None
+            if isinstance(count, int) and count > 0:
+                _model_tuner_count[sid] = count
+        except Exception as e:
+            print(f"[LiveTV] Could not read model tuner count: {e}")
+    return _model_tuner_count.get(sid)
+
+
 @router.get("/tuners")
 async def get_tuner_status():
     """Check hardware tuner occupancy on the Tablo DVR."""
@@ -175,8 +193,8 @@ async def get_tuner_status():
         resp = await tablo_manager.request_local("GET", "/server/tuners")
         if resp.status_code == 200:
             tuners = resp.json()
-            total = len(tuners)
-            in_use = sum(1 for t in tuners if t.get("in_use"))
+            total = await model_tuner_count() or len(tuners)
+            in_use = min(sum(1 for t in tuners if t.get("in_use")), total)
             return {
                 "tuners": tuners,
                 "total": total,
