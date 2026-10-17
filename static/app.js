@@ -871,6 +871,11 @@ function episodeStatus(ep) {
   if (ep.recording_state === 'failed') {
     const mins = Math.round((ep.actual_duration || 0) / 60);
     const why = ep.recording_error && ep.recording_error.details === 'weak_signal' ? 'weak signal' : 'signal lost';
+    // A failed recording can also run past the show's end (the Tablo keeps retrying after losing signal):
+    // then nothing was cut short, but parts may be missing or glitchy
+    if (ep.duration && (ep.actual_duration || 0) >= ep.duration - 60) {
+      return `<span class="tag tag-warn" title="The Tablo lost the signal during this recording (${why}); parts may be missing or glitchy">Signal problems</span>`;
+    }
     return mins > 0
       ? `<span class="tag tag-warn" title="Recording stopped after ${mins} min (${why})">Partial · ${mins}m</span>`
       : `<span class="tag tag-rec" title="Recording failed (${why})">Failed</span>`;
