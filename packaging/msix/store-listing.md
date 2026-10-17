@@ -54,9 +54,7 @@ No violence, sexual content, profanity, gambling, purchases or user-generated sh
 4. Scheduled → Upcoming recordings
 
 ## Submission options → Notes for certification
-TabloView is a companion app for the Tablo 4th Gen over-the-air DVR. It needs a Tablo device on the same home network and the owner's Tablo account, so it cannot be fully tested without that hardware. Without a Tablo it starts, opens its sign-in page in the default browser, and shows a clear error if sign-in or device discovery fails.
+TabloView is a companion app for the Tablo 4th Gen over-the-air DVR and needs a Tablo device on the same home network plus the owner's Tablo account, so it can't be fully tested without that hardware. Without a Tablo, the app starts, puts an icon in the system tray, opens its sign-in page in the default browser (http://127.0.0.1:7070), and shows a clear message if sign-in or device discovery fails. Bundled FFmpeg converts recordings for in-browser playback and MP4 export. No data is sent to the developer. Privacy policy: https://gist.github.com/JoeDV/f9c8e1d0151ed3c5339b9a15d6bc0b1d
 
-How it works: TabloView.exe starts a local web server on 127.0.0.1 (port 7070 or the next free port), opens the app in the default browser, and puts an icon in the system tray (Open / Downloads folder / Quit). Bundled FFmpeg converts recordings for in-browser playback and MP4 export. No data is sent to the developer.
-
-## Restricted capability justification (runFullTrust)
-TabloView is a desktop (Win32) application packaged with MSIX. It runs a local web server, a system tray icon and a bundled FFmpeg process, so it needs full trust to run.
+## Restricted capability justification (runFullTrust; the box holds about 500 characters)
+TabloView is a classic Win32 desktop app (Python/PyInstaller) packaged as MSIX, so it needs full trust. It runs a local web server on 127.0.0.1 that the user opens in their browser, talks to the user's Tablo DVR on the home network, launches the bundled ffmpeg.exe to play and export recordings, and shows a system tray icon. No drivers, services or system changes; no self-updating; no data sent to the developer. Letting other devices on the home network open it is optional and off by default.
