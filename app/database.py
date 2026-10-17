@@ -561,6 +561,34 @@ def update_airing_schedule_states(states: Dict[str, str]):
         conn.commit()
 
 
+def get_upcoming_recordings(within_hours: Optional[float] = None) -> List[Dict[str, Any]]:
+    """Airings the Tablo plans to record that haven't finished yet, soonest first, with show art."""
+    query = """
+        SELECT ga.path, ga.series_path, ga.show_title, ga.episode_title, ga.season_number, ga.episode_number,
+               ga.air_datetime, ga.duration, ga.channel_call_sign, ga.channel_network, ga.qualifiers,
+               ga.is_new, ga.is_premiere, g.cover_url, g.backdrop_url, g.schedule_rule
+        FROM guide_airings ga
+        LEFT JOIN guide_shows g ON g.path = ga.series_path
+        WHERE ga.schedule_state = 'scheduled'
+          AND datetime(ga.air_datetime, '+' || ga.duration || ' seconds') > datetime('now')
+    """
+    params: List[Any] = []
+    if within_hours is not None:
+        query += " AND datetime(ga.air_datetime) < datetime('now', ?)"
+        params.append(f"+{float(within_hours)} hours")
+    query += " ORDER BY ga.air_datetime ASC, ga.show_title"
+    with get_connection() as conn:
+        rows = [dict(r) for r in conn.execute(query, params).fetchall()]
+    for r in rows:
+        try:
+            r["qualifiers"] = json.loads(r["qualifiers"]) if r["qualifiers"] else []
+        except ValueError:
+            r["qualifiers"] = []
+        r["is_new"] = bool(r["is_new"])
+        r["is_premiere"] = bool(r["is_premiere"])
+    return rows
+
+
 def get_guide_highlight_counts() -> Dict[str, int]:
     with get_connection() as conn:
         prime_row = conn.execute("""

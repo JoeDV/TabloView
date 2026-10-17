@@ -13,7 +13,9 @@ from ..database import (
     update_guide_show_schedule,
     get_guide_highlight_counts,
     update_airing_schedule_states,
+    get_upcoming_recordings,
 )
+from ..schedule_check import find_conflicts
 from ..tablo_client import tablo_manager
 from ..sync_service import sync_service, extract_image_url
 from .live import pick_logo
@@ -59,6 +61,18 @@ async def list_guide_shows(
         "highlights": highlight_counts,
         "shows": shows
     }
+
+
+@router.get("/upcoming")
+async def upcoming_recordings():
+    """Every airing the Tablo plans to record, soonest first, with times where more overlap than
+    there are tuners ('conflicts'). Built from the cached guide; no extra requests to the Tablo
+    beyond the (cached) tuner count."""
+    from .live import model_tuner_count
+    recordings = get_upcoming_recordings()
+    tuners = (await model_tuner_count()) if tablo_manager.is_authenticated else None
+    conflicts = find_conflicts(recordings, tuners) if tuners else []
+    return {"tuners": tuners, "count": len(recordings), "recordings": recordings, "conflicts": conflicts}
 
 
 @router.get("/highlights")

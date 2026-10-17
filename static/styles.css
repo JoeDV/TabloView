@@ -403,6 +403,22 @@ img { display: block; }
 .sched-row .thumb { width: 96px; height: 54px; }
 .sched-row .segmented, .sched-row .btn { justify-self: start; }
 
+/* ---------- Upcoming recordings & conflicts ---------- */
+.segmented.tabs a { color: var(--text-2); }
+.segmented.tabs a:hover { color: var(--text); }
+.segmented.tabs a.active { background: var(--surface-3); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,0.3); }
+.upcoming-row { grid-template-columns: 110px 72px minmax(0, 1fr) minmax(0, 170px) auto 70px; }
+.list-row.conflict { box-shadow: inset 3px 0 0 var(--warn); }
+.conflict-banner {
+  background: var(--warn-soft); border: 1px solid rgba(242, 184, 75, 0.35); border-radius: var(--radius-lg);
+  padding: 14px 18px; color: var(--text); margin-bottom: 8px;
+}
+.conflict-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.conflict-head svg, .conflict-head b { color: var(--warn); }
+.conflict-head .dim { color: var(--text-2); }
+.conflict-banner ul { margin: 10px 0 0 28px; color: var(--text-2); display: flex; flex-direction: column; gap: 4px; }
+.conflict-banner li b { color: var(--text); font-weight: 600; }
+
 /* ---------- Downloads & device ---------- */
 .dl-row { grid-template-columns: minmax(0, 1fr) 220px 110px auto; min-height: 72px; }
 .progress { height: 6px; background: var(--surface-3); border-radius: 6px; overflow: hidden; }
@@ -520,6 +536,19 @@ img { display: block; }
 .player-tools .btn { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.12); }
 .player-tools .btn:hover { background: rgba(255,255,255,0.16); }
 .player video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+/* Whole-recording timeline (the video's own timeline starts at 0 when resuming mid-show) */
+.player-timeline {
+  position: absolute; left: 18px; right: 18px; bottom: 64px; z-index: 2;
+  display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px;
+  background: rgba(10, 12, 16, 0.72); backdrop-filter: blur(6px); transition: opacity 0.3s;
+}
+.player.idle .player-timeline { opacity: 0; }
+.tl-time { font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--text-2); min-width: 54px; text-align: center; }
+.tl-track { position: relative; flex: 1; height: 8px; border-radius: 8px; background: rgba(255, 255, 255, 0.14); cursor: pointer; }
+.tl-avail { position: absolute; top: 0; bottom: 0; border-radius: 8px; background: rgba(255, 255, 255, 0.28); }
+.tl-played { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 8px; background: var(--accent); }
+.tl-played::after { content: ''; position: absolute; right: -6px; top: -3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; }
+.tl-hover { position: absolute; bottom: 16px; transform: translateX(-50%); padding: 3px 7px; border-radius: 6px; background: #000; font-size: 12px; white-space: nowrap; pointer-events: none; }
 
 .toasts { position: fixed; bottom: 24px; right: 24px; z-index: 200; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
 .toast {

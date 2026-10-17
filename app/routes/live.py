@@ -13,7 +13,8 @@ from pydantic import BaseModel
 
 from ..tablo_client import tablo_manager
 from ..transcode import transcode_manager
-from ..database import get_live_airings_for_channels, get_epg_schedule
+from ..database import get_live_airings_for_channels, get_epg_schedule, get_upcoming_recordings
+from ..schedule_check import live_tv_check
 from tablo_api import TabloClient, TabloAuth
 import tablo_api.client as tc
 
@@ -260,12 +261,19 @@ async def get_tuner_status():
         if resp.status_code == 200:
             tuners = resp.json()
             total = await model_tuner_count() or len(tuners)
-            in_use = sum(1 for t in tuners[:total] if t.get("in_use"))
+            ota = tuners[:total]
+            in_use = sum(1 for t in ota if t.get("in_use"))
+            # A closed live stream keeps its tuner busy for a while with no channel attached;
+            # the Tablo releases it on its own (we found no way to release it sooner)
+            held = sum(1 for t in ota if t.get("in_use") and not t.get("channel") and not t.get("recording"))
+            recording = sum(1 for t in ota if t.get("in_use") and t.get("recording"))
             streams_in_use = sum(1 for t in tuners[total:] if t.get("in_use"))
             return {
                 "tuners": tuners,
                 "total": total,
                 "in_use": in_use,
+                "held": held,
+                "recording": recording,
                 "available": total - in_use,
                 "streams_in_use": streams_in_use,
                 "streams_total": max(len(tuners) - total, 0),
@@ -373,6 +381,14 @@ async def get_live_channels(kind: str = Query("all", description="all, ota, fast
         "count": len(channels_result),
         "channels": channels_result
     }
+
+
+@router.get("/tune_check")
+async def tune_check():
+    """Before tuning an antenna channel: would it leave too few tuners for recordings starting soon?"""
+    status = await get_tuner_status()
+    return live_tv_check(get_upcoming_recordings(within_hours=2), status.get("total", 0),
+                         status.get("in_use", 0), status.get("held", 0))
 
 
 @router.get("/epg")

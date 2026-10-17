@@ -630,15 +630,17 @@ async function pickDevice(sid) {
 PAGES.home = async (r, token) => {
   paint(`<div class="page"><div class="page-head"><div><h1 class="page-title">Home</h1><div class="page-sub">&nbsp;</div></div></div>${skeletonGrid(5)}</div>`);
 
-  const [shows, sched, prem, prime, progress] = await Promise.allSettled([
+  const [shows, sched, prem, prime, progress, upcomingRes] = await Promise.allSettled([
     loadShows(),
     loadScheduled(),
     api('/api/guide/shows?highlight=premieres&sort=soonest&limit=24').then(r => cacheGuide(r.shows)),
     api('/api/guide/shows?highlight=primetime_new&sort=soonest&limit=30').then(r => cacheGuide(r.shows)),
     api('/api/episodes/in_progress').then(r => r.episodes || []),
+    loadUpcoming(),
   ]);
   if (stale(token)) return;
   state.inProgress = progress.value || [];
+  const homeConflicts = (upcomingRes.value && upcomingRes.value.conflicts) || [];
 
   const showList = shows.value || [];
   const schedList = sched.value || [];
@@ -646,6 +648,8 @@ PAGES.home = async (r, token) => {
   const unwatched = showList.reduce((n, s) => n + (s.unwatched_count || 0), 0);
 
   const parts = [];
+
+  if (homeConflicts.length) parts.push(`<section class="section">${conflictBanner(homeConflicts, { compact: true })}</section>`);
 
   if (state.inProgress.length) {
     parts.push(section({
@@ -671,31 +675,30 @@ PAGES.home = async (r, token) => {
     parts.push(section({ title: 'Recordings', body: emptyState('No recordings yet', 'Schedule a series from the guide and it will show up here.', '<a class="btn btn-primary" href="#/guide">Browse the guide</a>') }));
   }
 
-  // Up next: scheduled series airing within the next 48 hours
+  // Recordings the Tablo will actually make in the next 48 hours (not just each series' next airing,
+  // which may be a rerun it won't record)
   const horizon = Date.now() + 48 * 3600 * 1000;
-  const upNext = schedList
-    .filter(g => g.next_airing && g.next_airing.datetime && new Date(g.next_airing.datetime).getTime() < horizon)
-    .sort((a, b) => a.next_airing.datetime.localeCompare(b.next_airing.datetime))
-    .slice(0, 8);
+  const upcoming = (upcomingRes.value && upcomingRes.value.recordings) || [];
+  const upNext = upcoming.filter(a => new Date(a.air_datetime).getTime() < horizon).slice(0, 8);
   if (upNext.length) {
     parts.push(section({
-      title: 'Coming up on your schedule',
+      title: 'Recording soon',
       sub: 'Next 48 hours',
-      link: '#/scheduled',
-      body: `<div class="list">${upNext.map(g => {
-        const n = g.next_airing;
-        const se = fmt.se(n.season_number, n.episode_number);
-        const startsSoon = new Date(n.datetime).getTime() <= Date.now();
+      link: '#/scheduled?view=upcoming',
+      body: `<div class="list">${upNext.map(a => {
+        const se = fmt.se(a.season_number, a.episode_number);
+        const onNow = new Date(a.air_datetime).getTime() <= Date.now();
+        const art = imgUrl(a.cover_url || a.backdrop_url);
         return `
-          <div class="list-row upnext-row clickable" data-action="open-series" data-path="${esc(g.path)}">
-            <div class="upnext-when">${startsSoon ? '<span class="tag tag-live">ON NOW</span>' : esc(fmt.time(n.datetime))}<span class="dim">${esc(fmt.dayLabel(n.datetime))}</span></div>
-            ${imgUrl(g.cover_url || g.backdrop_url) ? `<img class="thumb" src="${esc(imgUrl(g.cover_url || g.backdrop_url))}" alt="" loading="lazy">` : '<div class="thumb"></div>'}
+          <div class="list-row upnext-row clickable ${a.conflict ? 'conflict' : ''}" data-action="open-series" data-path="${esc(a.series_path)}">
+            <div class="upnext-when">${onNow ? '<span class="tag tag-rec-live"><span class="rec-pulse"></span>REC</span>' : esc(fmt.time(a.air_datetime))}<span class="dim">${esc(fmt.dayLabel(a.air_datetime))}</span></div>
+            ${art ? `<img class="thumb" src="${esc(art)}" alt="" loading="lazy">` : '<div class="thumb"></div>'}
             <div style="min-width:0">
-              <div class="row-title">${esc(g.title)}</div>
-              <div class="row-sub">${se ? `${se} · ` : ''}${esc(n.title || '')}</div>
+              <div class="row-title">${esc(a.show_title)}</div>
+              <div class="row-sub">${se ? `${se} · ` : ''}${esc(a.episode_title || '')}</div>
             </div>
-            <div class="row-sub upnext-ch">${esc(n.network || '')}${n.call_sign ? ` · ${esc(n.call_sign)}` : ''}</div>
-            <span class="tag tag-rec">${g.schedule_rule === 'all' ? 'All episodes' : 'New episodes'}</span>
+            <div class="row-sub upnext-ch">${esc(a.channel_network || '')}${a.channel_call_sign ? ` · ${esc(a.channel_call_sign)}` : ''}</div>
+            ${a.conflict ? '<span class="tag tag-warn">Conflict</span>' : (a.is_new ? '<span class="tag tag-new">NEW</span>' : '<span></span>')}
           </div>`;
       }).join('')}</div>`,
     }));
@@ -1273,21 +1276,86 @@ async function syncGuide() {
 // ---------------------------------------------------------------------------
 PAGES.scheduled = async (r, token) => {
   const S = state.scheduled;
+  const upcomingView = r.query.get('view') === 'upcoming';
+  const tab = (href, label, active, id) => `<a href="${href}" class="${active ? 'active' : ''}" style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 12px;border-radius:7px;font-weight:500;font-size:13px">${label}<span class="count" id="${id}"></span></a>`;
   paint(`<div class="page">
     <div class="page-head">
-      <div><h1 class="page-title">Scheduled</h1><div class="page-sub">Series your Tablo records automatically</div></div>
+      <div><h1 class="page-title">Scheduled</h1><div class="page-sub">${upcomingView ? 'Every recording your Tablo plans to make over the next two weeks' : 'Series your Tablo records automatically'}</div></div>
       <div class="page-head-actions"><button class="btn btn-ghost btn-sm" data-action="sync-guide">${icon('refresh', 15)}Refresh from Tablo</button></div>
     </div>
     <div class="toolbar">
-      <div class="input-search">${icon('search', 15)}<input class="input" data-input="scheduled-q" placeholder="Filter scheduled series" value="${esc(S.q)}"></div>
-      <div class="segmented" id="schedFilters"></div>
+      <div class="segmented tabs">${tab('#/scheduled', 'Series', !upcomingView, 'tabSeriesCount')}${tab('#/scheduled?view=upcoming', 'Upcoming recordings', upcomingView, 'tabUpcomingCount')}</div>
+      ${upcomingView ? '' : `<div class="input-search">${icon('search', 15)}<input class="input" data-input="scheduled-q" placeholder="Filter scheduled series" value="${esc(S.q)}"></div>
+      <div class="segmented" id="schedFilters"></div>`}
     </div>
     <div id="schedList"><div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>
   </div>`);
-  await loadScheduled(true);
+  const [, upcoming] = await Promise.all([loadScheduled(true), loadUpcoming()]);
   if (stale(token)) return;
-  renderScheduledList();
+  $('#tabSeriesCount').textContent = S.items.length;
+  $('#tabUpcomingCount').textContent = upcoming ? upcoming.count : '';
+  if (upcomingView) renderUpcomingList();
+  else renderScheduledList();
 };
+
+async function loadUpcoming() {
+  try {
+    state.upcoming = await api('/api/guide/upcoming');
+  } catch {
+    state.upcoming = null;
+  }
+  return state.upcoming;
+}
+
+function conflictBanner(conflicts, { compact = false } = {}) {
+  if (!conflicts || !conflicts.length) return '';
+  const items = conflicts.map(c =>
+    `<li><b>${esc(fmt.dayLabel(c.start))} ${esc(fmt.time(c.start))}–${esc(fmt.time(c.end))}</b>: ${c.count} recordings at once with ${c.tuners} tuners (${esc(c.titles.join(', '))})</li>`).join('');
+  return `<div class="conflict-banner">
+    <div class="conflict-head">${icon('alert', 18)}<b>${plural(conflicts.length, 'recording conflict')}</b>
+      <span class="dim">One of the overlapping shows won't record. Cancel one, or record it from another airing.</span>
+      ${compact ? '<a class="btn btn-sm" href="#/scheduled?view=upcoming" style="margin-left:auto">Review</a>' : ''}</div>
+    ${compact ? '' : `<ul>${items}</ul>`}
+  </div>`;
+}
+
+function renderUpcomingList() {
+  const box = $('#schedList');
+  const u = state.upcoming;
+  if (!box) return;
+  if (!u) { box.innerHTML = errorState(new Error("Couldn't load upcoming recordings")); hydrateIcons(box); return; }
+  if (!u.recordings.length) {
+    box.innerHTML = emptyState('Nothing set to record', 'Choose Record on a show in the guide and its airings appear here.', '<a class="btn btn-primary" href="#/guide">Browse the guide</a>');
+    return;
+  }
+  const byDay = {};
+  u.recordings.forEach(a => { (byDay[fmt.dayLabel(a.air_datetime)] = byDay[fmt.dayLabel(a.air_datetime)] || []).push(a); });
+  box.innerHTML = conflictBanner(u.conflicts) + Object.entries(byDay).map(([day, list]) => `
+    <div class="section-head" style="margin:22px 0 10px"><h2 class="section-title">${esc(day)}</h2><span class="section-sub">${plural(list.length, 'recording')}</span></div>
+    <div class="list">${list.map(upcomingRow).join('')}</div>`).join('');
+  hydrateIcons(box);
+}
+
+function upcomingRow(a) {
+  const end = new Date(new Date(a.air_datetime).getTime() + (a.duration || 0) * 1000).toISOString();
+  const onNow = new Date(a.air_datetime).getTime() <= Date.now();
+  const se = fmt.se(a.season_number, a.episode_number);
+  const art = imgUrl(a.cover_url || a.backdrop_url);
+  return `
+    <div class="list-row upcoming-row clickable ${a.conflict ? 'conflict' : ''}" data-action="open-series" data-path="${esc(a.series_path)}">
+      <div class="upnext-when">${onNow ? '<span class="tag tag-rec-live"><span class="rec-pulse"></span>REC</span>' : esc(fmt.time(a.air_datetime))}<span class="dim">until ${esc(fmt.time(end))}</span></div>
+      ${art ? `<img class="thumb" src="${esc(art)}" alt="" loading="lazy">` : '<div class="thumb"></div>'}
+      <div style="min-width:0">
+        <div class="row-title">${esc(a.show_title)}</div>
+        <div class="row-sub">${se ? `${se} · ` : ''}${esc(a.episode_title || '')}</div>
+      </div>
+      <div class="row-sub">${esc(a.channel_network || '')}${a.channel_call_sign ? ` · ${esc(a.channel_call_sign)}` : ''}</div>
+      <div class="hero-kicker" style="margin:0;flex-wrap:nowrap">
+        ${a.conflict ? '<span class="tag tag-warn">Conflict</span>' : ''}${a.is_premiere ? '<span class="tag tag-premiere">PREMIERE</span>' : ''}${a.is_new ? '<span class="tag tag-new">NEW</span>' : ''}
+      </div>
+      ${onNow ? '<span></span>' : `<button class="btn btn-sm" data-action="cancel-recording" data-path="${esc(a.path)}" data-title="${esc(a.show_title)}">Skip</button>`}
+    </div>`;
+}
 
 function renderScheduledList() {
   const S = state.scheduled;
@@ -1464,7 +1532,7 @@ function renderEpg(scrollToNow = false) {
     if (num && name.startsWith(num)) name = name.slice(num.length).trim();
     const sub = [c.network && c.network.toLowerCase() !== name.toLowerCase() ? c.network : '', c.resolution].filter(Boolean).join(' · ');
     return `<div class="epg-row">
-      <div class="epg-ch" style="width:${EPG.CH_W}px" data-action="watch-live" data-id="${esc(c.channel_id)}" data-name="${esc(name)}" title="Watch ${esc(name)} live">
+      <div class="epg-ch" style="width:${EPG.CH_W}px" data-action="watch-live" data-id="${esc(c.channel_id)}" data-name="${esc(name)}" data-kind="${esc(c.kind)}" title="Watch ${esc(name)} live">
         ${c.logo_url ? `<img class="epg-ch-logo" src="${esc(c.logo_url)}" alt="" loading="lazy">` : `<div class="epg-ch-logo-fallback">${esc((c.call_sign || 'TV').slice(0, 6))}</div>`}
         <div class="epg-ch-info"><div class="epg-ch-num">${num ? `<b>${esc(num)}</b>` : ''}${esc(name)}</div>${sub ? `<div class="epg-ch-sub">${esc(sub)}</div>` : ''}</div>
         <span class="icon-btn play">${icon('play', 12)}</span>
@@ -1534,7 +1602,7 @@ async function checkTuners() {
     const t = await api('/api/live/tuners');
     const pill = $('#tunerPill'), text = $('#tunerText');
     if (!pill) return;
-    const total = t.total || 0, used = t.in_use || 0;
+    const total = t.total || 0, used = t.in_use || 0, held = t.held || 0, rec = t.recording || 0;
     const streams = t.streams_in_use || 0, streamsTotal = t.streams_total || 0;
     pill.classList.toggle('busy', used > 0 || streams > 0);
     if (!total) {
@@ -1542,9 +1610,12 @@ async function checkTuners() {
       pill.title = "Couldn't read tuner status from the Tablo";
       return;
     }
-    text.textContent = `OTA ${used}/${total}` + (streamsTotal ? ` · Stream ${streams}/${streamsTotal}` : '');
-    pill.title = `Antenna (OTA) tuners in use: ${used} of ${total} (recordings and live TV)` +
-      (streamsTotal ? `\nStreaming slots in use: ${streams} of ${streamsTotal} (FAST channels; these don't use the antenna)` : '');
+    text.textContent = `OTA ${used}/${total}` + (held ? ` · ${held} releasing` : '') + (streamsTotal ? ` · Stream ${streams}/${streamsTotal}` : '');
+    pill.title = [
+      `Antenna (OTA) tuners in use: ${used} of ${total}` + (rec ? ` (${rec} recording)` : ''),
+      held ? `${held} still held from live TV you closed recently; the Tablo frees these on its own, usually within 10 to 30 minutes` : '',
+      streamsTotal ? `Streaming slots in use: ${streams} of ${streamsTotal} (FAST channels; these don't use the antenna)` : '',
+    ].filter(Boolean).join('\n');
   } catch { /* optional */ }
 }
 
@@ -1575,7 +1646,7 @@ function openAiringModal(key) {
     <div class="dialog-foot">
       ${a.series_path ? `<button class="btn" data-action="modal-series" data-path="${esc(a.series_path)}">Series &amp; recording</button>` : ''}
       <button class="btn" data-action="modal-live-vlc" data-id="${esc(c.channel_id)}">${icon('external', 15)}VLC</button>
-      <button class="btn btn-primary" data-action="modal-watch-live" data-id="${esc(c.channel_id)}" data-name="${esc(c.name)}" data-autofocus>${icon('play', 14)}Watch ${esc(c.name)}</button>
+      <button class="btn btn-primary" data-action="modal-watch-live" data-id="${esc(c.channel_id)}" data-name="${esc(c.name)}" data-kind="${esc(c.kind)}" data-autofocus>${icon('play', 14)}Watch ${esc(c.name)}</button>
     </div>`);
 }
 
@@ -1770,6 +1841,7 @@ const player = {
   },
 
   // mode: undefined = ask if there's a resume point, 'resume', or 'start' (from the beginning)
+  // mode may also be a number: start at that many seconds (used by the timeline to jump)
   async playEpisode(id, mode) {
     const ep = findEpisode(id);
     const resumable = ep && ep.status !== 'Watched' && (ep.position || 0) > 30;
@@ -1777,7 +1849,7 @@ const player = {
       mode = await chooseResume(ep);
       if (!mode) return;
     }
-    const start = resumable && mode === 'resume' ? ep.position : 0;
+    const start = typeof mode === 'number' ? Math.max(0, Math.floor(mode)) : (resumable && mode === 'resume' ? ep.position : 0);
     const showTitle = ep ? ep.show_title || (state.show && state.show.title) || '' : '';
     const se = ep ? fmt.se(ep.season_number, ep.episode_number) : '';
     const title = ep ? [showTitle, se, episodeTitle(ep)].filter(Boolean).join(' · ') : 'Recording';
@@ -1785,9 +1857,11 @@ const player = {
     this.finishEpisode();
     this.stopStream();
     Object.assign(state.stream, {
-      episodeId: id, channelId: null, offset: start, duration: ep ? ep.duration || 0 : 0,
+      episodeId: id, channelId: null, offset: start,
+      duration: ep ? ep.actual_duration || ep.duration || 0 : 0,
       lastSaved: start, markedWatched: false,
     });
+    this.showTimeline(true);
     this.open(title);
     this.setStatus(`<span class="wait">${start ? `Resuming at ${fmtClock(start)}…` : 'Starting stream…'}</span>`);
     try {
@@ -1797,6 +1871,50 @@ const player = {
       state.stream.progressTimer = setInterval(() => this.saveProgress(), 30000);
     } catch (err) {
       this.setStatus(`<span style="color:var(--rec)">Couldn't start playback: ${esc(err.message)}. Try “Open in VLC”.</span>`);
+    }
+  },
+
+  // --- Whole-recording timeline ---
+  showTimeline(on) {
+    $('#playerTimeline').classList.toggle('hidden', !on || !state.stream.duration);
+    clearInterval(state.stream.timelineTimer);
+    state.stream.timelineTimer = on ? setInterval(() => this.updateTimeline(), 500) : null;
+    if (on) this.updateTimeline();
+  },
+
+  // Seconds of the recording already converted and playable without restarting
+  availableEnd() {
+    const v = this.video();
+    let end = 0;
+    if (v.seekable && v.seekable.length) end = v.seekable.end(v.seekable.length - 1);
+    if (v.buffered && v.buffered.length) end = Math.max(end, v.buffered.end(v.buffered.length - 1));
+    return (state.stream.offset || 0) + (isFinite(end) ? end : 0);
+  },
+
+  updateTimeline() {
+    const s = state.stream, dur = s.duration;
+    if (!dur || !s.episodeId) return;
+    const pct = x => `${Math.min(100, Math.max(0, (x / dur) * 100))}%`;
+    const pos = this.position();
+    $('#tlNow').textContent = fmtClock(pos);
+    $('#tlTotal').textContent = fmtClock(dur);
+    $('#tlPlayed').style.width = pct(pos);
+    const avail = $('#tlAvail');
+    avail.style.left = pct(s.offset || 0);
+    avail.style.width = `calc(${pct(this.availableEnd())} - ${pct(s.offset || 0)})`;
+  },
+
+  // Jump within what's converted; anywhere else restarts conversion at that point
+  seekTo(target) {
+    const s = state.stream;
+    if (!s.episodeId) return;
+    target = Math.max(0, Math.min(target, (s.duration || target) - 5));
+    if (target >= (s.offset || 0) && target <= this.availableEnd() - 3) {
+      this.video().currentTime = target - (s.offset || 0);
+      this.updateTimeline();
+    } else {
+      this.setStatus(`<span class="wait">Jumping to ${fmtClock(target)}…</span>`);
+      this.playEpisode(s.episodeId, target);
     }
   },
 
@@ -1916,6 +2034,7 @@ const player = {
     if (state.stream.episodeId) this.saveProgress({ final: true });
     clearInterval(state.stream.progressTimer);
     state.stream.progressTimer = null;
+    this.showTimeline(false);
   },
 
   close() {
@@ -2027,6 +2146,30 @@ function rerenderAfterProgress() {
   }
 }
 
+// Antenna channels use a tuner the Tablo keeps for a while after you stop watching. Before tuning,
+// warn if that would leave too few tuners for recordings starting soon (or none are free).
+async function watchLiveChecked(channelId, name, kind) {
+  if (kind === 'ota') {
+    let c = null;
+    try { c = await api('/api/live/tune_check'); } catch { /* don't block watching on a failed check */ }
+    if (c && (c.warn || c.no_free_tuner)) {
+      const heldNote = c.held ? ` (${c.held} still held from live TV closed recently; the Tablo frees those on its own)` : '';
+      let text;
+      if (c.no_free_tuner) {
+        text = `All ${c.total} antenna tuners are busy${heldNote}. Tuning may fail until one frees up.`;
+      } else {
+        const first = c.recordings_soon[0];
+        const others = c.recordings_soon.length - 1;
+        text = `${first.title}${others > 0 ? ` and ${plural(others, 'other recording')}` : ''} will start recording at ${fmt.time(first.start)}. ` +
+          `Watching ${name} now would leave ${plural(c.free_after_tuning, 'free tuner')}${heldNote}, so ${others > 0 ? 'some recordings' : 'the recording'} could fail.`;
+      }
+      const ok = await confirmDialog({ title: 'Not enough tuners', text, confirm: 'Watch anyway', danger: true });
+      if (!ok) return;
+    }
+  }
+  player.watchLive(channelId, name);
+}
+
 function openVlc(url) {
   window.location.href = url;
   toast('Downloaded a .m3u playlist. Open it with VLC to play.');
@@ -2126,6 +2269,27 @@ const ACTIONS = {
     if (await confirmDialog({ title: `Stop recording ${g.title || 'this series'}?`, text: 'Existing recordings are kept. Future episodes won’t be recorded.', confirm: 'Stop recording', danger: true })) setRule(el.dataset.path, 'none');
   },
   'toggle-airing': el => toggleAiring(el),
+  'cancel-recording': async el => {
+    const ok = await confirmDialog({
+      title: `Skip this recording of ${el.dataset.title}?`,
+      text: 'Only this airing is skipped. The series stays scheduled.',
+      confirm: 'Skip recording', danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api('/api/guide/episodes/schedule', { method: 'POST', body: JSON.stringify({ path: el.dataset.path, scheduled: false }) });
+      toast('Recording skipped', 'success');
+      await loadUpcoming();
+      if (parseRoute().name === 'scheduled') {
+        $('#tabUpcomingCount').textContent = state.upcoming ? state.upcoming.count : '';
+        const scroll = view().scrollTop;
+        renderUpcomingList();
+        view().scrollTop = scroll;
+      }
+    } catch (err) {
+      toast(`Couldn't skip it: ${err.message}`, 'error');
+    }
+  },
   'sync-guide': () => syncGuide(),
   'guide-highlight': el => { state.guide.highlight = el.dataset.value; state.guide.sort = el.dataset.value ? 'soonest' : 'primetime'; const s = $('[data-change="guide-sort"]'); if (s) s.value = state.guide.sort; loadGuide(routeToken); },
   'guide-more': el => { el.disabled = true; loadGuide(routeToken, true); },
@@ -2136,13 +2300,13 @@ const ACTIONS = {
   'epg-shift': el => { state.epgOffset += Number(el.dataset.dir) * 3; $$('[data-action="epg-now"]').forEach(b => b.classList.toggle('active', state.epgOffset === 0)); loadEpg(routeToken, true); },
   'epg-now': el => { state.epgOffset = 0; el.classList.add('active'); loadEpg(routeToken, true); },
   'epg-cell': el => openAiringModal(el.dataset.key),
-  'watch-live': el => player.watchLive(el.dataset.id, el.dataset.name),
+  'watch-live': el => watchLiveChecked(el.dataset.id, el.dataset.name, el.dataset.kind),
 
   'modal-ok': () => closeModal(true),
   'modal-value': el => closeModal(el.dataset.value),
   'mark-show-watched': el => markShowWatched(el.dataset.value !== 'false'),
   'modal-cancel': () => closeModal(false),
-  'modal-watch-live': el => { closeModal(false); player.watchLive(el.dataset.id, el.dataset.name); },
+  'modal-watch-live': el => { closeModal(false); watchLiveChecked(el.dataset.id, el.dataset.name, el.dataset.kind); },
   'modal-live-vlc': el => { closeModal(false); openVlc(`/api/live/vlc/${encodeURIComponent(el.dataset.id)}`); setTimeout(checkTuners, 2500); },
   'modal-series': el => { closeModal(false); location.hash = `#/series/${encodeURIComponent(el.dataset.path)}`; },
 
@@ -2332,6 +2496,20 @@ function wireEvents() {
   });
 
   $('#player').addEventListener('mousemove', () => player.wake());
+
+  const track = $('#tlTrack');
+  const timeAt = e => {
+    const r = track.getBoundingClientRect();
+    return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * (state.stream.duration || 0);
+  };
+  track.addEventListener('click', e => player.seekTo(timeAt(e)));
+  track.addEventListener('mousemove', e => {
+    const hover = $('#tlHover');
+    hover.textContent = fmtClock(timeAt(e));
+    hover.style.left = `${e.clientX - track.getBoundingClientRect().left}px`;
+    hover.classList.remove('hidden');
+  });
+  track.addEventListener('mouseleave', () => $('#tlHover').classList.add('hidden'));
   $('#bufferSelect').addEventListener('change', e => { state.bufferTarget = parseInt(e.target.value, 10) || 8; save('tablo_buffer_target', state.bufferTarget); });
 
   window.addEventListener('hashchange', route);
