@@ -376,7 +376,8 @@ class LibrarySyncService:
                                         "qualifiers": qual,
                                         "is_new": is_new,
                                         "is_primetime": is_primetime,
-                                        "is_premiere": is_premiere
+                                        "is_premiere": is_premiere,
+                                        "schedule_state": (d.get('schedule') or {}).get('state') or 'none',
                                     }
                             except Exception:
                                 pass

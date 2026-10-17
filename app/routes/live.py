@@ -91,7 +91,7 @@ async def fetch_local_ota_map() -> Dict[str, Dict[str, Any]]:
                 try:
                     r_ch = await tablo_manager.request_local("GET", p)
                     if r_ch.status_code == 200:
-                        return r_ch.json()
+                        return {"path": p, **r_ch.json()}
                 except Exception as e:
                     print(f"[LiveTV] Notice fetching local channel {p}: {e}")
                 return None
@@ -99,7 +99,8 @@ async def fetch_local_ota_map() -> Dict[str, Dict[str, Any]]:
         for c_data in await asyncio.gather(*[fetch_channel(p) for p in resp.json()]):
             if not c_data:
                 continue
-            c_info = c_data.get("channel", {})
+            # Keep the device path (e.g. /guide/channels/17182): tuners report busy channels by path
+            c_info = {**c_data.get("channel", {}), "_path": c_data["path"]}
             ident = c_info.get("channel_identifier") or str(c_data.get("object_id"))
             local_ota_map[ident] = c_info
     except Exception as e:
@@ -114,6 +115,30 @@ async def fetch_cloud_channels(client: TabloClient, include_ott: bool) -> list:
     except Exception as e:
         print(f"[LiveTV] Error fetching cloud channels: {e}")
         return []
+
+
+async def recording_channel_identifiers(local_ota_map: Dict[str, Dict[str, Any]]) -> set:
+    """Channel identifiers the Tablo is recording from right now (read live from its tuners)."""
+    try:
+        resp = await tablo_manager.request_local("GET", "/server/tuners")
+        if resp.status_code != 200:
+            return set()
+        busy_paths = {t.get("channel") for t in resp.json() if t.get("in_use") and t.get("recording") and t.get("channel")}
+    except Exception as e:
+        print(f"[LiveTV] Couldn't read tuners for recording badges: {e}")
+        return set()
+    return {ident for ident, info in local_ota_map.items() if info.get("_path") in busy_paths}
+
+
+def mark_recording_now(airings: List[Dict[str, Any]], now_utc: datetime):
+    """Flag the airing on air right now on a channel that a tuner is recording."""
+    for a in airings:
+        try:
+            start = datetime.fromisoformat(str(a["air_datetime"]).replace("Z", "+00:00"))
+            if start <= now_utc < start + timedelta(seconds=a.get("duration") or 0):
+                a["recording_now"] = True
+        except (KeyError, ValueError, TypeError):
+            continue
 
 
 def pick_logo(logos: List[Dict[str, Any]]) -> Optional[str]:
@@ -343,6 +368,9 @@ async def get_live_epg(
         fetch_cloud_channels(client, include_ott)
     )
 
+    recording_now = await recording_channel_identifiers(local_ota_map)
+    now_utc = datetime.now(timezone.utc)
+
     channel_rows: List[Dict[str, Any]] = []
     for ch in raw_channels:
         if kind == "ota" and ch.kind != "ota":
@@ -361,6 +389,9 @@ async def get_live_epg(
 
         if matched_airings:
             c_dict["airings"] = matched_airings
+            if ch.identifier in recording_now:
+                c_dict["recording_now"] = True
+                mark_recording_now(matched_airings, now_utc)
         elif ch.identifier in cloud_grid_by_id:
             # Extract FAST channel airings from cloud grid that overlap the window
             cloud_airings: List[Dict[str, Any]] = []

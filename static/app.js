@@ -1251,7 +1251,7 @@ PAGES.live = async (r, token) => {
       </div>
       <span class="muted" id="epgDate"></span>
       <div class="grow"></div>
-      <div class="input-search">${icon('search', 15)}<input class="input" data-input="epg-q" placeholder="Find a channel or show" value="${esc(state.epgQuery)}" style="width:200px"></div>
+      <div class="input-search live-search">${icon('search', 15)}<input class="input" data-input="epg-q" placeholder="Find a channel or show" value="${esc(state.epgQuery)}"></div>
       <span class="tuner-pill" id="tunerPill" title="Tablo tuners"><span class="dot"></span><span id="tunerText">Tuners</span></span>
       <span class="clock" id="epgClock"></span>
     </div>
@@ -1321,7 +1321,7 @@ function renderEpg(scrollToNow = false) {
   const now = Date.now();
 
   const dateEl = $('#epgDate');
-  if (dateEl) dateEl.textContent = state.epgOffset ? `${fmt.dayLabel(window_start)} ${fmt.time(window_start)}–${fmt.time(window_end)}` : '';
+  if (dateEl) dateEl.textContent = state.epgOffset ? `${fmt.dayLabel(window_start)} · ${fmt.time(window_start)}` : '';
 
   const list = channels.filter(epgFilter);
   if (!list.length) {
@@ -1342,10 +1342,11 @@ function renderEpg(scrollToNow = false) {
       const width = Math.max(44, Math.round(((e - s) / 60000) * EPG.PPM) - 4);
       const onAir = start <= now && now < end;
       const se = fmt.se(a.season_number, a.episode_number);
-      return `<div class="epg-cell ${onAir ? 'on-air' : ''}" style="left:${left + 2}px;width:${width}px" data-left="${left}" data-width="${width}" data-action="epg-cell" data-key="${key}" title="${esc(a.title)}">
+      const rec = recordBadge(a, onAir);
+      return `<div class="epg-cell ${onAir ? 'on-air' : ''} ${rec.cls}" style="left:${left + 2}px;width:${width}px" data-left="${left}" data-width="${width}" data-action="epg-cell" data-key="${key}" title="${esc(a.title)}${rec.title}">
         <div class="epg-cell-inner">
           <div class="epg-cell-title">${esc(a.title)}</div>
-          <div class="epg-cell-sub">${a.is_new ? '<span class="tag tag-new">NEW</span>' : ''}${a.is_premiere ? '<span class="tag tag-premiere">PREMIERE</span>' : ''}<span>${esc(fmt.time(a.air_datetime))}${se ? ` · ${se}` : ''}${a.episode_title ? ` · ${esc(a.episode_title)}` : ''}</span></div>
+          <div class="epg-cell-sub">${rec.html}${a.is_new ? '<span class="tag tag-new">NEW</span>' : ''}${a.is_premiere ? '<span class="tag tag-premiere">PREMIERE</span>' : ''}<span>${esc(fmt.time(a.air_datetime))}${se ? ` · ${se}` : ''}${a.episode_title ? ` · ${esc(a.episode_title)}` : ''}</span></div>
         </div>
       </div>`;
     }).join('');
@@ -1383,6 +1384,17 @@ function renderEpg(scrollToNow = false) {
     scroll.scrollLeft = Math.max(0, nowLeft - 120);
   }
   stickEpgTitles();
+}
+
+// Recording badges: "REC" while a tuner is recording it right now, "Rec" for airings set to record
+function recordBadge(a, onAir) {
+  if (a.recording_now) {
+    return { cls: 'recording', title: ' (recording now)', html: '<span class="tag tag-rec-live"><span class="rec-pulse"></span>REC</span>' };
+  }
+  if (a.schedule_state === 'scheduled' && !onAir) {
+    return { cls: 'scheduled', title: ' (set to record)', html: '<span class="tag tag-rec-sched">● Rec</span>' };
+  }
+  return { cls: '', title: '', html: '' };
 }
 
 function positionNowLine() {
@@ -1445,6 +1457,7 @@ function openAiringModal(key) {
       ${a.episode_title || se ? `<div style="margin-top:4px;font-weight:500">${se ? `<span class="dim">${se}</span> ` : ''}${esc(a.episode_title || '')}</div>` : ''}
       <div class="hero-kicker" style="margin-top:12px">
         ${onAir ? '<span class="tag tag-live">ON NOW</span>' : ''}
+        ${a.recording_now ? '<span class="tag tag-rec-live"><span class="rec-pulse"></span>RECORDING NOW</span>' : (a.schedule_state === 'scheduled' ? '<span class="tag tag-rec-sched">● Set to record</span>' : '')}
         <span class="tag">${esc(fmt.dayLabel(a.air_datetime))} ${esc(fmt.time(a.air_datetime))}–${esc(fmt.time(end))}</span>
         <span class="tag">${esc(fmt.dur(a.duration))}</span>
         ${a.is_new ? '<span class="tag tag-new">NEW</span>' : ''}${a.is_premiere ? '<span class="tag tag-premiere">PREMIERE</span>' : ''}

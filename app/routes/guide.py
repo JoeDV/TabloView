@@ -12,6 +12,7 @@ from ..database import (
     get_guide_show_by_path,
     update_guide_show_schedule,
     get_guide_highlight_counts,
+    update_airing_schedule_states,
 )
 from ..tablo_client import tablo_manager
 from ..sync_service import sync_service, extract_image_url
@@ -104,6 +105,29 @@ async def get_guide_series_details(path: str = Query(..., description="Guide ser
     return show
 
 
+async def refresh_series_airing_states(series_path: str, delay: float = 2.0):
+    """After a series rule change the Tablo re-plans its schedule; re-read the record status of
+    that series' upcoming airings so the Live TV grid badges are right without a full guide sync."""
+    await asyncio.sleep(delay)
+    try:
+        resp = await tablo_manager.request_local("GET", f"{series_path}/episodes")
+        if resp.status_code != 200 or not isinstance(resp.json(), list):
+            return
+        sem = asyncio.Semaphore(15)
+
+        async def read_state(p: str):
+            async with sem:
+                r = await tablo_manager.request_local("GET", p)
+                if r.status_code == 200:
+                    return p, (r.json().get("schedule") or {}).get("state") or "none"
+            return None
+
+        results = await asyncio.gather(*[read_state(p) for p in resp.json()], return_exceptions=True)
+        update_airing_schedule_states(dict(x for x in results if isinstance(x, tuple)))
+    except Exception as e:
+        print(f"[Guide] Couldn't refresh record status for {series_path}: {e}")
+
+
 @router.post("/series/schedule")
 async def set_series_schedule(payload: SeriesScheduleRequest):
     """Set or cancel series recording schedule rule ('new', 'all', or 'none')."""
@@ -131,8 +155,9 @@ async def set_series_schedule(payload: SeriesScheduleRequest):
                 detail=f"Tablo error: {resp.text[:120]}"
             )
 
-        # Update local SQLite cache
+        # Update local SQLite cache, then re-read which airings the Tablo now plans to record
         update_guide_show_schedule(path, rule)
+        asyncio.create_task(refresh_series_airing_states(path))
         updated = get_guide_show_by_path(path)
 
         return {
@@ -255,6 +280,7 @@ async def set_episode_schedule(payload: EpisodeScheduleRequest):
                 status_code=resp.status_code,
                 detail=f"Tablo error: {resp.text[:120]}"
             )
+        update_airing_schedule_states({path: "scheduled" if payload.scheduled else "none"})
         return {
             "success": True,
             "path": path,

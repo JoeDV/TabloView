@@ -125,6 +125,11 @@ def init_db():
             )
         """)
 
+        # Columns added after the first release (CREATE TABLE IF NOT EXISTS won't add them)
+        ga_cols = {r[1] for r in cursor.execute("PRAGMA table_info(guide_airings)").fetchall()}
+        if "schedule_state" not in ga_cols:
+            cursor.execute("ALTER TABLE guide_airings ADD COLUMN schedule_state TEXT DEFAULT 'none'")
+
         # Indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_episodes_show_id ON episodes(show_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_episodes_air_date ON episodes(air_date)")
@@ -466,6 +471,7 @@ def batch_upsert_guide_airings(airings: List[Dict[str, Any]]):
             1 if a.get("is_new") else 0,
             1 if a.get("is_primetime") else 0,
             1 if a.get("is_premiere") else 0,
+            a.get("schedule_state") or "none",
             now
         ) for a in airings
     ]
@@ -474,8 +480,8 @@ def batch_upsert_guide_airings(airings: List[Dict[str, Any]]):
             INSERT INTO guide_airings (
                 path, series_path, show_title, episode_title, season_number, episode_number,
                 air_datetime, duration, channel_call_sign, channel_network, qualifiers,
-                is_new, is_primetime, is_premiere, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                is_new, is_primetime, is_premiere, schedule_state, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
                 series_path = excluded.series_path,
                 show_title = excluded.show_title,
@@ -490,6 +496,7 @@ def batch_upsert_guide_airings(airings: List[Dict[str, Any]]):
                 is_new = excluded.is_new,
                 is_primetime = excluded.is_primetime,
                 is_premiere = excluded.is_premiere,
+                schedule_state = excluded.schedule_state,
                 updated_at = excluded.updated_at
         """, rows)
         # Purge past airings older than 3 hours ago
@@ -497,6 +504,18 @@ def batch_upsert_guide_airings(airings: List[Dict[str, Any]]):
         # Normalize both sides with datetime(): raw values are 'YYYY-MM-DDTHH:MM:SSZ' while
         # datetime() returns 'YYYY-MM-DD HH:MM:SS', so a plain string compare never matches same-day rows
         conn.execute("DELETE FROM guide_airings WHERE datetime(air_datetime) < datetime(?, '-3 hours')", (cutoff,))
+        conn.commit()
+
+
+def update_airing_schedule_states(states: Dict[str, str]):
+    """Set the Tablo record status ('scheduled' / 'none' / ...) for specific airing paths."""
+    if not states:
+        return
+    with get_connection() as conn:
+        conn.executemany(
+            "UPDATE guide_airings SET schedule_state = ? WHERE path = ?",
+            [(state or "none", path) for path, state in states.items()],
+        )
         conn.commit()
 
 
@@ -768,7 +787,7 @@ def get_epg_schedule(hours: int = 6, start_iso: Optional[str] = None) -> Dict[st
         rows = conn.execute("""
             SELECT path, series_path, show_title, episode_title, season_number, episode_number,
                    air_datetime, duration, channel_call_sign, channel_network, qualifiers,
-                   is_new, is_primetime, is_premiere
+                   is_new, is_primetime, is_premiere, schedule_state
             FROM guide_airings
             WHERE datetime(air_datetime, '+' || duration || ' seconds') > datetime(?)
               AND datetime(air_datetime) < datetime(?)
@@ -802,7 +821,8 @@ def get_epg_schedule(hours: int = 6, start_iso: Optional[str] = None) -> Dict[st
                 "is_new": bool(r["is_new"]),
                 "is_primetime": bool(r["is_primetime"]),
                 "is_premiere": bool(r["is_premiere"]),
-                "qualifiers": q_list
+                "qualifiers": q_list,
+                "schedule_state": r["schedule_state"] or "none",
             }
             by_channel.setdefault(cs, []).append(item)
 
