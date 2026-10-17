@@ -13,13 +13,15 @@ import shutil
 from pathlib import Path
 
 APP_NAME = "TabloView"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 
-# Update notices: a public URL to version.json ({"version", "download_url", "notes"}), written by
-# packaging/build.ps1 next to the installer. Empty = don't check. TABLOVIEW_UPDATE_URL overrides.
-UPDATE_INFO_URL = ""
-# Where people download the installer; build.ps1 copies this into version.json
-RELEASE_DOWNLOAD_URL = ""
+# Update notices: a public URL to version.json ({"version", "download_url", "notes"}). It lives in a
+# secret GitHub gist (OneDrive share links can't be downloaded without signing in); build.ps1 writes
+# dist/version.json and packaging/publish-version.ps1 pushes it there. TABLOVIEW_UPDATE_URL overrides.
+UPDATE_GIST = "https://gist.github.com/JoeDV/c20a68a2b91648ac12f3b106e08d37c4"
+UPDATE_INFO_URL = "https://gist.githubusercontent.com/JoeDV/c20a68a2b91648ac12f3b106e08d37c4/raw/version.json"
+# Where people download the installer (OneDrive folder holding every release)
+RELEASE_DOWNLOAD_URL = "https://1drv.ms/f/c/bdcf6c671b81d151/IgAyjZdVgC-bTIIGXc3_y0CkAa8bWh3fo1fVayUVR3-pcqM"
 
 IS_PACKAGED = getattr(sys, "frozen", False)
 

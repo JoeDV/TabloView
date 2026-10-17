@@ -70,8 +70,8 @@ if (-not $Iscc) { throw 'Inno Setup not found. Install it: winget install JRSoft
 & $Iscc /Q "/DAppVersion=$Version" packaging\installer.iss
 if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed' }
 
-# 6. version.json for in-app update notices. Publish it at UPDATE_INFO_URL (app/config.py);
-#    optional release notes come from packaging\release-notes.txt
+# 6. version.json for in-app update notices. After the installer is in the OneDrive folder, publish
+#    it with packaging\publish-version.ps1. Optional release notes: packaging\release-notes.txt
 $DownloadUrl = & $Py -c "import sys; sys.path.insert(0, '.'); from app.config import RELEASE_DOWNLOAD_URL; print(RELEASE_DOWNLOAD_URL)"
 $NotesFile = Join-Path $PSScriptRoot 'release-notes.txt'
 $Notes = if (Test-Path $NotesFile) { (Get-Content $NotesFile -Raw).Trim() } else { '' }
