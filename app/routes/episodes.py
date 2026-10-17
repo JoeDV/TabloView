@@ -1,6 +1,7 @@
 """Episode actions: playback, transcoding, VLC m3u, MP4 export, and deletion."""
 
 import json
+import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -83,8 +84,12 @@ async def watch_episode(
     airing_path = ep["path"]
     try:
         watch_data = await tablo_manager.get_airing_watch_url(airing_path)
+    except httpx.TimeoutException:
+        print(f"[Watch] Tablo didn't answer the watch request for {airing_path} in time")
+        raise HTTPException(status_code=504, detail="Your Tablo didn't respond in time. Try again in a moment.")
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to start watch session on Tablo: {e}")
+        print(f"[Watch] Watch request for {airing_path} failed: {e!r}")
+        raise HTTPException(status_code=502, detail=f"Failed to start watch session on Tablo: {e or type(e).__name__}")
 
     playlist_url = watch_data.get("playlist_url")
     if not playlist_url:

@@ -1,0 +1,61 @@
+# Microsoft Store listing: TabloView for TabloTV
+
+Text to paste into Partner Center. Keep the first line of the description: Store policy 10.2.4 requires a
+product's dependencies to be disclosed at the start.
+
+## Product name
+TabloView for TabloTV
+
+## Description
+Requires a Tablo 4th Gen DVR on your home network and a Tablo account. TabloView is an unofficial app and is not affiliated with or endorsed by Tablo.
+
+TabloView is a fast desktop interface for your Tablo DVR. Browse and play your recordings, search everything airing on your channels, schedule series, and watch live TV, all in your web browser on your PC.
+
+• Home: what's new, what's recording soon, season premieres and new primetime episodes
+• Library: play recordings in your browser with resume and a full timeline, mark watched, delete one, several or all watched episodes, export to MP4
+• Guide: search the next two weeks of your lineup and record a series (new or all episodes) or single airings
+• Live TV: a channel grid for antenna and streaming channels, with recording badges and a warning before live TV takes a tuner a recording needs
+• Scheduled: every series your Tablo records, upcoming recordings with Skip, and conflict warnings
+• Syncs automatically, and watched status and resume points stay in sync with your Tablo's other apps
+
+Sign in with your own Tablo account. Your password goes only to Tablo's sign-in service and is never saved. TabloView runs only on your PC unless you turn on network access for other devices at home.
+
+## What's new in this version
+First Microsoft Store release.
+
+## Product features (one per line)
+Play Tablo recordings in your browser with resume
+Search the guide and schedule series or single episodes
+Live TV channel grid with tuner and recording warnings
+Upcoming recordings with conflict warnings
+Bulk delete and mark watched
+Export recordings to MP4
+
+## Keywords
+Tablo, DVR, OTA, antenna, TV, recordings, live TV, guide
+
+## Category
+Entertainment (subcategory: none)
+
+## Privacy policy URL
+(public gist with PRIVACY.md)
+
+## Copyright and trademark info
+© 2026 Joe Del Vecchio. Tablo is a trademark of its respective owner; TabloView is not affiliated with Tablo.
+
+## Age rating questionnaire
+No violence, sexual content, profanity, gambling, purchases or user-generated sharing. TabloView shows TV listings and recordings from the user's own DVR; it does not provide or curate content. Answer that the app has no user interaction/sharing features and no purchases.
+
+## Screenshots (at least 1, ideally 4; 1920x1080 works)
+1. Home
+2. A show page with episodes
+3. Live TV grid
+4. Scheduled → Upcoming recordings
+
+## Submission options → Notes for certification
+TabloView is a companion app for the Tablo 4th Gen over-the-air DVR. It needs a Tablo device on the same home network and the owner's Tablo account, so it cannot be fully tested without that hardware. Without a Tablo it starts, opens its sign-in page in the default browser, and shows a clear error if sign-in or device discovery fails.
+
+How it works: TabloView.exe starts a local web server on 127.0.0.1 (port 7070 or the next free port), opens the app in the default browser, and puts an icon in the system tray (Open / Downloads folder / Quit). Bundled FFmpeg converts recordings for in-browser playback and MP4 export. No data is sent to the developer.
+
+## Restricted capability justification (runFullTrust)
+TabloView is a desktop (Win32) application packaged with MSIX. It runs a local web server, a system tray icon and a bundled FFmpeg process, so it needs full trust to run.

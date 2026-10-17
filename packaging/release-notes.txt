@@ -1,1 +1,1 @@
-Upcoming recordings list with Skip, recording conflict warnings, a warning before live TV would take a tuner a recording needs, tuners still held after closing live TV shown in the badge, and a full-length timeline when resuming a recording.
+Playing or exporting a recording no longer opens a command window, and a Tablo that's slow to start playback now says so instead of showing an empty error. TabloView is also coming to the Microsoft Store.

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
-from ..config import APP_NAME, APP_VERSION, IS_PACKAGED, FFMPEG_PATH, HOME_DIR, DOWNLOADS_DIR
+from ..config import APP_NAME, APP_VERSION, IS_PACKAGED, IS_STORE, FFMPEG_PATH, HOME_DIR, DOWNLOADS_DIR
 from ..settings import load_settings, save_settings
 from ..updates import check_for_update
 from ..tablo_client import tablo_manager
@@ -44,6 +44,7 @@ async def system_info(request: Request):
         "app": APP_NAME,
         "version": APP_VERSION,
         "packaged": IS_PACKAGED,
+        "store": IS_STORE,
         "ffmpeg_found": Path(FFMPEG_PATH).is_file() or shutil.which(FFMPEG_PATH) is not None,
         "listening_on_network": host not in ("127.0.0.1", "localhost") if host else None,
         "network_url": f"http://{lan_ip}:{port}" if lan_ip and port else None,

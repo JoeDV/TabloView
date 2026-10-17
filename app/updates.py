@@ -8,7 +8,7 @@ from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 import httpx
 
-from .config import APP_VERSION, UPDATE_INFO_URL
+from .config import APP_VERSION, UPDATE_INFO_URL, IS_STORE
 
 CHECK_EVERY_SECONDS = 6 * 3600
 _cache: Dict[str, Any] = {"checked": 0.0, "result": None}
@@ -39,9 +39,10 @@ def direct_download_url(url: str) -> str:
 async def check_for_update(force: bool = False) -> Dict[str, Any]:
     """Return {'current', 'latest', 'update_available', 'download_url', 'notes', 'error'}.
     Results are cached for CHECK_EVERY_SECONDS; failures never raise."""
-    url = update_url()
+    url = "" if IS_STORE else update_url()  # the Store updates its own installs
     base: Dict[str, Any] = {"current": APP_VERSION, "latest": None, "update_available": False,
-                            "download_url": None, "notes": None, "error": None, "enabled": bool(url)}
+                            "download_url": None, "notes": None, "error": None, "enabled": bool(url),
+                            "store": IS_STORE}
     if not url:
         return base
     if not force and _cache["result"] and time.time() - _cache["checked"] < CHECK_EVERY_SECONDS:

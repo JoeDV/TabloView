@@ -20,6 +20,9 @@ from starlette.background import BackgroundTask
 from .config import TRANSCODE_DIR, DOWNLOADS_DIR, FFMPEG_PATH
 from .database import save_export_job
 
+# The packaged app has no console, so Windows would open a console window for each ffmpeg it starts
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
 
 def force_rmtree(path: Path, quiet: bool = False) -> bool:
     """rmtree that also handles Windows read-only files/folders, which otherwise fail with Access Denied."""
@@ -229,7 +232,8 @@ class TranscodeManager:
         log_file = session_dir / "ffmpeg.log"
         # The child process keeps its own inherited handle; close ours right away
         with open(log_file, "w", encoding="utf-8") as f:
-            proc = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT, cwd=str(session_dir))
+            proc = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT, cwd=str(session_dir),
+                                    creationflags=NO_WINDOW)
         sess.proc = proc
         sess.transcoded = True
 
@@ -321,7 +325,7 @@ class TranscodeManager:
         proc = None
         try:
             with open(log_path, "w", encoding="utf-8") as log_f:
-                proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=log_f)
+                proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=log_f, creationflags=NO_WINDOW)
 
             # Poll progress while process is running
             while proc.poll() is None:

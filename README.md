@@ -4,7 +4,7 @@ A fast desktop interface for the **Tablo 4th Gen** DVR: browse and play recordin
 
 ## Install (Windows)
 
-1. Download **`TabloView-Setup-<version>.exe`** and run it. No admin rights are needed; it installs just for your Windows account.
+1. Get **TabloView for TabloTV** from the [Microsoft Store](https://apps.microsoft.com/detail/9NCWVSC7KX2N) (updates automatically), or download **`TabloView-Setup-<version>.exe`** and run it. No admin rights are needed; it installs just for your Windows account.
    - Windows may say *"Windows protected your PC"* because the installer isn't code-signed. Click **More info → Run anyway**.
 2. TabloView opens in your browser. **Sign in with your own Tablo account**; TabloView finds the Tablo on your home network.
 3. While it runs, TabloView has an icon in the system tray (bottom-right, near the clock). Right-click it to reopen the app, open your downloads folder, or quit.
@@ -52,6 +52,17 @@ powershell -ExecutionPolicy Bypass -File packaging\build.ps1
 ```
 
 This creates an isolated `.build-venv`, runs the unit tests, bundles the app with PyInstaller (`packaging/tabloview.spec`) together with your installed FFmpeg, and compiles `dist\TabloView-Setup-<version>.exe` with Inno Setup 6 (`winget install JRSoftware.InnoSetup`). The script refuses to package any local credentials or caches. Bump `APP_VERSION` in `app/config.py` for a new release.
+
+### Microsoft Store package
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\build-msix.ps1             # dist\TabloView-<version>.msix
+powershell -ExecutionPolicy Bypass -File packaging\build-msix.ps1 -LocalTest  # install a test copy on this PC
+```
+
+Run `build.ps1` first; this wraps its `dist\TabloView` folder in an MSIX using `packaging/msix/AppxManifest.xml` (identity from Partner Center → Product identity). `makeappx` is downloaded once from Microsoft's Windows SDK BuildTools NuGet package into `.build-tools`. The package is uploaded unsigned and the Store signs it. `-LocalTest` registers the unpacked package under a separate test publisher and needs Windows Developer Mode; remove it with `Get-AppxPackage JoeDelVecchio.TabloViewforTabloTV | Remove-AppxPackage`.
+
+A Store install skips the update check (the Store updates it) and says so under **Device → About**.
 
 ## Architecture
 

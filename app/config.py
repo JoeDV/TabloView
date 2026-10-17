@@ -13,7 +13,7 @@ import shutil
 from pathlib import Path
 
 APP_NAME = "TabloView"
-APP_VERSION = "1.1.2"
+APP_VERSION = "1.1.3"
 
 # Update notices: a public URL to version.json ({"version", "download_url", "notes"}). It lives in a
 # secret GitHub gist (OneDrive share links can't be downloaded without signing in); build.ps1 writes
@@ -24,6 +24,30 @@ UPDATE_INFO_URL = "https://gist.githubusercontent.com/JoeDV/c20a68a2b91648ac12f3
 RELEASE_DOWNLOAD_URL = "https://1drv.ms/f/c/bdcf6c671b81d151/IgAyjZdVgC-bTIIGXc3_y0CkAa8bWh3fo1fVayUVR3-pcqM"
 
 IS_PACKAGED = getattr(sys, "frozen", False)
+
+
+def _package_family_name() -> str:
+    """The MSIX package family when running as a Microsoft Store install, else ''."""
+    if sys.platform != "win32":
+        return ""
+    try:
+        import ctypes
+        length = ctypes.c_uint32(0)
+        # ERROR_INSUFFICIENT_BUFFER (122) means we have a package identity; 15700 means none
+        if ctypes.windll.kernel32.GetCurrentPackageFamilyName(ctypes.byref(length), None) != 122:
+            return ""
+        buf = ctypes.create_unicode_buffer(length.value)
+        if ctypes.windll.kernel32.GetCurrentPackageFamilyName(ctypes.byref(length), buf) != 0:
+            return ""
+        return buf.value
+    except Exception:
+        return ""
+
+
+# Store installs update through the Store, and their AppData writes land in the package's private folder
+STORE_PACKAGE = _package_family_name()
+IS_STORE = bool(STORE_PACKAGE)
+STORE_URL = "https://apps.microsoft.com/detail/9NCWVSC7KX2N"
 
 # Read-only resources (static UI, bundled ffmpeg)
 BASE_DIR = Path(__file__).resolve().parent.parent

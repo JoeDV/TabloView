@@ -1787,6 +1787,7 @@ PAGES.device = async (r, token) => {
 
 function updateStatusHtml() {
   const u = state.update;
+  if (u && u.store) return 'Kept up to date by the Microsoft Store';
   if (!u || !u.enabled) return '<span class="dim">Update checks aren’t set up for this copy</span>';
   const btn = ' <button class="btn btn-sm btn-ghost" data-action="check-update">Check now</button>';
   if (u.update_available) {
