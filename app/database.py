@@ -691,6 +691,20 @@ def update_guide_show_schedule(path: str, rule: str):
         conn.commit()
 
 
+def clear_stale_schedule_rules(category: str, scheduled_paths: List[str]) -> int:
+    """Mark shows of this category as not recording if the Tablo no longer lists them as scheduled
+    (e.g. a rule removed on the TV for a series that is off the air)."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT path FROM guide_shows WHERE category = ? AND schedule_rule IN ('new', 'all')", (category,)
+        ).fetchall()
+        stale = [r["path"] for r in rows if r["path"] not in set(scheduled_paths)]
+        if stale:
+            conn.executemany("UPDATE guide_shows SET schedule_rule = 'none' WHERE path = ?", [(p,) for p in stale])
+            conn.commit()
+        return len(stale)
+
+
 def get_live_airings_for_channels() -> Dict[str, Dict[str, Any]]:
     """Return 'now playing' and 'next up' broadcasts for all channels from the guide cache."""
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

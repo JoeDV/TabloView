@@ -18,6 +18,7 @@ from .database import (
     set_sync_meta,
     prune_obsolete_shows_and_episodes,
     batch_upsert_guide_airings,
+    clear_stale_schedule_rules,
 )
 
 
@@ -282,6 +283,20 @@ class LibrarySyncService:
                 if not isinstance(paths, list):
                     continue
 
+                # The plain list only has shows airing in the ~2-week guide window. Series with a
+                # recording rule but no current airings (e.g. between seasons) come from this filter.
+                scheduled_paths = None
+                try:
+                    sched_resp = await tablo_manager.request_local(method, f"{endpoint}?state=scheduled")
+                    if sched_resp.status_code == 200 and isinstance(sched_resp.json(), list):
+                        scheduled_paths = sched_resp.json()
+                        extra = [p for p in scheduled_paths if p not in set(paths)]
+                        if extra:
+                            print(f"[GuideSync] {len(extra)} scheduled {cat} with no current airings")
+                        paths = paths + extra
+                except Exception as e:
+                    print(f"[GuideSync] Couldn't list scheduled {cat}: {e}")
+
                 async def fetch_item(p: str):
                     async with sem:
                         try:
@@ -320,6 +335,10 @@ class LibrarySyncService:
 
                 results = await asyncio.gather(*[fetch_item(p) for p in paths])
                 total_synced += sum(results)
+                if scheduled_paths is not None:
+                    cleared = clear_stale_schedule_rules(cat, scheduled_paths)
+                    if cleared:
+                        print(f"[GuideSync] {cleared} {cat} no longer scheduled on the Tablo")
             except Exception as e:
                 print(f"[GuideSync] Error syncing {endpoint}: {e}")
 

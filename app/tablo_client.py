@@ -97,7 +97,9 @@ class TabloManager:
         if not self.device:
             raise RuntimeError("Tablo device not configured or authenticated")
 
-        auth_header, date_header = TabloAuth.make_device_auth(method, path, body)
+        # The Tablo signs only the bare path: a query string (e.g. ?state=scheduled) must be
+        # left out of the signature or the device answers 401.
+        auth_header, date_header = TabloAuth.make_device_auth(method, path.split("?", 1)[0], body)
         url = self.device.local_url.rstrip("/") + path
         headers = {
             "Authorization": auth_header,

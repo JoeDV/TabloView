@@ -1220,7 +1220,7 @@ function renderScheduledList() {
         ${imgUrl(g.cover_url || g.backdrop_url) ? `<img class="thumb" src="${esc(imgUrl(g.cover_url || g.backdrop_url))}" alt="" loading="lazy">` : '<div class="thumb"></div>'}
         <div style="min-width:0"><div class="row-title">${esc(g.title)}</div><div class="row-sub">${esc(genres)}</div></div>
         <div class="sched-col-next" style="min-width:0">
-          ${n ? `<div class="row-title" style="font-weight:500">${esc(fmt.when(n.datetime))}</div><div class="row-sub">${esc(n.network || n.call_sign || '')}${n.title ? ` · ${esc(n.title)}` : ''}</div>` : '<span class="dim">No airings in the guide</span>'}
+          ${n ? `<div class="row-title" style="font-weight:500">${esc(fmt.when(n.datetime))}</div><div class="row-sub">${esc(n.network || n.call_sign || '')}${n.title ? ` · ${esc(n.title)}` : ''}</div>` : '<div class="row-title dim" style="font-weight:500">No upcoming airings</div><div class="row-sub">Waiting for new episodes</div>'}
         </div>
         <div data-rule-control="${esc(g.path)}" class="segmented rule">
           <button data-action="set-rule" data-path="${esc(g.path)}" data-rule="new" class="${g.schedule_rule === 'new' ? 'active' : ''}">New</button>
