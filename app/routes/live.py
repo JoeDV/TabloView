@@ -148,7 +148,7 @@ def mark_recording_now(airings: List[Dict[str, Any]], now_utc: datetime):
             continue
 
 
-_NEWS_GENRES = {"news", "newsmagazine", "weather", "public affairs", "politics", "talk"}
+_NEWS_GENRES = {"news", "newsmagazine", "weather", "public affairs", "politics"}
 _SPORTS_GENRES = {"sports", "sports event", "sports talk", "sports non-event", "football", "basketball",
                   "baseball", "hockey", "soccer", "golf", "auto racing", "boxing", "wrestling", "tennis"}
 
