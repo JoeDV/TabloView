@@ -1414,16 +1414,17 @@ async function checkTuners() {
     const t = await api('/api/live/tuners');
     const pill = $('#tunerPill'), text = $('#tunerText');
     if (!pill) return;
-    const total = t.total || 0, used = t.in_use || 0, streams = t.streams_in_use || 0;
-    pill.classList.toggle('busy', used > 0);
+    const total = t.total || 0, used = t.in_use || 0;
+    const streams = t.streams_in_use || 0, streamsTotal = t.streams_total || 0;
+    pill.classList.toggle('busy', used > 0 || streams > 0);
     if (!total) {
       text.textContent = 'Tuners unavailable';
       pill.title = "Couldn't read tuner status from the Tablo";
       return;
     }
-    text.textContent = (used ? `${used}/${total} tuners busy` : `${total} tuners free`) + (streams ? ` · ${streams} streaming` : '');
-    pill.title = `${used} of ${total} antenna tuners in use (recordings or live TV)` +
-      (streams ? `; ${streams} streaming channel${streams === 1 ? '' : 's'} playing (these don't use an antenna tuner)` : '');
+    text.textContent = `OTA ${used}/${total}` + (streamsTotal ? ` · Stream ${streams}/${streamsTotal}` : '');
+    pill.title = `Antenna (OTA) tuners in use: ${used} of ${total} (recordings and live TV)` +
+      (streamsTotal ? `\nStreaming slots in use: ${streams} of ${streamsTotal} (FAST channels; these don't use the antenna)` : '');
   } catch { /* optional */ }
 }
 

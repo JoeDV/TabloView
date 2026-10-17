@@ -203,11 +203,12 @@ async def get_tuner_status():
                 "in_use": in_use,
                 "available": total - in_use,
                 "streams_in_use": streams_in_use,
+                "streams_total": max(len(tuners) - total, 0),
             }
     except Exception as e:
         print(f"[LiveTV] Error reading tuners: {e}")
 
-    return {"tuners": [], "total": 0, "in_use": 0, "available": 0, "streams_in_use": 0}
+    return {"tuners": [], "total": 0, "in_use": 0, "available": 0, "streams_in_use": 0, "streams_total": 0}
 
 
 @router.get("/channels")
