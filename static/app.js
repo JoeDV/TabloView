@@ -1212,23 +1212,34 @@ function renderScheduledList() {
       : emptyState('Nothing scheduled', 'Pick a series in the guide and choose Record.', '<a class="btn btn-primary" href="#/guide">Browse the guide</a>');
     return;
   }
-  box.innerHTML = `<div class="list">${items.map(g => {
-    const genres = Array.isArray(g.genres) ? g.genres.slice(0, 2).join(', ') : '';
-    const n = g.next_airing;
-    return `
-      <div class="list-row sched-row clickable" data-action="open-series" data-path="${esc(g.path)}">
-        ${imgUrl(g.cover_url || g.backdrop_url) ? `<img class="thumb" src="${esc(imgUrl(g.cover_url || g.backdrop_url))}" alt="" loading="lazy">` : '<div class="thumb"></div>'}
-        <div style="min-width:0"><div class="row-title">${esc(g.title)}</div><div class="row-sub">${esc(genres)}</div></div>
-        <div class="sched-col-next" style="min-width:0">
-          ${n ? `<div class="row-title" style="font-weight:500">${esc(fmt.when(n.datetime))}</div><div class="row-sub">${esc(n.network || n.call_sign || '')}${n.title ? ` · ${esc(n.title)}` : ''}</div>` : '<div class="row-title dim" style="font-weight:500">No upcoming airings</div><div class="row-sub">Waiting for new episodes</div>'}
-        </div>
-        <div data-rule-control="${esc(g.path)}" class="segmented rule">
-          <button data-action="set-rule" data-path="${esc(g.path)}" data-rule="new" class="${g.schedule_rule === 'new' ? 'active' : ''}">New</button>
-          <button data-action="set-rule" data-path="${esc(g.path)}" data-rule="all" class="${g.schedule_rule === 'all' ? 'active' : ''}">All</button>
-        </div>
-        <button class="btn btn-sm btn-danger" data-action="stop-rule" data-path="${esc(g.path)}">Stop</button>
-      </div>`;
-  }).join('')}</div>`;
+  // Two groups: series with airings in the guide, then ones between seasons
+  const upcoming = items.filter(g => g.next_airing);
+  const waiting = items.filter(g => !g.next_airing);
+  const group = (title, sub, list) => list.length ? `
+    <div class="section-head" style="margin:${title === 'Upcoming' ? '0' : '28px'} 0 12px">
+      <h2 class="section-title">${title}</h2><span class="section-sub">${plural(list.length, 'series', 'series')}${sub ? ` · ${sub}` : ''}</span>
+    </div>
+    <div class="list">${list.map(scheduledRow).join('')}</div>` : '';
+  box.innerHTML = group('Upcoming', 'next airing in the guide', upcoming) +
+    group('No upcoming airings', "the Tablo keeps these rules and records new episodes when they're in the guide", waiting);
+}
+
+function scheduledRow(g) {
+  const genres = Array.isArray(g.genres) ? g.genres.slice(0, 2).join(', ') : '';
+  const n = g.next_airing;
+  return `
+    <div class="list-row sched-row clickable" data-action="open-series" data-path="${esc(g.path)}">
+      ${imgUrl(g.cover_url || g.backdrop_url) ? `<img class="thumb" src="${esc(imgUrl(g.cover_url || g.backdrop_url))}" alt="" loading="lazy">` : '<div class="thumb"></div>'}
+      <div style="min-width:0"><div class="row-title">${esc(g.title)}</div><div class="row-sub">${esc(genres)}</div></div>
+      <div class="sched-col-next" style="min-width:0">
+        ${n ? `<div class="row-title" style="font-weight:500">${esc(fmt.when(n.datetime))}</div><div class="row-sub">${esc(n.network || n.call_sign || '')}${n.title ? ` · ${esc(n.title)}` : ''}</div>` : '<span class="dim">Waiting for new episodes</span>'}
+      </div>
+      <div data-rule-control="${esc(g.path)}" class="segmented rule">
+        <button data-action="set-rule" data-path="${esc(g.path)}" data-rule="new" class="${g.schedule_rule === 'new' ? 'active' : ''}">New</button>
+        <button data-action="set-rule" data-path="${esc(g.path)}" data-rule="all" class="${g.schedule_rule === 'all' ? 'active' : ''}">All</button>
+      </div>
+      <button class="btn btn-sm btn-danger" data-action="stop-rule" data-path="${esc(g.path)}">Stop</button>
+    </div>`;
 }
 
 // ---------------------------------------------------------------------------
