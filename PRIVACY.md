@@ -31,4 +31,4 @@ TabloView is not directed at children and collects no personal information from 
 
 ## Changes and contact
 
-If this policy changes, the date above is updated. For questions, find the TabloView thread on the [Tablo Community Forum](https://community.tablotv.com/), or message Joe Del Vecchio there.
+If this policy changes, the date above is updated. For questions, find the TabloView thread on the [Tablo Community Forum](https://community.tablotv.com/), or message JoeDV there.
