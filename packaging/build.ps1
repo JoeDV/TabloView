@@ -17,9 +17,18 @@ if (-not (Test-Path $Py)) {
 & $Py -m pip install -q -r requirements.txt pyinstaller pystray pillow
 if ($LASTEXITCODE -ne 0) { throw 'pip install failed' }
 
-# 2. Stage FFmpeg, icon and version resource
+# 2. Clear previous outputs. Folders on this machine can pick up the ReadOnly attribute,
+#    which makes PyInstaller's own --clean fail with "Access is denied".
+foreach ($old in 'build', 'dist\TabloView') {
+    $p = Join-Path $Root $old
+    if (Test-Path $p) {
+        attrib -r "$p\*" /s /d | Out-Null
+        Remove-Item -Recurse -Force $p
+    }
+}
+
+# 3. Stage FFmpeg, icon and version resource
 $Stage = Join-Path $Root 'build\stage'
-Remove-Item -Recurse -Force $Stage -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force (Join-Path $Stage 'ffmpeg') | Out-Null
 
 $Ffmpeg = & $Py -c "import sys; sys.path.insert(0, '.'); from app.config import find_ffmpeg; print(find_ffmpeg())"
@@ -48,14 +57,14 @@ VSVersionInfo(
 )
 "@ | Set-Content -Encoding ascii (Join-Path $Stage 'version_info.txt')
 
-# 3. Bundle the app (never include local credentials or caches)
+# 4. Bundle the app (never include local credentials or caches)
 & $Py -m PyInstaller packaging\tabloview.spec --noconfirm --clean --distpath dist --workpath build\pyinstaller
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed' }
 
 $Leaks = Get-ChildItem -Recurse dist\TabloView -Include 'config.json', '.env', '*.db', 'settings.json' -ErrorAction SilentlyContinue
 if ($Leaks) { throw "Refusing to package local data: $($Leaks.FullName -join ', ')" }
 
-# 4. Installer
+# 5. Installer
 $Iscc = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $Iscc) { throw 'Inno Setup not found. Install it: winget install JRSoftware.InnoSetup' }
 & $Iscc /Q "/DAppVersion=$Version" packaging\installer.iss
