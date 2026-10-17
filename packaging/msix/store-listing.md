@@ -38,7 +38,8 @@ Tablo, DVR, OTA, antenna, TV, recordings, live TV, guide
 Entertainment (subcategory: none)
 
 ## Privacy policy URL
-(public gist with PRIVACY.md)
+https://gist.github.com/JoeDV/f9c8e1d0151ed3c5339b9a15d6bc0b1d
+(public gist holding PRIVACY.md; edit that gist when the policy changes so the link stays the same)
 
 ## Copyright and trademark info
 © 2026 Joe Del Vecchio. Tablo is a trademark of its respective owner; TabloView is not affiliated with Tablo.
