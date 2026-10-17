@@ -28,3 +28,18 @@ Thumbs.db
 .build-venv/
 build/
 dist/
+
+# AI coding-tool skill folders (installed per tool; kept locally, not part of the app)
+.agents/
+.claude/
+.codex/
+.cursor/
+.gemini/
+.kiro/
+.opencode/
+.pi/
+.trae/
+.trae-cn/
+
+# Leftover caches from removed scratch scripts
+scratch/
