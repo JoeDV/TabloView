@@ -17,6 +17,13 @@ if (-not (Test-Path $Py)) {
 & $Py -m pip install -q -r requirements.txt pyinstaller pystray pillow
 if ($LASTEXITCODE -ne 0) { throw 'pip install failed' }
 
+# 1b. Unit tests must pass before anything is packaged (they use a throwaway data folder)
+if (-not $env:TABLOVIEW_SKIP_TESTS) {
+    Write-Host 'Running unit tests...'
+    & $Py -m unittest discover -s tests/unit -t . 2>&1 | Select-String -Pattern '^(Ran |OK|FAILED|ERROR:|FAIL:)'
+    if ($LASTEXITCODE -ne 0) { throw 'Unit tests failed; not building. (Set TABLOVIEW_SKIP_TESTS=1 to override.)' }
+}
+
 # 2. Clear previous outputs. Folders on this machine can pick up the ReadOnly attribute,
 #    which makes PyInstaller's own --clean fail with "Access is denied".
 foreach ($old in 'build', 'dist\TabloView') {

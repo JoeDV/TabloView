@@ -36,13 +36,22 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 7070
 
 Open http://localhost:7070. From source, data stays in the project folder (`data/`, `transcode/`, `downloads/`), and `TABLO_EMAIL` / `TABLO_PASSWORD` in `.env` are honoured. The previous interface is still available at `/static/legacy/index.html`.
 
+## Testing
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1
+```
+
+- **Unit tests** (`tests/unit`, Python `unittest`): conflict math, Live TV categories, update checks, database logic and the API's security guard. They run against a throwaway data folder and never contact a Tablo. The installer build runs them first and stops if any fail.
+- **Browser tests** (`tests/ui`, Node + headless Chrome/Edge): every page, bulk delete, record menu, Live TV tuner warnings, upcoming recordings and conflicts, playback, and resume. They need TabloView running and signed in, and adapt to whatever is on your Tablo. Every change (deletes, recording rules, skips, progress, live tuning) is faked inside the test browser; the only real requests are page loads and playing a recording. Run a single suite with `node tests/ui/run.mjs resume`.
+
 ## Building the installer
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging\build.ps1
 ```
 
-This creates an isolated `.build-venv`, bundles the app with PyInstaller (`packaging/tabloview.spec`) together with your installed FFmpeg, and compiles `dist\TabloView-Setup-<version>.exe` with Inno Setup 6 (`winget install JRSoftware.InnoSetup`). The script refuses to package any local credentials or caches. Bump `APP_VERSION` in `app/config.py` for a new release.
+This creates an isolated `.build-venv`, runs the unit tests, bundles the app with PyInstaller (`packaging/tabloview.spec`) together with your installed FFmpeg, and compiles `dist\TabloView-Setup-<version>.exe` with Inno Setup 6 (`winget install JRSoftware.InnoSetup`). The script refuses to package any local credentials or caches. Bump `APP_VERSION` in `app/config.py` for a new release.
 
 ## Architecture
 
