@@ -426,7 +426,7 @@ function guideCard(g) {
       <div class="media-art">${artImg(g.cover_url || g.backdrop_url, g.title)}${badge}</div>
       <div class="media-meta">
         <div class="media-title">${esc(g.title)}</div>
-        <div class="media-sub">${nextAiringText(g) || esc(genres) || '&nbsp;'}</div>
+        <div class="media-sub">${nextAiringText(g) || (['new', 'all'].includes(g.schedule_rule) ? 'Waiting for new episodes' : esc(genres)) || '&nbsp;'}</div>
         <div class="media-foot">${recButton(g)}</div>
       </div>
     </div>`;
@@ -1002,8 +1002,17 @@ function renderGuideGrid() {
     grid.innerHTML = emptyState('Nothing found', G.q ? `Nothing in the guide matches “${G.q}”.` : 'Try a different filter.');
     return;
   }
-  grid.innerHTML = `<div class="card-grid">${G.items.map(guideCard).join('')}</div>
-    ${G.hasMore ? '<div style="text-align:center;margin-top:28px"><button class="btn" data-action="guide-more">Show more</button></div>' : ''}`;
+  // Only the Recording view includes series with no upcoming airings; list those after a divider
+  const airing = G.items.filter(g => g.next_airing);
+  const waiting = G.items.filter(g => !g.next_airing);
+  grid.innerHTML = `${airing.length ? `<div class="card-grid">${airing.map(guideCard).join('')}</div>` : ''}
+    ${G.hasMore ? '<div style="text-align:center;margin-top:28px"><button class="btn" data-action="guide-more">Show more</button></div>' : ''}
+    ${waiting.length ? `
+      <div class="section-head" style="margin:${airing.length ? '36px' : '0'} 0 14px">
+        <h2 class="section-title">No upcoming airings</h2>
+        <span class="section-sub">${plural(waiting.length, 'series', 'series')} · the Tablo keeps these rules and records new episodes when they're in the guide</span>
+      </div>
+      <div class="card-grid">${waiting.map(guideCard).join('')}</div>` : ''}`;
 }
 
 const reloadGuide = debounce(() => loadGuide(routeToken), 220);

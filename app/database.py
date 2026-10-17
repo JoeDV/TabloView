@@ -601,6 +601,14 @@ def get_guide_shows(
             query += " AND g.schedule_rule = ?"
             params.append(rule)
 
+    # Browsing the guide means "what's airing". Shows with no upcoming airings are only kept when
+    # they have a recording rule (series between seasons) and the user is viewing Recording or searching.
+    if rule not in ("scheduled", "new", "all"):
+        if search and search.strip():
+            query += " AND (n.air_datetime IS NOT NULL OR g.schedule_rule IN ('new', 'all'))"
+        else:
+            query += " AND n.air_datetime IS NOT NULL"
+
     if search and search.strip():
         term = f"%{search.strip()}%"
         query += " AND (g.title LIKE ? OR g.description LIKE ? OR g.genres LIKE ?)"
