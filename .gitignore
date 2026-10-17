@@ -1,0 +1,25 @@
+# Environment and credentials
+.env
+
+# Local cache: credentials (config.json), SQLite cache, downloaded artwork
+data/
+*.db
+tablo_cache.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# Transcoding and temp files
+tmp/
+transcode/
+downloads/
+debug_data/
+
+# IDE and OS
+.DS_Store
+Thumbs.db
+.idea/

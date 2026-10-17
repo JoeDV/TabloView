@@ -1,0 +1,186 @@
+"""Episode actions: playback, transcoding, VLC m3u, MP4 export, and deletion."""
+
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import Response
+from pydantic import BaseModel
+from typing import List, Optional
+
+from ..database import (
+    get_episode_by_id,
+    get_show_by_id,
+    delete_episode,
+    recalculate_show_stats
+)
+from ..tablo_client import tablo_manager
+from ..transcode import transcode_manager
+
+router = APIRouter(prefix="/api/episodes", tags=["episodes"])
+
+
+class BulkDeleteRequest(BaseModel):
+    episode_ids: List[str]
+
+
+@router.post("/{episode_id}/watch")
+async def watch_episode(
+    episode_id: str,
+    request: Request,
+    transcode: bool = Query(default=True, description="Transcode for browser video player")
+):
+    """Obtain stream URL from Tablo and initialize proxy/transcoder session."""
+    ep = get_episode_by_id(episode_id)
+    if not ep:
+        raise HTTPException(status_code=404, detail="Episode not found in database")
+
+    airing_path = ep["path"]
+    try:
+        watch_data = await tablo_manager.get_airing_watch_url(airing_path)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to start watch session on Tablo: {e}")
+
+    playlist_url = watch_data.get("playlist_url")
+    if not playlist_url:
+        raise HTTPException(status_code=502, detail="No playlist_url received from Tablo")
+
+    sess = transcode_manager.create_session(playlist_url)
+
+    if transcode:
+        try:
+            stream_url = await transcode_manager.start_browser_transcode(sess.session_id, playlist_url)
+        except Exception as e:
+            print(f"Transcode failed, falling back to direct proxy: {e}")
+            stream_url = f"/api/hls/{sess.session_id}/playlist.m3u8"
+    else:
+        stream_url = f"/api/hls/{sess.session_id}/playlist.m3u8"
+
+    return {
+        "session_id": sess.session_id,
+        "proxy_url": f"/api/hls/{sess.session_id}/playlist.m3u8",
+        "stream_url": stream_url,
+        "transcoded": transcode,
+        "raw_playlist_url": playlist_url
+    }
+
+
+@router.get("/{episode_id}/playlist.m3u")
+async def download_m3u_playlist(episode_id: str, request: Request):
+    """Generate and return an M3U playlist file for instant playback in VLC / MPV / IINA."""
+    ep = get_episode_by_id(episode_id)
+    if not ep:
+        raise HTTPException(status_code=404, detail="Episode not found")
+
+    airing_path = ep["path"]
+    watch_data = await tablo_manager.get_airing_watch_url(airing_path)
+    playlist_url = watch_data.get("playlist_url")
+    if not playlist_url:
+        raise HTTPException(status_code=502, detail="No playlist_url received from Tablo")
+
+    # Create proxy session so client on any machine on LAN can play it
+    sess = transcode_manager.create_session(playlist_url)
+    base_host = str(request.base_url).rstrip("/")
+    stream_link = f"{base_host}/api/hls/{sess.session_id}/playlist.m3u8"
+
+    show_title = ep.get("show_title", "Show")
+    ep_title = ep.get("title", "")
+    s_num = ep.get("season_number", 0)
+    e_num = ep.get("episode_number", 0)
+    display_title = f"{show_title} - S{s_num:02d}E{e_num:02d} - {ep_title}" if s_num and e_num else f"{show_title} - {ep_title}"
+
+    m3u_content = f"#EXTM3U\n#EXTINF:-1,{display_title}\n{stream_link}\n"
+    filename = f"{transcode_manager.clean_filename(display_title)}.m3u"
+
+    return Response(
+        content=m3u_content,
+        media_type="application/x-mpegurl",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-cache"
+        }
+    )
+
+
+@router.post("/{episode_id}/export")
+async def export_episode_mp4(episode_id: str):
+    """Trigger background MP4 export via FFmpeg to ./downloads."""
+    ep = get_episode_by_id(episode_id)
+    if not ep:
+        raise HTTPException(status_code=404, detail="Episode not found")
+
+    airing_path = ep["path"]
+    watch_data = await tablo_manager.get_airing_watch_url(airing_path)
+    playlist_url = watch_data.get("playlist_url")
+    if not playlist_url:
+        raise HTTPException(status_code=502, detail="No playlist_url from Tablo")
+
+    job_id = await transcode_manager.start_mp4_export(ep, playlist_url)
+    return {
+        "status": "started",
+        "job_id": job_id,
+        "message": "Export task started in background."
+    }
+
+
+@router.delete("/{episode_id}")
+async def delete_single_episode(episode_id: str):
+    """Send signed DELETE to Tablo hardware and remove from SQLite cache."""
+    ep = get_episode_by_id(episode_id)
+    if not ep:
+        raise HTTPException(status_code=404, detail="Episode not found")
+
+    path = ep["path"]
+    show_id = ep["show_id"]
+
+    if not tablo_manager.is_authenticated:
+        raise HTTPException(status_code=400, detail="Tablo device is not connected")
+
+    try:
+        ok = await tablo_manager.delete_airing(path)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Tablo delete failed: {e}")
+    if not ok:
+        raise HTTPException(status_code=502, detail="Tablo refused to delete the recording")
+
+    # Device confirmed: remove from local database and update show stats
+    delete_episode(episode_id)
+    updated_show = get_show_by_id(show_id)
+
+    return {
+        "success": True,
+        "deleted_id": episode_id,
+        "show": updated_show
+    }
+
+
+@router.post("/bulk_delete")
+async def bulk_delete_episodes(req: BulkDeleteRequest):
+    """Delete multiple episodes at once."""
+    deleted = []
+    errors = []
+    affected_shows = set()
+
+    for ep_id in req.episode_ids:
+        ep = get_episode_by_id(ep_id)
+        if not ep:
+            continue
+        path = ep["path"]
+        show_id = ep["show_id"]
+        affected_shows.add(show_id)
+
+        try:
+            if not tablo_manager.is_authenticated:
+                raise RuntimeError("Tablo device is not connected")
+            if not await tablo_manager.delete_airing(path):
+                raise RuntimeError("Tablo refused to delete the recording")
+            delete_episode(ep_id)
+            deleted.append(ep_id)
+        except Exception as e:
+            errors.append(f"Failed deleting {ep_id}: {e}")
+
+    updated_shows = [get_show_by_id(sid) for sid in affected_shows if get_show_by_id(sid)]
+
+    return {
+        "deleted_count": len(deleted),
+        "deleted_ids": deleted,
+        "errors": errors,
+        "updated_shows": updated_shows
+    }

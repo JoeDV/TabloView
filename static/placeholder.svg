@@ -1,0 +1,7 @@
+<svg width="400" height="225" viewBox="0 0 400 225" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="400" height="225" fill="#131927"/>
+  <rect x="1" y="1" width="398" height="223" stroke="#232d42" stroke-width="2"/>
+  <circle cx="200" cy="100" r="32" fill="#1e2738"/>
+  <path d="M192 90h16v20h-16zM188 94l12-10 12 10" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="200" y="150" font-family="'Outfit', sans-serif" font-size="14" font-weight="600" fill="#64748b" text-anchor="middle">Tablo TV</text>
+</svg>
