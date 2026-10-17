@@ -181,8 +181,12 @@ class TranscodeManager:
         except Exception as e:
             return Response(content=f"Proxy error: {e}", status_code=502)
 
-    async def start_browser_transcode(self, session_id: str, input_url: str) -> str:
-        """Transcode raw Tablo stream into H.264/AAC HLS for browser video player."""
+    async def start_browser_transcode(self, session_id: str, input_url: str, start: int = 0, live: bool = True) -> str:
+        """Transcode raw Tablo stream into H.264/AAC HLS for browser video player.
+
+        live=True keeps a rolling ~90 s window (live TV). For recordings (live=False) every segment is
+        kept so the player can seek anywhere already transcoded, and `start` (seconds) resumes mid-show.
+        """
         sess = self.get_session(session_id)
         if not sess:
             raise ValueError(f"Session {session_id} not found")
@@ -191,12 +195,23 @@ class TranscodeManager:
         session_dir.mkdir(exist_ok=True, parents=True)
         playlist_output = session_dir / "playlist.m3u8"
 
+        if live:
+            read_args = []
+            hls_args = ["-hls_list_size", "30", "-hls_flags", "delete_segments+independent_segments"]
+        else:
+            # Stay well ahead of playback without racing through the whole file: unthrottled, a
+            # recording transcodes at ~3x and starves a live stream playing at the same time
+            read_args = ["-readrate", "2", "-readrate_initial_burst", "30"]
+            hls_args = ["-hls_list_size", "0", "-hls_playlist_type", "event", "-hls_flags", "independent_segments"]
+
         cmd = [
             FFMPEG_PATH,
             "-y",
             "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
             # Drop corrupt packets from the OTA feed instead of decoding garbage
             "-fflags", "+discardcorrupt",
+            *(["-ss", str(int(start))] if start and start > 0 else []),
+            *read_args,
             "-i", input_url,
             "-vf", "yadif",
             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
@@ -206,9 +221,8 @@ class TranscodeManager:
             "-c:a", "aac", "-b:a", "128k", "-ac", "2",
             "-f", "hls",
             "-hls_time", "3",
-            "-hls_list_size", "30",
-            "-hls_segment_filename", str(session_dir / "%03d.ts"),
-            "-hls_flags", "delete_segments+independent_segments",
+            *hls_args,
+            "-hls_segment_filename", str(session_dir / "%04d.ts"),
             str(playlist_output)
         ]
 

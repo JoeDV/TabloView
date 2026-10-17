@@ -311,6 +311,9 @@ img { display: block; }
 }
 .art-play span { width: 48px; height: 48px; border-radius: 50%; background: rgba(255,255,255,0.95); color: #000; display: grid; place-items: center; }
 .media-card:hover .art-play { opacity: 1; }
+.art-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(0, 0, 0, 0.55); }
+.art-progress > div, .ep-progress > div { height: 100%; background: var(--accent); }
+.ep-progress { height: 3px; background: var(--surface-3); border-radius: 3px; overflow: hidden; margin-top: 6px; max-width: 320px; }
 .media-meta { padding: 10px 2px 0; }
 .media-title { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .media-sub { color: var(--text-3); font-size: 12.5px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

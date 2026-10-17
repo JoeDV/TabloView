@@ -129,6 +129,10 @@ def init_db():
         ga_cols = {r[1] for r in cursor.execute("PRAGMA table_info(guide_airings)").fetchall()}
         if "schedule_state" not in ga_cols:
             cursor.execute("ALTER TABLE guide_airings ADD COLUMN schedule_state TEXT DEFAULT 'none'")
+        ep_cols = {r[1] for r in cursor.execute("PRAGMA table_info(episodes)").fetchall()}
+        if "position" not in ep_cols:
+            # Resume point in seconds, as stored on the Tablo (user_info.position)
+            cursor.execute("ALTER TABLE episodes ADD COLUMN position INTEGER DEFAULT 0")
 
         # Indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_episodes_show_id ON episodes(show_id)")
@@ -206,9 +210,11 @@ def upsert_episode(ep_data: Dict[str, Any]):
         conn.execute("""
             INSERT INTO episodes (
                 id, show_id, show_title, path, season_number, episode_number,
-                title, description, air_date, duration, status, network, channel_name, raw_json, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                title, description, air_date, duration, status, network, channel_name, raw_json, updated_at,
+                position
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
+                position = excluded.position,
                 show_id = excluded.show_id,
                 show_title = excluded.show_title,
                 path = excluded.path,
@@ -238,7 +244,8 @@ def upsert_episode(ep_data: Dict[str, Any]):
             ep_data.get("network", ""),
             ep_data.get("channel_name", ""),
             raw,
-            now
+            now,
+            int(ep_data.get("position") or 0),
         ))
         conn.commit()
 
@@ -308,6 +315,36 @@ def get_episode_by_id(episode_id: str) -> Optional[Dict[str, Any]]:
     with get_connection() as conn:
         row = conn.execute("SELECT * FROM episodes WHERE id = ? OR path = ?", (episode_id, episode_id)).fetchone()
         return dict(row) if row else None
+
+
+def set_episode_progress(episode_id: str, position: Optional[int] = None, watched: Optional[bool] = None):
+    """Mirror a watched/position change made on the Tablo into the cache and refresh show counts."""
+    with get_connection() as conn:
+        row = conn.execute("SELECT show_id FROM episodes WHERE id = ?", (episode_id,)).fetchone()
+        if not row:
+            return
+        if position is not None:
+            # On the Tablo, saving a position also marks the recording unwatched
+            conn.execute("UPDATE episodes SET position = ?, status = 'Unwatched' WHERE id = ?", (int(position), episode_id))
+        if watched is not None:
+            conn.execute("UPDATE episodes SET status = ? WHERE id = ?", ("Watched" if watched else "Unwatched", episode_id))
+        conn.commit()
+    recalculate_show_stats(row["show_id"])
+
+
+def get_in_progress_episodes(limit: int = 20) -> List[Dict[str, Any]]:
+    """Partly watched recordings (resume point saved, not finished), newest airing first.
+    (The Tablo doesn't record when something was last watched, so air date is the best order.)"""
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT e.id, e.show_id, e.show_title, e.title, e.season_number, e.episode_number,
+                   e.duration, e.position, e.air_date, s.cover_url, s.backdrop_url
+            FROM episodes e LEFT JOIN shows s ON s.id = e.show_id
+            WHERE e.position > 0 AND e.status != 'Watched'
+            ORDER BY e.air_date DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+        return [dict(r) for r in rows]
 
 
 def delete_episode(episode_id: str) -> Optional[str]:

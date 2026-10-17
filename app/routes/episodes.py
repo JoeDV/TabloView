@@ -1,15 +1,18 @@
 """Episode actions: playback, transcoding, VLC m3u, MP4 export, and deletion."""
 
+import json
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
 
 from ..database import (
     get_episode_by_id,
     get_show_by_id,
     delete_episode,
-    recalculate_show_stats
+    recalculate_show_stats,
+    set_episode_progress,
+    get_in_progress_episodes,
 )
 from ..tablo_client import tablo_manager
 from ..transcode import transcode_manager
@@ -21,11 +24,56 @@ class BulkDeleteRequest(BaseModel):
     episode_ids: List[str]
 
 
+class ProgressRequest(BaseModel):
+    position: int = Field(ge=0)
+
+
+class WatchedRequest(BaseModel):
+    watched: bool
+
+
+@router.get("/in_progress")
+async def list_in_progress():
+    """Partly watched recordings, for 'Continue watching'."""
+    return {"episodes": get_in_progress_episodes()}
+
+
+@router.post("/{episode_id}/progress")
+async def save_progress(episode_id: str, req: ProgressRequest):
+    """Save the resume point on the Tablo (so the TV app resumes there too)."""
+    ep = get_episode_by_id(episode_id)
+    if not ep:
+        raise HTTPException(status_code=404, detail="Episode not found")
+    resp = await tablo_manager.request_local("PATCH", ep["path"], json.dumps({"position": req.position}))
+    if resp.status_code not in (200, 204):
+        raise HTTPException(status_code=502, detail=f"Tablo error {resp.status_code}")
+    set_episode_progress(ep["id"], position=req.position)
+    return {"success": True, "position": req.position}
+
+
+@router.post("/{episode_id}/watched")
+async def set_watched(episode_id: str, req: WatchedRequest):
+    """Mark a recording watched or unwatched on the Tablo."""
+    ep = get_episode_by_id(episode_id)
+    if not ep:
+        raise HTTPException(status_code=404, detail="Episode not found")
+    # Clear the resume point either way: finished, or explicitly reset to unwatched
+    body = {"watched": True} if req.watched else {"watched": False, "position": 0}
+    resp = await tablo_manager.request_local("PATCH", ep["path"], json.dumps(body))
+    if resp.status_code not in (200, 204):
+        raise HTTPException(status_code=502, detail=f"Tablo error {resp.status_code}")
+    if not req.watched:
+        set_episode_progress(ep["id"], position=0)
+    set_episode_progress(ep["id"], watched=req.watched)
+    return {"success": True, "watched": req.watched, "show": get_show_by_id(ep["show_id"])}
+
+
 @router.post("/{episode_id}/watch")
 async def watch_episode(
     episode_id: str,
     request: Request,
-    transcode: bool = Query(default=True, description="Transcode for browser video player")
+    transcode: bool = Query(default=True, description="Transcode for browser video player"),
+    start: int = Query(default=0, ge=0, description="Resume point in seconds"),
 ):
     """Obtain stream URL from Tablo and initialize proxy/transcoder session."""
     ep = get_episode_by_id(episode_id)
@@ -46,7 +94,7 @@ async def watch_episode(
 
     if transcode:
         try:
-            stream_url = await transcode_manager.start_browser_transcode(sess.session_id, playlist_url)
+            stream_url = await transcode_manager.start_browser_transcode(sess.session_id, playlist_url, start=start, live=False)
         except Exception as e:
             print(f"Transcode failed, falling back to direct proxy: {e}")
             stream_url = f"/api/hls/{sess.session_id}/playlist.m3u8"

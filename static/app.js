@@ -420,6 +420,24 @@ function showCard(s) {
     </div>`;
 }
 
+function continueCard(ep) {
+  const pct = ep.duration ? Math.min(100, Math.round((ep.position / ep.duration) * 100)) : 0;
+  const left = fmt.dur((ep.duration || 0) - (ep.position || 0));
+  const se = fmt.se(ep.season_number, ep.episode_number);
+  return `
+    <div class="media-card" data-action="play-ep" data-id="${esc(ep.id)}" data-mode="resume" title="Resume ${esc(ep.show_title)}">
+      <div class="media-art">
+        ${artImg(ep.backdrop_url || ep.cover_url, ep.show_title)}
+        <div class="art-play"><span>${icon('play', 20)}</span></div>
+        <div class="art-progress"><div style="width:${pct}%"></div></div>
+      </div>
+      <div class="media-meta">
+        <div class="media-title">${esc(ep.show_title)}</div>
+        <div class="media-sub">${se ? `${se} · ` : ''}${esc(episodeTitle(ep))}${left ? ` · <span class="hl">${left} left</span>` : ''}</div>
+      </div>
+    </div>`;
+}
+
 function recButton(g) {
   const rule = g.schedule_rule || 'none';
   const on = rule === 'new' || rule === 'all';
@@ -586,13 +604,15 @@ async function pickDevice(sid) {
 PAGES.home = async (r, token) => {
   paint(`<div class="page"><div class="page-head"><div><h1 class="page-title">Home</h1><div class="page-sub">&nbsp;</div></div></div>${skeletonGrid(5)}</div>`);
 
-  const [shows, sched, prem, prime] = await Promise.allSettled([
+  const [shows, sched, prem, prime, progress] = await Promise.allSettled([
     loadShows(),
     loadScheduled(),
     api('/api/guide/shows?highlight=premieres&sort=soonest&limit=24').then(r => cacheGuide(r.shows)),
     api('/api/guide/shows?highlight=primetime_new&sort=soonest&limit=30').then(r => cacheGuide(r.shows)),
+    api('/api/episodes/in_progress').then(r => r.episodes || []),
   ]);
   if (stale(token)) return;
+  state.inProgress = progress.value || [];
 
   const showList = shows.value || [];
   const schedList = sched.value || [];
@@ -600,6 +620,14 @@ PAGES.home = async (r, token) => {
   const unwatched = showList.reduce((n, s) => n + (s.unwatched_count || 0), 0);
 
   const parts = [];
+
+  if (state.inProgress.length) {
+    parts.push(section({
+      title: 'Continue watching',
+      rowId: state.inProgress.length > 5 ? 'rowContinue' : '',
+      body: `<div class="card-row" id="rowContinue">${state.inProgress.map(continueCard).join('')}</div>`,
+    }));
+  }
 
   if (shows.status === 'rejected') {
     parts.push(section({ title: 'Recordings', body: errorState(shows.reason) }));
@@ -764,7 +792,9 @@ function renderShowPage() {
   const unwatched = eps.filter(e => e.status !== 'Watched');
   const watchedCount = eps.length - unwatched.length;
   const totalSec = eps.reduce((n, e) => n + (e.duration || 0), 0);
-  const nextEp = unwatched[0] || eps[0];
+  // Prefer an episode in progress, then the oldest unwatched one
+  const nextEp = unwatched.find(e => (e.position || 0) > 30) || unwatched[0] || eps[0];
+  const nextLabel = nextEp && nextEp.status !== 'Watched' && (nextEp.position || 0) > 30 ? 'Resume' : (unwatched.length ? 'Play next' : 'Play');
   const bg = imgUrl(s.backdrop_url || s.cover_url);
   const network = (eps.find(e => e.network) || {}).network;
 
@@ -782,7 +812,10 @@ function renderShowPage() {
           <div class="hero-stats">${plural(eps.length, 'episode')} · ${unwatched.length} unwatched${totalSec ? ` · ${fmt.dur(totalSec)} total` : ''}</div>
           ${s.description ? `<p class="hero-desc" data-action="toggle-desc" title="Click to expand">${esc(s.description)}</p>` : ''}
           <div class="hero-actions">
-            ${nextEp ? `<button class="btn btn-primary btn-lg" data-action="play-ep" data-id="${esc(nextEp.id)}">${icon('play', 16)}${unwatched.length ? 'Play next' : 'Play'}: ${esc(fmt.se(nextEp.season_number, nextEp.episode_number) || episodeTitle(nextEp))}</button>` : ''}
+            ${nextEp ? `<button class="btn btn-primary btn-lg" data-action="play-ep" data-id="${esc(nextEp.id)}" ${nextLabel === 'Resume' ? 'data-mode="resume"' : ''}>${icon('play', 16)}${nextLabel}: ${esc(fmt.se(nextEp.season_number, nextEp.episode_number) || episodeTitle(nextEp))}</button>` : ''}
+            ${unwatched.length
+              ? `<button class="btn btn-lg" data-action="mark-show-watched" data-value="true">${icon('check', 16)}Mark all watched</button>`
+              : (eps.length ? `<button class="btn btn-lg" data-action="mark-show-watched" data-value="false">${icon('x', 16)}Mark all unwatched</button>` : '')}
             ${watchedCount ? `<button class="btn btn-lg btn-danger" data-action="delete-watched">${icon('trash', 16)}Delete ${watchedCount} watched</button>` : ''}
             <span id="seriesLinkSlot"></span>
           </div>
@@ -810,7 +843,18 @@ function episodeStatus(ep) {
       ? `<span class="tag tag-warn" title="Recording stopped after ${mins} min (${why})">Partial · ${mins}m</span>`
       : `<span class="tag tag-rec" title="Recording failed (${why})">Failed</span>`;
   }
-  return ep.status === 'Watched' ? '<span class="dim">Watched</span>' : '<span class="tag tag-accent">Unwatched</span>';
+  if (ep.status === 'Watched') return '<span class="dim">Watched</span>';
+  if ((ep.position || 0) > 30) {
+    const left = fmt.dur((ep.duration || 0) - ep.position);
+    return `<span class="tag tag-accent" title="Stopped at ${fmtClock(ep.position)}">${left ? `${left} left` : 'In progress'}</span>`;
+  }
+  return '<span class="tag tag-accent">Unwatched</span>';
+}
+
+function progressBar(ep) {
+  if (ep.status === 'Watched' || !((ep.position || 0) > 30) || !ep.duration) return '';
+  const pct = Math.min(100, Math.round((ep.position / ep.duration) * 100));
+  return `<div class="ep-progress"><div style="width:${pct}%"></div></div>`;
 }
 
 function episodeRow(ep) {
@@ -824,6 +868,7 @@ function episodeRow(ep) {
       <div class="ep-main">
         <div class="ep-title">${esc(episodeTitle(ep))}</div>
         ${ep.description ? `<div class="ep-desc" title="${esc(ep.description)}">${esc(ep.description)}</div>` : ''}
+        ${progressBar(ep)}
       </div>
       <div class="ep-cell">${esc(fmt.day(ep.air_date))}</div>
       <div class="ep-cell">${esc(fmt.dur(ep.duration))}</div>
@@ -1687,24 +1732,61 @@ const player = {
     this.idleTimer = setTimeout(() => el.classList.add('idle'), 2800);
   },
 
-  async playEpisode(id) {
-    const ep = state.episodes.find(e => e.id === id);
-    const title = ep ? `${state.show ? state.show.title + ' · ' : ''}${fmt.se(ep.season_number, ep.episode_number) ? fmt.se(ep.season_number, ep.episode_number) + ' · ' : ''}${episodeTitle(ep)}` : 'Recording';
+  // mode: undefined = ask if there's a resume point, 'resume', or 'start' (from the beginning)
+  async playEpisode(id, mode) {
+    const ep = findEpisode(id);
+    const resumable = ep && ep.status !== 'Watched' && (ep.position || 0) > 30;
+    if (resumable && !mode) {
+      mode = await chooseResume(ep);
+      if (!mode) return;
+    }
+    const start = resumable && mode === 'resume' ? ep.position : 0;
+    const showTitle = ep ? ep.show_title || (state.show && state.show.title) || '' : '';
+    const se = ep ? fmt.se(ep.season_number, ep.episode_number) : '';
+    const title = ep ? [showTitle, se, episodeTitle(ep)].filter(Boolean).join(' · ') : 'Recording';
+
+    this.finishEpisode();
     this.stopStream();
-    state.stream.episodeId = id;
-    state.stream.channelId = null;
+    Object.assign(state.stream, {
+      episodeId: id, channelId: null, offset: start, duration: ep ? ep.duration || 0 : 0,
+      lastSaved: start, markedWatched: false,
+    });
     this.open(title);
-    this.setStatus(`<span class="wait">Starting stream…</span>`);
+    this.setStatus(`<span class="wait">${start ? `Resuming at ${fmtClock(start)}…` : 'Starting stream…'}</span>`);
     try {
-      const res = await api(`/api/episodes/${encodeURIComponent(id)}/watch?transcode=true`, { method: 'POST' });
+      const res = await api(`/api/episodes/${encodeURIComponent(id)}/watch?transcode=true&start=${start}`, { method: 'POST' });
       state.stream.sessionId = res.session_id;
-      this.start(res.stream_url, 'Recording');
+      this.start(res.stream_url, start ? `Resumed at ${fmtClock(start)}` : 'Recording');
+      state.stream.progressTimer = setInterval(() => this.saveProgress(), 30000);
     } catch (err) {
       this.setStatus(`<span style="color:var(--rec)">Couldn't start playback: ${esc(err.message)}. Try “Open in VLC”.</span>`);
     }
   },
 
+  // Position in the recording (the stream may have started at a resume point)
+  position() {
+    return Math.floor((state.stream.offset || 0) + (this.video().currentTime || 0));
+  },
+
+  // Save the resume point on the Tablo; near the end, mark the recording watched instead
+  saveProgress({ final = false } = {}) {
+    const s = state.stream;
+    if (!s.episodeId || s.markedWatched) return;
+    const pos = this.position();
+    const nearEnd = s.duration && pos >= s.duration - Math.max(120, s.duration * 0.05);
+    if (nearEnd) {
+      s.markedWatched = true;
+      sendProgress(s.episodeId, { watched: true }, final);
+      return;
+    }
+    if (pos > 30 && Math.abs(pos - (s.lastSaved || 0)) >= 10) {
+      s.lastSaved = pos;
+      sendProgress(s.episodeId, { position: pos }, final);
+    }
+  },
+
   async watchLive(channelId, name) {
+    this.finishEpisode();
     this.stopStream();
     state.stream.channelId = channelId;
     state.stream.episodeId = null;
@@ -1792,7 +1874,16 @@ const player = {
     }).catch(() => {});
   },
 
+  // Save where the current recording got to before switching or closing
+  finishEpisode() {
+    if (state.stream.episodeId) this.saveProgress({ final: true });
+    clearInterval(state.stream.progressTimer);
+    state.stream.progressTimer = null;
+  },
+
   close() {
+    const hadEpisode = !!state.stream.episodeId;
+    this.finishEpisode();
     this.teardown();
     const video = this.video();
     video.pause();
@@ -1803,6 +1894,7 @@ const player = {
     if (state.stream.channelId) setTimeout(checkTuners, 1000);
     state.stream.channelId = null;
     state.stream.episodeId = null;
+    if (hadEpisode) rerenderAfterProgress();
   },
 
   openInVlc() {
@@ -1812,6 +1904,91 @@ const player = {
 
   isOpen() { return !this.el().classList.contains('hidden'); },
 };
+
+function fmtClock(sec) {
+  sec = Math.max(0, Math.floor(sec || 0));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function findEpisode(id) {
+  return state.episodes.find(e => e.id === id) || (state.inProgress || []).find(e => e.id === id) || null;
+}
+
+function chooseResume(ep) {
+  const left = fmt.dur((ep.duration || 0) - (ep.position || 0));
+  return openModal(`
+    <div class="dialog-body">
+      <div class="dialog-title">${esc(episodeTitle(ep))}</div>
+      <div class="dialog-text">You stopped at ${fmtClock(ep.position)}${left ? ` (${left} left)` : ''}.</div>
+    </div>
+    <div class="dialog-foot">
+      <button class="btn" data-action="modal-value" data-value="start">Start from beginning</button>
+      <button class="btn btn-primary" data-action="modal-value" data-value="resume" data-autofocus>${icon('play', 14)}Resume from ${fmtClock(ep.position)}</button>
+    </div>`);
+}
+
+// Save progress / watched on the Tablo and mirror it locally. keepalive lets it finish while closing.
+function sendProgress(id, body, keepalive = false) {
+  const url = body.watched !== undefined
+    ? `/api/episodes/${encodeURIComponent(id)}/watched`
+    : `/api/episodes/${encodeURIComponent(id)}/progress`;
+  fetch(url, { method: 'POST', headers: API_HEADERS, body: JSON.stringify(body), keepalive })
+    .then(r => { if (!r.ok) throw new Error(r.status); })
+    .catch(err => console.warn('Saving progress failed:', err));
+  applyProgressLocally(id, body);
+}
+
+function applyProgressLocally(id, body) {
+  for (const list of [state.episodes, state.inProgress || []]) {
+    const ep = list.find(e => e.id === id);
+    if (!ep) continue;
+    if (body.watched === true) { ep.status = 'Watched'; }
+    if (body.watched === false) { ep.status = 'Unwatched'; ep.position = 0; }
+    if (body.position !== undefined) { ep.position = body.position; ep.status = 'Unwatched'; }
+  }
+  if (state.show) {
+    state.show.unwatched_count = state.episodes.filter(e => e.status !== 'Watched').length;
+  }
+  state.shows = null;
+}
+
+async function setWatched(id, watched) {
+  try {
+    const res = await api(`/api/episodes/${encodeURIComponent(id)}/watched`, { method: 'POST', body: JSON.stringify({ watched }) });
+    applyProgressLocally(id, { watched });
+    if (res.show) state.show = res.show;
+    toast(watched ? 'Marked as watched' : 'Marked as unwatched', 'success');
+    rerenderAfterProgress();
+  } catch (err) {
+    toast(`Couldn't update: ${err.message}`, 'error');
+  }
+}
+
+async function markShowWatched(watched) {
+  if (!state.show) return;
+  try {
+    const res = await api(`/api/shows/mark_watched?show_id=${encodeURIComponent(state.show.id)}&watched=${watched}`, { method: 'POST' });
+    (res.changed_ids || []).forEach(id => applyProgressLocally(id, { watched }));
+    if (res.show) state.show = res.show;
+    toast(`${watched ? 'Marked' : 'Unmarked'} ${plural((res.changed_ids || []).length, 'episode')} as watched`, 'success');
+    if (res.errors && res.errors.length) toast(`${res.errors.length} couldn't be updated: ${res.errors[0]}`, 'error');
+    rerenderAfterProgress();
+  } catch (err) {
+    toast(`Couldn't update: ${err.message}`, 'error');
+  }
+}
+
+function rerenderAfterProgress() {
+  const name = parseRoute().name;
+  if (name === 'show' && state.show) {
+    const scroll = view().scrollTop;
+    renderShowPage();
+    view().scrollTop = scroll;
+  } else if (name === 'home') {
+    refreshCurrentPageQuietly();
+  }
+}
 
 function openVlc(url) {
   window.location.href = url;
@@ -1884,11 +2061,17 @@ const ACTIONS = {
   'library-filter': el => { state.library.filter = el.dataset.value; $$('[data-action="library-filter"]').forEach(b => b.classList.toggle('active', b === el)); renderLibraryGrid(); },
   'library-layout': el => { state.library.layout = el.dataset.value; save('tv_lib_layout', el.dataset.value); $$('[data-action="library-layout"]').forEach(b => b.classList.toggle('active', b === el)); renderLibraryGrid(); },
 
-  'play-ep': el => player.playEpisode(el.dataset.id),
+  'play-ep': el => player.playEpisode(el.dataset.id, el.dataset.mode),
   'ep-menu': el => {
     const id = el.dataset.id;
+    const ep = findEpisode(id) || {};
+    const inProgress = ep.status !== 'Watched' && (ep.position || 0) > 30;
     openMenu(el, [
-      { label: 'Play in browser', icon: 'play', run: () => player.playEpisode(id) },
+      { label: inProgress ? `Resume from ${fmtClock(ep.position)}` : 'Play in browser', icon: 'play', run: () => player.playEpisode(id, 'resume') },
+      ...(inProgress ? [{ label: 'Play from beginning', icon: 'refresh', run: () => player.playEpisode(id, 'start') }] : []),
+      ep.status === 'Watched'
+        ? { label: 'Mark as unwatched', icon: 'x', run: () => setWatched(id, false) }
+        : { label: 'Mark as watched', icon: 'check', run: () => setWatched(id, true) },
       { label: 'Open in VLC', icon: 'external', run: () => openVlc(`/api/episodes/${encodeURIComponent(id)}/playlist.m3u`) },
       { label: 'Export MP4', icon: 'download', run: () => exportEpisode(id) },
       { sep: true },
@@ -1919,6 +2102,8 @@ const ACTIONS = {
   'watch-live': el => player.watchLive(el.dataset.id, el.dataset.name),
 
   'modal-ok': () => closeModal(true),
+  'modal-value': el => closeModal(el.dataset.value),
+  'mark-show-watched': el => markShowWatched(el.dataset.value !== 'false'),
   'modal-cancel': () => closeModal(false),
   'modal-watch-live': el => { closeModal(false); player.watchLive(el.dataset.id, el.dataset.name); },
   'modal-live-vlc': el => { closeModal(false); openVlc(`/api/live/vlc/${encodeURIComponent(el.dataset.id)}`); setTimeout(checkTuners, 2500); },
@@ -2091,7 +2276,10 @@ function wireEvents() {
 
   window.addEventListener('hashchange', route);
   // Stop the backend FFmpeg session if the tab is closed mid-playback
-  window.addEventListener('pagehide', () => player.stopStream({ keepalive: true }));
+  window.addEventListener('pagehide', () => {
+    if (state.stream.episodeId) player.saveProgress({ final: true });
+    player.stopStream({ keepalive: true });
+  });
 }
 
 // ---------------------------------------------------------------------------

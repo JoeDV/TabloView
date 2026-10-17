@@ -183,6 +183,7 @@ class LibrarySyncService:
                     "air_date": ad.get("datetime") or "",
                     "duration": duration,
                     "status": status,
+                    "position": user_info.get("position") or 0,
                     "network": ch.get("network", ""),
                     "channel_name": ch.get("call_sign") or ch.get("name", ""),
                     "raw_json": data
