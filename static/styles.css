@@ -418,7 +418,7 @@ img { display: block; }
 .panel .panel-sub { color: var(--text-3); font-size: 13px; margin-bottom: 16px; }
 .kv { display: grid; grid-template-columns: 130px 1fr; gap: 8px 12px; font-size: 13px; }
 .kv dt { color: var(--text-3); }
-.kv dd { color: var(--text); word-break: break-all; }
+.kv dd { color: var(--text); overflow-wrap: anywhere; }
 .panel-actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
 .code-block {
   background: #080a0e; border: 1px solid var(--border); border-radius: 10px;
