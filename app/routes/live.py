@@ -170,7 +170,8 @@ _model_tuner_count: Dict[str, int] = {}
 
 async def model_tuner_count() -> Optional[int]:
     """Antenna tuners per the device model (e.g. 4 for a QUAD), cached per device.
-    /server/tuners lists more slots than that (8 on a 4G QUAD), so it can't be counted directly."""
+    /server/tuners lists twice that on a 4G QUAD: the first N slots are the antenna (OTA) tuners,
+    the rest are virtual slots used by streaming (FAST) channels (verified by tuning one of each)."""
     sid = tablo_manager.device.sid
     if sid not in _model_tuner_count:
         try:
@@ -194,17 +195,19 @@ async def get_tuner_status():
         if resp.status_code == 200:
             tuners = resp.json()
             total = await model_tuner_count() or len(tuners)
-            in_use = min(sum(1 for t in tuners if t.get("in_use")), total)
+            in_use = sum(1 for t in tuners[:total] if t.get("in_use"))
+            streams_in_use = sum(1 for t in tuners[total:] if t.get("in_use"))
             return {
                 "tuners": tuners,
                 "total": total,
                 "in_use": in_use,
-                "available": total - in_use
+                "available": total - in_use,
+                "streams_in_use": streams_in_use,
             }
     except Exception as e:
         print(f"[LiveTV] Error reading tuners: {e}")
 
-    return {"tuners": [], "total": 2, "in_use": 0, "available": 2}
+    return {"tuners": [], "total": 0, "in_use": 0, "available": 0, "streams_in_use": 0}
 
 
 @router.get("/channels")
