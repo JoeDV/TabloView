@@ -20,8 +20,17 @@ if ($LASTEXITCODE -ne 0) { throw 'pip install failed' }
 # 1b. Unit tests must pass before anything is packaged (they use a throwaway data folder)
 if (-not $env:TABLOVIEW_SKIP_TESTS) {
     Write-Host 'Running unit tests...'
-    & $Py -m unittest discover -s tests/unit -t . 2>&1 | Select-String -Pattern '^(Ran |OK|FAILED|ERROR:|FAIL:)'
-    if ($LASTEXITCODE -ne 0) { throw 'Unit tests failed; not building. (Set TABLOVIEW_SKIP_TESTS=1 to override.)' }
+    # unittest reports on stderr; PowerShell 5.1 would turn that into a terminating error under 'Stop',
+    # so relax it here and judge by the exit code
+    $ErrorActionPreference = 'Continue'
+    $TestOutput = & $Py -m unittest discover -s tests/unit -t . 2>&1 | ForEach-Object { "$_" }
+    $TestExit = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    $TestOutput | Select-String -Pattern '^(Ran |OK|FAILED|ERROR:|FAIL:)'
+    if ($TestExit -ne 0) {
+        $TestOutput | Select-Object -Last 40
+        throw 'Unit tests failed; not building. (Set TABLOVIEW_SKIP_TESTS=1 to override.)'
+    }
 }
 
 # 2. Clear previous outputs. Folders on this machine can pick up the ReadOnly attribute,
