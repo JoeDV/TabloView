@@ -151,7 +151,7 @@ class TabloApp {
   async api(endpoint, options = {}) {
     try {
       const res = await fetch(endpoint, {
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-TabloView': '1' },
         ...options
       });
       if (!res.ok) {
@@ -705,7 +705,7 @@ class TabloApp {
     this.currentStreamSessionId = null;
     fetch('/api/live/stop', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-TabloView': '1' },
       body: JSON.stringify({ session_id: sessionId }),
       keepalive
     }).catch(e => console.warn('Stream session stop notification:', e));

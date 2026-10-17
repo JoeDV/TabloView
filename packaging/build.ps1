@@ -1,0 +1,65 @@
+# Builds dist\TabloView-Setup-<version>.exe
+#   powershell -ExecutionPolicy Bypass -File packaging\build.ps1
+# Needs: Python 3.12, FFmpeg (winget install Gyan.FFmpeg.Essentials), Inno Setup 6 (winget install JRSoftware.InnoSetup)
+$ErrorActionPreference = 'Stop'
+$Root = Split-Path -Parent $PSScriptRoot
+Set-Location $Root
+
+$Version = (Select-String -Path app\config.py -Pattern 'APP_VERSION = "(.+)"').Matches[0].Groups[1].Value
+Write-Host "Building TabloView $Version" -ForegroundColor Cyan
+
+# 1. Isolated build environment
+$Py = Join-Path $Root '.build-venv\Scripts\python.exe'
+if (-not (Test-Path $Py)) {
+    python -m venv .build-venv
+    & $Py -m pip install --upgrade pip
+}
+& $Py -m pip install -q -r requirements.txt pyinstaller pystray pillow
+if ($LASTEXITCODE -ne 0) { throw 'pip install failed' }
+
+# 2. Stage FFmpeg, icon and version resource
+$Stage = Join-Path $Root 'build\stage'
+Remove-Item -Recurse -Force $Stage -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force (Join-Path $Stage 'ffmpeg') | Out-Null
+
+$Ffmpeg = & $Py -c "import sys; sys.path.insert(0, '.'); from app.config import find_ffmpeg; print(find_ffmpeg())"
+if (-not (Test-Path $Ffmpeg)) { throw "FFmpeg not found ($Ffmpeg). Install it: winget install Gyan.FFmpeg.Essentials" }
+Copy-Item $Ffmpeg (Join-Path $Stage 'ffmpeg\ffmpeg.exe')
+$FfmpegRoot = Split-Path -Parent (Split-Path -Parent $Ffmpeg)
+foreach ($f in 'LICENSE', 'README.txt') {
+    $src = Join-Path $FfmpegRoot $f
+    if (Test-Path $src) { Copy-Item $src (Join-Path $Stage "ffmpeg\FFmpeg-$f.txt") }
+}
+
+& $Py -c "import sys; sys.path.insert(0, '.'); from app.icon import save_ico; save_ico(r'$Stage\tabloview.ico')"
+
+$v = ($Version.Split('.') + @('0', '0', '0'))[0..3] -join ', '
+@"
+VSVersionInfo(
+  ffi=FixedFileInfo(filevers=($v), prodvers=($v)),
+  kids=[StringFileInfo([StringTable('040904B0', [
+    StringStruct('CompanyName', 'Joe Del Vecchio'),
+    StringStruct('FileDescription', 'TabloView'),
+    StringStruct('FileVersion', '$Version'),
+    StringStruct('ProductName', 'TabloView'),
+    StringStruct('ProductVersion', '$Version'),
+    StringStruct('OriginalFilename', 'TabloView.exe')])]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])]
+)
+"@ | Set-Content -Encoding ascii (Join-Path $Stage 'version_info.txt')
+
+# 3. Bundle the app (never include local credentials or caches)
+& $Py -m PyInstaller packaging\tabloview.spec --noconfirm --clean --distpath dist --workpath build\pyinstaller
+if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed' }
+
+$Leaks = Get-ChildItem -Recurse dist\TabloView -Include 'config.json', '.env', '*.db', 'settings.json' -ErrorAction SilentlyContinue
+if ($Leaks) { throw "Refusing to package local data: $($Leaks.FullName -join ', ')" }
+
+# 4. Installer
+$Iscc = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $Iscc) { throw 'Inno Setup not found. Install it: winget install JRSoftware.InnoSetup' }
+& $Iscc /Q "/DAppVersion=$Version" packaging\installer.iss
+if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed' }
+
+$Out = Get-Item "dist\TabloView-Setup-$Version.exe"
+Write-Host ("Done: {0} ({1:N0} MB)" -f $Out.FullName, ($Out.Length / 1MB)) -ForegroundColor Green

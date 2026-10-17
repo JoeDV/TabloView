@@ -535,6 +535,40 @@ img { display: block; }
 @keyframes pop { from { opacity: 0; transform: scale(0.97); } }
 @keyframes slide-in { from { opacity: 0; transform: translateX(16px); } }
 
+/* ---------- Sign-in (first run) ---------- */
+body.signed-out .app { grid-template-columns: 1fr; }
+body.signed-out .sidebar, body.signed-out .topbar { display: none; }
+.welcome {
+  min-height: 100%; display: grid; place-items: center; padding: 40px 20px;
+  background: radial-gradient(ellipse at 50% 0%, rgba(91, 140, 255, 0.16), transparent 60%);
+}
+.welcome-card {
+  width: min(420px, 100%); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 18px; padding: 34px 32px 28px; box-shadow: var(--shadow);
+}
+.welcome-mark { width: 52px; height: 52px; border-radius: 14px; margin-bottom: 20px; }
+.welcome-title { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+.welcome-text { color: var(--text-2); margin: 8px 0 22px; }
+.welcome-form { max-width: none; }
+.welcome-form .input { height: 42px; }
+.welcome-fine { color: var(--text-3); font-size: 12px; margin-top: 18px; }
+.device-pick { display: flex; flex-direction: column; gap: 8px; }
+.device-option {
+  display: flex; align-items: center; gap: 14px; text-align: left; width: 100%;
+  padding: 14px 16px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border);
+}
+.device-option:hover { border-color: var(--accent); background: var(--hover); }
+.device-option > span { flex: 1; display: flex; flex-direction: column; }
+.device-option .dim { font-size: 12px; }
+
+.switch-row { display: flex; align-items: center; gap: 12px; cursor: pointer; font-weight: 500; }
+.switch { appearance: none; width: 38px; height: 22px; border-radius: 22px; background: var(--surface-3); border: 1px solid var(--border-strong); position: relative; cursor: pointer; transition: background 0.15s; flex-shrink: 0; }
+.switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--text-2); transition: transform 0.15s, background 0.15s; }
+.switch:checked { background: var(--accent); border-color: var(--accent); }
+.switch:checked::after { transform: translateX(16px); background: #fff; }
+.switch:disabled { opacity: 0.5; }
+code { font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace; font-size: 12px; background: var(--surface-3); padding: 1px 5px; border-radius: 4px; }
+
 /* ---------- Narrower desktop windows ---------- */
 @media (max-width: 1180px) {
   :root { --sidebar-w: 68px; }

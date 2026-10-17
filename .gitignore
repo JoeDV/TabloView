@@ -23,3 +23,8 @@ debug_data/
 .DS_Store
 Thumbs.db
 .idea/
+
+# Packaging
+.build-venv/
+build/
+dist/

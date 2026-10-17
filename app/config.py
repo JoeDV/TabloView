@@ -1,42 +1,68 @@
-"""Configuration and environment management for Tablo Classic UI."""
+"""Configuration and environment management for TabloView.
+
+Two layouts:
+- Source checkout (developer): everything lives next to the code, as before.
+- Packaged app (PyInstaller): bundled files are read-only in the install folder; each Windows
+  user's settings, cache and transcodes live in %LOCALAPPDATA%\\TabloView, and MP4 exports go
+  to their Downloads\\TabloView folder.
+"""
 
 import os
+import sys
 import shutil
 from pathlib import Path
-from dotenv import load_dotenv
 
-load_dotenv()
+APP_NAME = "TabloView"
+APP_VERSION = "1.0.0"
 
+IS_PACKAGED = getattr(sys, "frozen", False)
+
+# Read-only resources (static UI, bundled ffmpeg)
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
-DATA_DIR.mkdir(exist_ok=True, parents=True)
+RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", BASE_DIR))
+STATIC_DIR = RESOURCE_DIR / "static"
 
-DOWNLOADS_DIR = BASE_DIR / "downloads"
-DOWNLOADS_DIR.mkdir(exist_ok=True, parents=True)
+if IS_PACKAGED:
+    _local = Path(os.getenv("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    HOME_DIR = Path(os.getenv("TABLOVIEW_HOME") or _local / APP_NAME)
+    DOWNLOADS_DIR = Path.home() / "Downloads" / APP_NAME
+else:
+    # Developer checkout: credentials may come from .env next to the code
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR / ".env")
+    HOME_DIR = Path(os.getenv("TABLOVIEW_HOME") or BASE_DIR)
+    DOWNLOADS_DIR = HOME_DIR / "downloads"
 
-TRANSCODE_DIR = BASE_DIR / "transcode"
-TRANSCODE_DIR.mkdir(exist_ok=True, parents=True)
-
+DATA_DIR = HOME_DIR / "data"
+TRANSCODE_DIR = HOME_DIR / "transcode"
+LOG_DIR = HOME_DIR / "logs"
 IMAGE_CACHE_DIR = DATA_DIR / "images"
-IMAGE_CACHE_DIR.mkdir(exist_ok=True, parents=True)
+
+for _d in (DATA_DIR, TRANSCODE_DIR, DOWNLOADS_DIR, IMAGE_CACHE_DIR, LOG_DIR):
+    _d.mkdir(exist_ok=True, parents=True)
 
 CONFIG_FILE = DATA_DIR / "config.json"
+SETTINGS_FILE = DATA_DIR / "settings.json"
 DB_FILE = DATA_DIR / "tablo_cache.db"
 
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "7070"))
 
-TABLO_EMAIL = os.getenv("TABLO_EMAIL", "")
-TABLO_PASSWORD = os.getenv("TABLO_PASSWORD", "")
+# Only honoured in a developer checkout; packaged users sign in through the UI
+TABLO_EMAIL = "" if IS_PACKAGED else os.getenv("TABLO_EMAIL", "")
+TABLO_PASSWORD = "" if IS_PACKAGED else os.getenv("TABLO_PASSWORD", "")
+
 
 def find_ffmpeg() -> str:
-    """Locate ffmpeg binary on the system."""
-    # 1. System PATH
+    """Locate ffmpeg: bundled copy first, then PATH, then the WinGet install location."""
+    bundled = RESOURCE_DIR / "ffmpeg" / "ffmpeg.exe"
+    if bundled.is_file():
+        return str(bundled)
+
     found = shutil.which("ffmpeg")
     if found:
         return found
-    
-    # 2. Windows WinGet default location for Gyan.FFmpeg
+
     user_profile = os.getenv("USERPROFILE", "")
     if user_profile:
         winget_path = Path(user_profile) / "AppData/Local/Microsoft/WinGet/Packages"
@@ -46,5 +72,6 @@ def find_ffmpeg() -> str:
                     return str(p)
 
     return "ffmpeg"
+
 
 FFMPEG_PATH = find_ffmpeg()

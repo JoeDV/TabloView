@@ -63,8 +63,11 @@ function plural(n, word, pluralWord) {
   return `${n} ${n === 1 ? word : (pluralWord || word + 's')}`;
 }
 
+// The server rejects state-changing requests without X-TabloView (blocks other websites)
+const API_HEADERS = { 'Content-Type': 'application/json', 'X-TabloView': '1' };
+
 async function api(url, options = {}) {
-  const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...options });
+  const res = await fetch(url, { headers: API_HEADERS, ...options });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.detail || `${res.status} ${res.statusText}`);
@@ -476,6 +479,12 @@ const NAV_FOR = { show: 'library', series: 'guide' };
 
 function route() {
   const r = parseRoute();
+  // Not signed in: everything except the sign-in screen redirects there
+  const signedOut = !!(state.status && !state.status.authenticated);
+  document.body.classList.toggle('signed-out', signedOut || r.name === 'welcome');
+  if (signedOut && r.name !== 'welcome') { location.replace('#/welcome'); return; }
+  if (!signedOut && r.name === 'welcome' && !state.pickingDevice) { location.replace('#/'); return; }
+
   const token = ++routeToken;
   pageTimers.forEach(t => clearInterval(t));
   pageTimers = [];
@@ -502,6 +511,55 @@ function stale(token) { return token !== routeToken; }
 function paint(html) {
   view().innerHTML = html;
   hydrateIcons(view());
+}
+
+// ---------------------------------------------------------------------------
+// Welcome / sign-in (first run, or after signing out)
+// ---------------------------------------------------------------------------
+PAGES.welcome = async () => {
+  const devices = (state.status && state.status.devices) || [];
+  const picking = state.pickingDevice && devices.length > 1;
+  paint(`<div class="welcome">
+    <div class="welcome-card">
+      <div class="brand-mark welcome-mark">${icon('tv', 26)}</div>
+      ${picking ? `
+        <h1 class="welcome-title">Choose your Tablo</h1>
+        <p class="welcome-text">Your account has more than one Tablo. Which one should TabloView use?</p>
+        <div class="device-pick">
+          ${devices.map(d => `<button class="device-option" data-action="pick-device" data-sid="${esc(d.sid)}">
+            ${icon('tv', 20)}<span><b>${esc(d.name)}</b><span class="dim">${esc(d.local_url || '')}</span></span>${icon('next', 16)}
+          </button>`).join('')}
+        </div>` : `
+        <h1 class="welcome-title">Welcome to TabloView</h1>
+        <p class="welcome-text">Sign in with your Tablo account to find the Tablo DVR on your home network.</p>
+        <form class="form-col welcome-form" data-form="login">
+          <input class="input" name="email" type="email" placeholder="Tablo account email" required autocomplete="username" autofocus>
+          <input class="input" name="password" type="password" placeholder="Password" required autocomplete="current-password">
+          <button class="btn btn-primary btn-lg" type="submit">Sign in</button>
+        </form>
+        <p class="welcome-fine">Your password is sent only to Tablo's sign-in service and is never saved. TabloView keeps just the device access it gets back, on this computer.</p>`}
+    </div>
+  </div>`);
+};
+
+function friendlyLoginError(msg) {
+  // The server already passes through Tablo's own message (e.g. wrong password); translate the rest
+  if (/no tablo devices/i.test(msg)) return 'No Tablo was found on this account.';
+  if (/timed? ?out|connection|resolve|unreachable|getaddrinfo/i.test(msg)) return "Couldn't reach Tablo's sign-in service. Check your internet connection.";
+  return msg;
+}
+
+async function pickDevice(sid) {
+  try {
+    await api(`/api/auth/select/${encodeURIComponent(sid)}`, { method: 'POST' });
+    state.pickingDevice = false;
+    state.shows = null;
+    await loadStatus();
+    setSyncState(true);
+    location.hash = '#/';
+  } catch (err) {
+    toast(`Couldn't select that Tablo: ${err.message}`, 'error');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -535,6 +593,8 @@ PAGES.home = async (r, token) => {
       rowId: 'rowRecent',
       body: `<div class="card-row" id="rowRecent">${showList.slice(0, 20).map(showCard).join('')}</div>`,
     }));
+  } else if (state.isSyncing) {
+    parts.push(section({ title: 'Recordings', body: `<div class="list"><div class="loading-line"><span class="spinner"></span>Syncing your recordings from your Tablo. The first sync takes a minute or two; this page updates when it's done.</div></div>` }));
   } else {
     parts.push(section({ title: 'Recordings', body: emptyState('No recordings yet', 'Schedule a series from the guide and it will show up here.', '<a class="btn btn-primary" href="#/guide">Browse the guide</a>') }));
   }
@@ -1431,11 +1491,38 @@ function renderDownloads(jobs) {
 // Device
 // ---------------------------------------------------------------------------
 PAGES.device = async (r, token) => {
-  await Promise.all([loadStatus(), loadStorage()]);
+  const [, , info, settings] = await Promise.all([
+    loadStatus(), loadStorage(),
+    api('/api/system/info').catch(() => ({})),
+    api('/api/settings').catch(() => ({})),
+  ]);
   if (stale(token)) return;
   const st = state.status || {};
   const dev = st.active_device;
   const storage = state.storage || {};
+
+  const network = `
+    <div class="panel">
+      <h3>Network access</h3><div class="panel-sub">Let phones, tablets and other computers on your home network open TabloView.</div>
+      ${info.packaged ? `
+        <label class="switch-row">
+          <input type="checkbox" class="switch" data-change="allow-lan" ${settings.allow_lan ? 'checked' : ''}>
+          <span>Allow other devices on my network</span>
+        </label>
+        <p class="dim" style="margin-top:10px;font-size:12.5px">Anyone on your Wi-Fi could then watch, schedule and delete recordings. Leave this off on shared or public networks.</p>`
+      : '<p class="dim" style="font-size:13px">Running from source: network access follows the <code>--host</code> option in the start command.</p>'}
+      ${info.listening_on_network && info.network_url ? `<p style="margin-top:12px">On other devices, open <b>${esc(info.network_url)}</b></p>` : ''}
+    </div>`;
+
+  const about = `
+    <div class="panel">
+      <h3>About</h3><div class="panel-sub">TabloView ${esc(info.version || '')}${info.packaged ? '' : ' (running from source)'}</div>
+      <dl class="kv">
+        <dt>Playback engine</dt><dd>${info.ffmpeg_found ? 'FFmpeg ready' : '<span style="color:var(--warn)">FFmpeg not found: in-browser playback and MP4 export won’t work. VLC still works.</span>'}</dd>
+        <dt>Exports folder</dt><dd>${esc(info.downloads_dir || '')}</dd>
+        <dt>App data</dt><dd>${esc(info.data_dir || '')}</dd>
+      </dl>
+    </div>`;
 
   const connection = st.authenticated && dev ? `
     <div class="panel">
@@ -1448,15 +1535,7 @@ PAGES.device = async (r, token) => {
       </dl>
       ${(st.devices || []).length > 1 ? `<div class="panel-actions"><select class="select" data-change="select-device">${st.devices.map(d => `<option value="${esc(d.sid)}" ${d.sid === dev.sid ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select></div>` : ''}
       <div class="panel-actions"><button class="btn btn-danger btn-sm" data-action="logout">Sign out</button></div>
-    </div>` : `
-    <div class="panel">
-      <h3>Sign in to Tablo</h3><div class="panel-sub">Use your Tablo account to find the DVR on your network.</div>
-      <form class="form-col" data-form="login">
-        <input class="input" name="email" type="email" placeholder="Email" required autocomplete="username">
-        <input class="input" name="password" type="password" placeholder="Password" required autocomplete="current-password">
-        <button class="btn btn-primary" type="submit">Sign in</button>
-      </form>
-    </div>`;
+    </div>` : '';
 
   paint(`<div class="page">
     <div class="page-head"><div><h1 class="page-title">Device</h1><div class="page-sub">Connection, syncing, storage and playback settings</div></div></div>
@@ -1487,6 +1566,8 @@ PAGES.device = async (r, token) => {
           ${[4, 8, 15, 30].map(v => `<option value="${v}" ${state.bufferTarget === v ? 'selected' : ''}>${v} seconds</option>`).join('')}
         </select>
       </div>
+      ${network}
+      ${about}
       <div class="panel" style="grid-column:1/-1">
         <h3>Diagnostics</h3><div class="panel-sub">Probe the Tablo's local API and the cloud guide to troubleshoot connection problems.</div>
         <button class="btn btn-sm" data-action="run-inspector">${icon('info', 15)}Run API inspector</button>
@@ -1495,6 +1576,17 @@ PAGES.device = async (r, token) => {
     </div>
   </div>`);
 };
+
+// After a settings-triggered restart, wait until the server answers again
+async function waitForServer(timeoutMs = 25000) {
+  await new Promise(r => setTimeout(r, 1200));
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try { await api('/api/system/info'); return true; } catch { await new Promise(r => setTimeout(r, 700)); }
+  }
+  toast('TabloView is taking a while to restart. Try reloading the page.', 'error');
+  return false;
+}
 
 async function runInspector() {
   const out = $('#inspectorOut');
@@ -1629,7 +1721,7 @@ const player = {
     if (!id) return;
     state.stream.sessionId = null;
     fetch('/api/live/stop', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: API_HEADERS,
       body: JSON.stringify({ session_id: id }), keepalive,
     }).catch(() => {});
   },
@@ -1773,9 +1865,12 @@ const ACTIONS = {
   'logout': async () => {
     if (!await confirmDialog({ title: 'Sign out of Tablo?', text: 'TabloView will stop syncing until you sign in again.', confirm: 'Sign out', danger: true })) return;
     await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    state.shows = null;
+    state.scheduled.items = null;
     await loadStatus();
     route();
   },
+  'pick-device': el => pickDevice(el.dataset.sid),
 };
 
 const INPUTS = {
@@ -1803,6 +1898,29 @@ const CHANGES = {
     if (el.checked) state.episodes.forEach(e => state.selected.add(e.id));
     $$('[data-change="ep-select"]').forEach(c => { c.checked = el.checked; c.closest('.ep-row').classList.toggle('selected', el.checked); });
     updateBulkBar();
+  },
+  'allow-lan': async el => {
+    const enable = el.checked;
+    if (enable) {
+      const ok = await confirmDialog({
+        title: 'Allow other devices on your network?',
+        text: 'Anyone on your Wi-Fi will be able to open TabloView and control your Tablo. If Windows asks, allow TabloView on Private networks only.',
+        confirm: 'Allow', danger: false,
+      });
+      if (!ok) { el.checked = false; return; }
+    }
+    el.disabled = true;
+    try {
+      const res = await api('/api/settings', { method: 'POST', body: JSON.stringify({ allow_lan: enable }) });
+      if (!res.restarting) { toast('Saved. Restart TabloView to apply.'); el.disabled = false; return; }
+      toast('Restarting TabloView to apply…');
+      await waitForServer();
+      route();
+    } catch (err) {
+      toast(`Couldn't change network access: ${err.message}`, 'error');
+      el.checked = !enable;
+      el.disabled = false;
+    }
   },
   'buffer': el => { state.bufferTarget = parseInt(el.value, 10) || 8; save('tablo_buffer_target', state.bufferTarget); toast(`Buffer set to ${state.bufferTarget} seconds`); },
   'select-device': async el => {
@@ -1844,12 +1962,20 @@ function wireEvents() {
     btn.textContent = 'Signing in…';
     try {
       await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: form.email.value, password: form.password.value }) });
-      toast('Signed in. Syncing your recordings…', 'success');
+      form.password.value = '';
       await loadStatus();
+      state.shows = null;
+      state.scheduled.items = null;
       setSyncState(true);
-      route();
+      if ((state.status.devices || []).length > 1) {
+        state.pickingDevice = true;
+        route();
+      } else {
+        toast('Signed in. Syncing your recordings…', 'success');
+        location.hash = '#/';
+      }
     } catch (err) {
-      toast(`Sign-in failed: ${err.message}`, 'error');
+      toast(`Sign-in failed: ${friendlyLoginError(err.message)}`, 'error');
       btn.disabled = false;
       btn.textContent = 'Sign in';
     }

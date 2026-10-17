@@ -1,61 +1,60 @@
-# Tablo Classic UI (4th Gen Recordings Manager)
+# TabloView
 
-A lightning-fast, modern local web application that replaces the Tablo 4th Gen library with the **Classic Legacy Tablo Recordings Interface**.
+A fast desktop interface for the **Tablo 4th Gen** DVR: browse and play recordings, search the guide, schedule series, and watch live TV in your browser.
 
----
+## Install (Windows)
+
+1. Download **`TabloView-Setup-<version>.exe`** and run it. No admin rights are needed; it installs just for your Windows account.
+   - Windows may say *"Windows protected your PC"* because the installer isn't code-signed. Click **More info → Run anyway**.
+2. TabloView opens in your browser. **Sign in with your own Tablo account**; TabloView finds the Tablo on your home network.
+3. While it runs, TabloView has an icon in the system tray (bottom-right, near the clock). Right-click it to reopen the app, open your downloads folder, or quit.
+
+Your password goes only to Tablo's sign-in service and is never saved. TabloView keeps the device access it receives in `%LOCALAPPDATA%\TabloView`, along with its settings and cache. MP4 exports are saved to `Downloads\TabloView`.
+
+To uninstall, use **Settings → Apps → Installed apps → TabloView**. Your sign-in and cache stay in `%LOCALAPPDATA%\TabloView`; delete that folder to remove them too.
+
+### Using it from a phone or another PC
+
+By default only the computer running TabloView can open it. To allow other devices on your home network, go to **Device → Network access**. If Windows asks about the firewall, allow **Private networks** only. Anyone on that network can then control your Tablo, so leave it off on shared Wi-Fi.
 
 ## Features
-- **Default Poster Grid:** Clean, responsive grid displaying all recorded Shows, Movies, and Sports currently on your Tablo hard drive.
-- **Series Recording Manager ("Scheduled"):** Dedicated management view displaying all series currently configured to record (e.g. *Survivor*, *Jeopardy!*, *NCIS*, etc.), with rule badges (**Record New Only** vs. **Record All Episodes**), upcoming broadcast counts, and one-click buttons to change rules or stop recordings.
-- **Broadcast Guide & Show Search:** Real-time search across 590+ over-the-air broadcast TV shows, movies, and sports directly from the Tablo hardware, with instant debounced title/genre filtering and one-click series scheduling.
-- **Interactive Guide Series Drawer:** Detailed slide-over panel with high-res cover art, series synopsis, original air date, quick recording rule selector (**Record New**, **Record All**, **Stop Recording**), and live schedule of upcoming broadcast airings with channel logos, call signs (e.g. CBS 29.1 WTTK), and individual episode record/skip toggles.
-- **One Image Per Show:** High-contrast badge in the top-right corner showing total recorded episode count and an emerald highlight dot for unwatched episodes.
-- **Two-Click Access Episode Drawer:** Clicking any poster immediately opens a slide-over drawer listing all recorded episodes sorted by Season/Episode with one-click actions:
-  - **[Watch in Browser]**: HLS.js video player with on-the-fly H.264/AAC transcoding.
-  - **[Open in VLC]**: Zero-transcode native playback via instant `.m3u` playlist download.
-  - **[Export MP4]**: Background task pulling streams via FFmpeg directly into `./downloads/` folder (`ShowName - SxxExx - Title.mp4`).
-  - **[Delete]**: Immediate signed DELETE to the Tablo hardware, decrementing episode counts instantly.
-  - **[Delete All Watched]**: One-click cleanup of finished episodes.
-  - **Bulk Selection**: Multi-select episodes with bulk delete.
-- **Attached Storage Indicator:** Real-time visual capacity bar displaying Free vs. Used GB/TB on your attached USB hard drive (e.g. Seagate Expansion).
-- **Fast Local SQLite Cache:** Queries the local database in under 5ms, with an automatic background sync of library recordings and guide items.
-- **Built-in API Inspector:** Probes `/server/info`, `/server/harddrives`, `/recordings/airings`, `/recordings/series`, `/guide/series`, and Lighthouse cloud guide.
 
----
+- **Home**: recent recordings, what's recording in the next 48 hours, season premieres, and new primetime episodes.
+- **Library and show pages**: play in the browser, open in VLC, export to MP4, delete one, several, or all watched episodes.
+- **Guide**: search everything airing on your channels; record a series (new or all episodes) or single airings.
+- **Live TV**: channel grid for local and streaming channels, with one-click tuning.
+- **Scheduled**: every series your Tablo records, with quick rule changes.
 
-## Architecture
-- **Backend:** Python 3.12+ with FastAPI, Uvicorn, HTTPX, SQLite3, and `tablo-api`.
-- **Hardware Integration:** Cloud authentication via `lighthousetv.ewscloud.com` followed by HMAC-MD5 signed device requests to the local Tablo on port `8887` and streaming on port `80`.
-- **Transcoding & Export:** Local FFmpeg 9.0.1+ integration for live web playback and MP4 downloads.
-- **Frontend:** Vanilla CSS & JS single-page application with dark-mode glassmorphism and modern typography (Outfit, Inter, JetBrains Mono).
+## Running from source (developers)
 
----
+Requires Python 3.12 and FFmpeg (`winget install Gyan.FFmpeg.Essentials`).
 
-## Quick Start
-
-### 1. Requirements
-- Python 3.11+
-- FFmpeg (automatically detected in WinGet or system PATH)
-
-### 2. Run the Application
-
-**Option A (1-Click on Windows):**
-Double-click [start.bat](file:///c:/Users/Joede/sites/TabloView/start.bat) in File Explorer. It automatically launches the server and opens your web browser.
-
-**Option B (Terminal / PowerShell):**
-Open PowerShell in this directory and run:
 ```powershell
+pip install -r requirements.txt
 python -m uvicorn app.main:app --host 0.0.0.0 --port 7070
 ```
 
-Then open your browser to:
-**[http://localhost:7070](http://localhost:7070)**
+Open http://localhost:7070. From source, data stays in the project folder (`data/`, `transcode/`, `downloads/`), and `TABLO_EMAIL` / `TABLO_PASSWORD` in `.env` are honoured. The previous interface is still available at `/static/legacy/index.html`.
 
----
+## Building the installer
 
-## Credentials & Config
-Device information and credentials are automatically saved in `data/config.json` and `.env` (both gitignored).
-To test authentication and probe device endpoints from the CLI:
-```bash
-python test_connection.py
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\build.ps1
 ```
+
+This creates an isolated `.build-venv`, bundles the app with PyInstaller (`packaging/tabloview.spec`) together with your installed FFmpeg, and compiles `dist\TabloView-Setup-<version>.exe` with Inno Setup 6 (`winget install JRSoftware.InnoSetup`). The script refuses to package any local credentials or caches. Bump `APP_VERSION` in `app/config.py` for a new release.
+
+## Architecture
+
+- **Backend**: FastAPI + Uvicorn, SQLite cache, `tablo-api` for Tablo cloud sign-in and HMAC-signed requests to the local device.
+- **Playback**: FFmpeg transcodes to H.264/AAC HLS for the browser (hls.js); exports copy the video stream into MP4.
+- **Frontend**: dependency-free single-page app in `static/`.
+- **Desktop app**: `tabloview.py` runs the server, opens the browser and provides the tray icon. State-changing API calls require an `X-TabloView` header and a local Host, so other websites can't drive the API.
+
+## License and third-party software
+
+TabloView is licensed under the GPL-3.0 (see `LICENSE`). The installer bundles:
+
+- **FFmpeg** (GPL), built by gyan.dev; its license is included next to `ffmpeg.exe`. Source: https://ffmpeg.org and https://www.gyan.dev/ffmpeg/builds/
+- **hls.js** (Apache-2.0), in `static/vendor/`.
+- Python and its libraries, via PyInstaller.

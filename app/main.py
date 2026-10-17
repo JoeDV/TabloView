@@ -1,15 +1,18 @@
-"""Main FastAPI application for Tablo Classic UI."""
+"""Main FastAPI application for TabloView."""
 
-import os
 import asyncio
+import socket
+import ipaddress
 from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, JSONResponse
 
-from .config import BASE_DIR, TRANSCODE_DIR, DOWNLOADS_DIR, IMAGE_CACHE_DIR, HOST, PORT
+from .config import (
+    APP_NAME, APP_VERSION, STATIC_DIR, TRANSCODE_DIR, DOWNLOADS_DIR, IMAGE_CACHE_DIR, HOST, PORT,
+)
 from .database import init_db
 from .tablo_client import tablo_manager
 from .sync_service import sync_service
@@ -41,14 +44,45 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Tablo Classic UI",
-    description="Local 4th Gen Tablo Recordings Grid Manager",
-    version="1.0.0",
+    title=APP_NAME,
+    description="Recordings, guide and live TV for the Tablo 4th Gen DVR",
+    version=APP_VERSION,
     lifespan=lifespan
 )
 
 # No CORS middleware: the UI is served from this same origin, and allowing any
 # origin would let arbitrary websites drive the API (e.g. delete recordings).
+
+_LOCAL_NAMES = {"localhost", socket.gethostname().lower(), f"{socket.gethostname().lower()}.local"}
+_UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def _host_allowed(host_header: str) -> bool:
+    """Accept localhost, this PC's name, or a literal IP. Rejects other DNS names, which is what a
+    DNS-rebinding page would use to reach this server from the user's browser."""
+    host = host_header.strip().lower()
+    if host.startswith("["):
+        host = host[1:].split("]", 1)[0]
+    else:
+        host = host.rsplit(":", 1)[0]
+    if host in _LOCAL_NAMES:
+        return True
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
+
+
+@app.middleware("http")
+async def request_guard(request: Request, call_next):
+    if not _host_allowed(request.headers.get("host", "")):
+        return JSONResponse({"detail": "Host not allowed"}, status_code=403)
+    # State-changing calls must carry a custom header. Browsers won't let another website add it
+    # without a CORS preflight, which this server never approves.
+    if request.method in _UNSAFE_METHODS and request.headers.get("x-tabloview") != "1":
+        return JSONResponse({"detail": "Missing X-TabloView header"}, status_code=403)
+    return await call_next(request)
 
 
 def safe_join(base: Path, *parts: str) -> Path:
@@ -178,10 +212,7 @@ async def serve_downloaded_mp4(filename: str):
 # Static Frontend Serving
 # ---------------------------------------------------------------------------
 
-STATIC_DIR = BASE_DIR / "static"
-STATIC_DIR.mkdir(exist_ok=True)
-
-# Mount static folder
+# Mount static folder (inside the install folder when packaged)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
@@ -189,7 +220,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 async def serve_index():
     index_file = STATIC_DIR / "index.html"
     if not index_file.exists():
-        return Response(content="Tablo Classic UI is starting up...", media_type="text/plain")
+        return Response(content=f"{APP_NAME} is starting up...", media_type="text/plain")
     return FileResponse(
         str(index_file),
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"}

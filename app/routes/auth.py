@@ -1,5 +1,7 @@
 """Authentication and device discovery routes."""
 
+import re
+import json
 import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -59,7 +61,23 @@ async def login(req: LoginRequest):
             }
         }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=_readable_login_error(e))
+
+
+def _readable_login_error(e: Exception) -> str:
+    """Tablo's cloud errors arrive as 'Login failed (401): {json}'; surface just its message."""
+    text = str(e)
+    match = re.search(r"\{.*\}", text, re.S)
+    if match:
+        try:
+            data = json.loads(match.group(0))
+            if data.get("code") == "password_min_length":
+                return "Tablo passwords are at least 8 characters long."
+            if data.get("message"):
+                return data["message"]
+        except ValueError:
+            pass
+    return text
 
 
 @router.post("/select/{sid}")
