@@ -1,1 +1,1 @@
-Resume where you left off (synced with your Tablo), Continue watching on Home, mark watched/unwatched, recording badges in Live TV, all series set to record on Scheduled, automatic sync, and update notices.
+Upcoming recordings list with Skip, recording conflict warnings, a warning before live TV would take a tuner a recording needs, tuners still held after closing live TV shown in the badge, and a full-length timeline when resuming a recording.
