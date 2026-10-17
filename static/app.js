@@ -317,14 +317,21 @@ async function pollStatus() {
   try {
     const s = await api('/api/library/status');
     const wasSyncing = state.isSyncing;
+    const prevSync = state.lastSync;
     setSyncState(s.is_syncing, s.last_sync);
-    if (wasSyncing && !s.is_syncing) {
-      if (s.last_error) toast(`Sync failed: ${s.last_error}`, 'error');
-      else toast('Recordings synced from your Tablo', 'success');
+    // A sync finished: either we saw it running, or last_sync moved on between polls
+    // (automatic syncs are quick and can start and end between two polls)
+    const finished = !s.is_syncing && ((wasSyncing) || (prevSync && s.last_sync && s.last_sync !== prevSync));
+    if (finished) {
+      if (state.manualSync) {
+        if (s.last_error) toast(`Sync failed: ${s.last_error}`, 'error');
+        else toast('Recordings synced from your Tablo', 'success');
+        state.manualSync = false;
+      }
       state.shows = null;
+      state.scheduled.items = null;
       loadStorage();
-      const r = parseRoute().name;
-      if (r === 'home' || r === 'library') route();
+      refreshCurrentPageQuietly();
     }
   } catch { /* transient */ }
 
@@ -341,6 +348,16 @@ async function pollStatus() {
   }
 }
 
+// Re-render list pages after new data arrives, unless the user is busy (menu, dialog, player,
+// episodes selected); keeps the scroll position
+function refreshCurrentPageQuietly() {
+  const name = parseRoute().name;
+  const busy = openMenuEl || openOverlay || player.isOpen() || state.selected.size || document.activeElement.matches('input, select');
+  if (busy || !['home', 'library', 'scheduled', 'show'].includes(name)) return;
+  const scroll = view().scrollTop;
+  Promise.resolve(route()).then(() => { view().scrollTop = scroll; });
+}
+
 function setActiveExports(n) {
   state.activeExports = n;
   $('#navDownloadsCount').textContent = n > 0 ? `${n} active` : '';
@@ -350,6 +367,7 @@ async function refreshLibrary() {
   if (state.isSyncing) return;
   try {
     await api('/api/library/refresh', { method: 'POST' });
+    state.manualSync = true;
     setSyncState(true);
     toast('Syncing recordings from your Tablo…');
   } catch (err) {
@@ -498,7 +516,7 @@ function route() {
 
   const render = PAGES[r.name] || PAGES.home;
   view().scrollTop = 0;
-  render(r, token).catch(err => {
+  return render(r, token).catch(err => {
     if (token !== routeToken) return;
     console.error(err);
     view().innerHTML = `<div class="page">${errorState(err)}</div>`;
@@ -1587,6 +1605,14 @@ PAGES.device = async (r, token) => {
           <dt>Last sync</dt><dd>${st.last_sync ? `${esc(fmt.ago(st.last_sync))} (${esc(new Date(st.last_sync).toLocaleString())})` : 'Never'}</dd>
           <dt>Cached</dt><dd>${plural(st.total_shows || 0, 'show')}, ${plural(st.total_episodes || 0, 'recording')}</dd>
         </dl>
+        <label class="switch-row" style="margin-top:16px;font-weight:400;cursor:default">
+          <span>Check for new recordings</span>
+          <select class="select" data-change="auto-sync" style="height:32px">
+            ${[[0, 'Off'], [5, 'Every 5 minutes'], [15, 'Every 15 minutes'], [30, 'Every 30 minutes'], [60, 'Every hour']]
+              .map(([v, label]) => `<option value="${v}" ${Number(settings.auto_sync_minutes ?? 15) === v ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </label>
+        <p class="dim" style="font-size:12.5px;margin-top:8px">When on, the guide also refreshes every 6 hours. Changes you make in TabloView show up immediately either way.</p>
         <div class="panel-actions">
           <button class="btn btn-sm" data-action="refresh-library">${icon('refresh', 15)}Sync recordings</button>
           <button class="btn btn-sm" data-action="sync-guide">${icon('guide', 15)}Refresh guide</button>
@@ -1962,6 +1988,14 @@ const CHANGES = {
       el.disabled = false;
     }
   },
+  'auto-sync': async el => {
+    try {
+      const res = await api('/api/settings', { method: 'POST', body: JSON.stringify({ auto_sync_minutes: Number(el.value) }) });
+      toast(res.auto_sync_minutes ? `Checking for new recordings every ${res.auto_sync_minutes} minutes` : 'Automatic sync turned off');
+    } catch (err) {
+      toast(`Couldn't save: ${err.message}`, 'error');
+    }
+  },
   'buffer': el => { state.bufferTarget = parseInt(el.value, 10) || 8; save('tablo_buffer_target', state.bufferTarget); toast(`Buffer set to ${state.bufferTarget} seconds`); },
   'select-device': async el => {
     try { await api(`/api/auth/select/${encodeURIComponent(el.value)}`, { method: 'POST' }); toast('Switched device. Syncing…', 'success'); await loadStatus(); state.shows = null; } catch (err) { toast(err.message, 'error'); }
@@ -2006,6 +2040,7 @@ function wireEvents() {
       await loadStatus();
       state.shows = null;
       state.scheduled.items = null;
+      state.manualSync = true;
       setSyncState(true);
       if ((state.status.devices || []).length > 1) {
         state.pickingDevice = true;

@@ -6,7 +6,7 @@ import socket
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from ..config import APP_NAME, APP_VERSION, IS_PACKAGED, FFMPEG_PATH, HOME_DIR, DOWNLOADS_DIR
 from ..settings import load_settings, save_settings
 from ..tablo_client import tablo_manager
@@ -18,6 +18,7 @@ router = APIRouter(prefix="/api", tags=["system"])
 
 class SettingsUpdate(BaseModel):
     allow_lan: Optional[bool] = None
+    auto_sync_minutes: Optional[int] = Field(default=None, ge=0, le=1440)
 
 
 def _lan_ip() -> Optional[str]:
@@ -57,13 +58,16 @@ async def get_settings(request: Request):
 
 @router.post("/settings")
 async def update_settings(update: SettingsUpdate, request: Request):
-    """Save settings. In the packaged app the launcher restarts the server to apply network changes."""
-    saved = save_settings(update.model_dump(exclude_none=True))
-    restart = getattr(request.app.state, "request_restart", None)
+    """Save settings. Only a network-access change needs a restart (to rebind); in the packaged app
+    the launcher does that automatically. Auto-sync changes apply within a minute."""
+    changes = update.model_dump(exclude_none=True)
+    needs_restart = "allow_lan" in changes and changes["allow_lan"] != load_settings().get("allow_lan")
+    saved = save_settings(changes)
+    restart = getattr(request.app.state, "request_restart", None) if needs_restart else None
     if restart:
         # Let this response go out first, then rebind
         asyncio.get_running_loop().call_later(0.5, restart)
-    return {**saved, "restarting": bool(restart), "restart_required": not restart}
+    return {**saved, "restarting": bool(restart), "restart_required": needs_restart and not restart}
 
 
 @router.get("/storage")

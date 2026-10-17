@@ -15,7 +15,7 @@ from .config import (
 )
 from .database import init_db
 from .tablo_client import tablo_manager
-from .sync_service import sync_service
+from .sync_service import sync_service, auto_sync_loop
 from .transcode import transcode_manager
 
 from .routes import auth, shows, episodes, system, debug, guide, live
@@ -35,8 +35,11 @@ async def lifespan(app: FastAPI):
     else:
         print("[Startup] No authenticated Tablo device yet. Ready for login via web UI.")
 
+    auto_sync = asyncio.create_task(auto_sync_loop(sync_service))
+
     yield
 
+    auto_sync.cancel()
     # Shutdown: clean up transcode sessions
     print("[Shutdown] Cleaning up stream sessions...")
     for sid in list(transcode_manager.sessions.keys()):

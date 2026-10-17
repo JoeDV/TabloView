@@ -55,8 +55,9 @@ class LibrarySyncService:
         self.is_guide_syncing = False
         self.last_error: Optional[str] = None
 
-    async def sync_library(self) -> Dict[str, Any]:
-        """Full synchronization of Tablo DVR library into SQLite cache."""
+    async def sync_library(self, include_guide: bool = True) -> Dict[str, Any]:
+        """Full synchronization of Tablo DVR library into SQLite cache.
+        include_guide=False skips the follow-up guide sync (used by the periodic auto-sync)."""
         if not tablo_manager.is_authenticated:
             raise RuntimeError("Tablo is not authenticated")
 
@@ -231,7 +232,8 @@ class LibrarySyncService:
             set_sync_meta("total_episodes", str(len(episodes_list)))
 
             # Also sync guide in background task
-            asyncio.create_task(self.sync_guide())
+            if include_guide:
+                asyncio.create_task(self.sync_guide())
 
             print("[LibrarySync] Library sync finished successfully!")
             return {
@@ -410,6 +412,40 @@ class LibrarySyncService:
             print(f"[GuideSync] Error syncing guide airings: {e}")
 
         return {"status": "success", "count": total_synced, "synced_at": now_iso}
+
+
+def _age_seconds(iso: Optional[str]) -> float:
+    if not iso:
+        return float("inf")
+    try:
+        return (datetime.now(timezone.utc) - datetime.fromisoformat(iso)).total_seconds()
+    except ValueError:
+        return float("inf")
+
+
+async def auto_sync_loop(service: "LibrarySyncService"):
+    """Background schedule: recordings every N minutes (setting), guide every GUIDE_SYNC_HOURS.
+    Re-reads settings each minute so changes on the Device page apply without a restart."""
+    from .settings import load_settings, GUIDE_SYNC_HOURS
+    from .database import get_sync_meta
+
+    while True:
+        await asyncio.sleep(60)
+        try:
+            if not tablo_manager.is_authenticated:
+                continue
+            minutes = int(load_settings().get("auto_sync_minutes") or 0)
+            if minutes > 0 and not service.is_syncing and _age_seconds(get_sync_meta("last_sync")) >= minutes * 60:
+                print(f"[AutoSync] Recordings (every {minutes} min)")
+                await service.sync_library(include_guide=False)
+            if (minutes > 0 and not service.is_guide_syncing
+                    and _age_seconds(get_sync_meta("last_guide_sync")) >= GUIDE_SYNC_HOURS * 3600):
+                print(f"[AutoSync] Guide (every {GUIDE_SYNC_HOURS} h)")
+                await service.sync_guide()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"[AutoSync] {e}")
 
 
 sync_service = LibrarySyncService()
