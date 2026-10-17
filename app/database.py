@@ -129,6 +129,9 @@ def init_db():
         ga_cols = {r[1] for r in cursor.execute("PRAGMA table_info(guide_airings)").fetchall()}
         if "schedule_state" not in ga_cols:
             cursor.execute("ALTER TABLE guide_airings ADD COLUMN schedule_state TEXT DEFAULT 'none'")
+        if "channel_identifier" not in ga_cols:
+            # Stable channel ID (e.g. S36147_029_01), same as the Live TV channel list uses
+            cursor.execute("ALTER TABLE guide_airings ADD COLUMN channel_identifier TEXT")
         ep_cols = {r[1] for r in cursor.execute("PRAGMA table_info(episodes)").fetchall()}
         if "position" not in ep_cols:
             # Resume point in seconds, as stored on the Tablo (user_info.position)
@@ -509,6 +512,7 @@ def batch_upsert_guide_airings(airings: List[Dict[str, Any]]):
             1 if a.get("is_primetime") else 0,
             1 if a.get("is_premiere") else 0,
             a.get("schedule_state") or "none",
+            a.get("channel_identifier"),
             now
         ) for a in airings
     ]
@@ -517,8 +521,8 @@ def batch_upsert_guide_airings(airings: List[Dict[str, Any]]):
             INSERT INTO guide_airings (
                 path, series_path, show_title, episode_title, season_number, episode_number,
                 air_datetime, duration, channel_call_sign, channel_network, qualifiers,
-                is_new, is_primetime, is_premiere, schedule_state, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                is_new, is_primetime, is_premiere, schedule_state, channel_identifier, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
                 series_path = excluded.series_path,
                 show_title = excluded.show_title,
@@ -534,6 +538,7 @@ def batch_upsert_guide_airings(airings: List[Dict[str, Any]]):
                 is_primetime = excluded.is_primetime,
                 is_premiere = excluded.is_premiere,
                 schedule_state = excluded.schedule_state,
+                channel_identifier = COALESCE(excluded.channel_identifier, guide_airings.channel_identifier),
                 updated_at = excluded.updated_at
         """, rows)
         # Purge past airings older than 3 hours ago
@@ -844,20 +849,28 @@ def get_epg_schedule(hours: int = 6, start_iso: Optional[str] = None) -> Dict[st
 
     with get_connection() as conn:
         rows = conn.execute("""
-            SELECT path, series_path, show_title, episode_title, season_number, episode_number,
-                   air_datetime, duration, channel_call_sign, channel_network, qualifiers,
-                   is_new, is_primetime, is_premiere, schedule_state
-            FROM guide_airings
-            WHERE datetime(air_datetime, '+' || duration || ' seconds') > datetime(?)
-              AND datetime(air_datetime) < datetime(?)
-            ORDER BY air_datetime ASC
+            SELECT ga.path, ga.series_path, ga.show_title, ga.episode_title, ga.season_number, ga.episode_number,
+                   ga.air_datetime, ga.duration, ga.channel_call_sign, ga.channel_network, ga.qualifiers,
+                   ga.is_new, ga.is_primetime, ga.is_premiere, ga.schedule_state, ga.channel_identifier,
+                   g.genres AS show_genres, g.category AS show_category
+            FROM guide_airings ga
+            LEFT JOIN guide_shows g ON g.path = ga.series_path
+            WHERE datetime(ga.air_datetime, '+' || ga.duration || ' seconds') > datetime(?)
+              AND datetime(ga.air_datetime) < datetime(?)
+            ORDER BY ga.air_datetime ASC
         """, (start_str, end_str)).fetchall()
 
         by_channel: Dict[str, List[Dict[str, Any]]] = {}
+        by_identifier: Dict[str, List[Dict[str, Any]]] = {}
         for r in rows:
             cs = (r["channel_call_sign"] or "").strip()
-            if not cs:
+            ident = r["channel_identifier"]
+            if not cs and not ident:
                 continue
+            try:
+                genres = json.loads(r["show_genres"]) if r["show_genres"] else []
+            except ValueError:
+                genres = []
 
             # Parse qualifiers list safely
             q_list = []
@@ -882,13 +895,19 @@ def get_epg_schedule(hours: int = 6, start_iso: Optional[str] = None) -> Dict[st
                 "is_premiere": bool(r["is_premiere"]),
                 "qualifiers": q_list,
                 "schedule_state": r["schedule_state"] or "none",
+                "genres": genres,
+                "category": r["show_category"] or "",
             }
-            by_channel.setdefault(cs, []).append(item)
+            if cs:
+                by_channel.setdefault(cs, []).append(item)
+            if ident:
+                by_identifier.setdefault(ident, []).append(item)
 
     return {
         "window_start": start_str,
         "window_end": end_str,
         "hours": hours,
         "slots": slots,
-        "airings_by_channel": by_channel
+        "airings_by_channel": by_channel,
+        "airings_by_identifier": by_identifier,
     }

@@ -21,7 +21,26 @@ class TabloManager:
         self.password: Optional[str] = None
         self.devices: List[TabloDevice] = []
         self._http = httpx.AsyncClient(timeout=30, follow_redirects=True)
+        # Sign-in problems seen recently, by source ("device" = local Tablo, "cloud" = Tablo account);
+        # cleared again as soon as a request from that source succeeds
+        self.auth_problems: Dict[str, str] = {}
         self.load_cached_config()
+
+    AUTH_MESSAGES = {
+        "device": "Your Tablo stopped accepting TabloView's access.",
+        "cloud": "Your Tablo account sign-in has expired.",
+    }
+
+    def note_auth(self, source: str, ok: bool):
+        if ok:
+            self.auth_problems.pop(source, None)
+        elif source not in self.auth_problems:
+            self.auth_problems[source] = self.AUTH_MESSAGES[source]
+            print(f"[TabloManager] Sign-in problem ({source}): {self.auth_problems[source]}")
+
+    @property
+    def auth_problem(self) -> Optional[str]:
+        return next(iter(self.auth_problems.values()), None)
 
     def load_cached_config(self):
         """Load credentials and device info from config file or env."""
@@ -70,6 +89,7 @@ class TabloManager:
         self.devices = devices
         self.device = devices[0]
         self.save_config()
+        self.auth_problems.clear()
         return devices
 
     def select_device(self, sid: str) -> TabloDevice:
@@ -77,10 +97,12 @@ class TabloManager:
             if d.sid == sid:
                 self.device = d
                 self.save_config()
+                self.auth_problems.clear()
                 return d
         raise ValueError(f"Device with SID '{sid}' not found")
 
     def logout(self):
+        self.auth_problems.clear()
         self.device = None
         self.devices = []
         self.email = None
@@ -117,6 +139,10 @@ class TabloManager:
             content=body.encode() if body else None,
             headers=headers
         )
+        if resp.status_code == 401:
+            self.note_auth("device", ok=False)
+        elif resp.status_code < 400:
+            self.note_auth("device", ok=True)
         return resp
 
     async def get_storage_info(self) -> Dict[str, Any]:

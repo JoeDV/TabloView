@@ -276,6 +276,7 @@ function confirmDialog({ title, text, confirm = 'Confirm', danger = false }) {
 async function loadStatus() {
   try {
     state.status = await api('/api/auth/status');
+    showAuthProblem(state.status.auth_problem);
     const dev = state.status.active_device;
     $('#deviceName').textContent = dev ? dev.name : 'Not connected';
     setSyncState(state.status.is_syncing, state.status.last_sync);
@@ -316,6 +317,7 @@ function setSyncState(syncing, lastSync) {
 async function pollStatus() {
   try {
     const s = await api('/api/library/status');
+    showAuthProblem(s.auth_problem);
     const wasSyncing = state.isSyncing;
     const prevSync = state.lastSync;
     setSyncState(s.is_syncing, s.last_sync);
@@ -356,6 +358,30 @@ function refreshCurrentPageQuietly() {
   if (busy || !['home', 'library', 'scheduled', 'show'].includes(name)) return;
   const scroll = view().scrollTop;
   Promise.resolve(route()).then(() => { view().scrollTop = scroll; });
+}
+
+function showAuthProblem(message) {
+  const banner = $('#authBanner');
+  if (!banner) return;
+  banner.classList.toggle('hidden', !message);
+  if (message) $('#authBannerText').textContent = message;
+}
+
+async function checkForUpdate(force = false) {
+  try {
+    const u = await api(`/api/system/update${force ? '?force=true' : ''}`);
+    state.update = u;
+    const notice = $('#updateNotice');
+    notice.classList.toggle('hidden', !u.update_available);
+    if (u.update_available) {
+      $('#updateNoticeText').textContent = `Update available: ${u.latest}`;
+      notice.href = u.download_url || '#';
+      notice.title = u.notes ? `What's new: ${u.notes}` : 'Download the new version';
+    }
+    return u;
+  } catch {
+    return null;
+  }
 }
 
 function setActiveExports(n) {
@@ -1382,9 +1408,8 @@ function epgFilter(c) {
   if (cat === 'ota' && c.kind !== 'ota') return false;
   if (cat === 'fast' && c.kind === 'ota') return false;
   const text = `${c.name} ${c.call_sign} ${c.network}`.toLowerCase();
-  if (cat === 'news' && !/news|bloomberg|scripps|cheddar|weather|wrtv|wthr|wttv|wxin/.test(text)) return false;
-  if (cat === 'sports' && !/sport|outside|stadium|surf|fight|racing|motor/.test(text)) return false;
-  if (cat === 'entertainment' && !/ion|movie|comedy|drama|classic|hallmark|film|bachelor|portlandia|wfyi/.test(text)) return false;
+  // Categories come from the server, based on the genres each channel actually airs
+  if (['news', 'sports', 'entertainment'].includes(cat) && !(c.categories || []).includes(cat)) return false;
   const q = state.epgQuery;
   if (q) {
     const hit = text.includes(q) || (c.airings || []).some(a => `${a.title || ''} ${a.episode_title || ''}`.toLowerCase().includes(q));
@@ -1621,6 +1646,7 @@ PAGES.device = async (r, token) => {
     <div class="panel">
       <h3>About</h3><div class="panel-sub">TabloView ${esc(info.version || '')}${info.packaged ? '' : ' (running from source)'}</div>
       <dl class="kv">
+        <dt>Updates</dt><dd>${updateStatusHtml()}</dd>
         <dt>Playback engine</dt><dd>${info.ffmpeg_found ? 'FFmpeg ready' : '<span style="color:var(--warn)">FFmpeg not found: in-browser playback and MP4 export won’t work. VLC still works.</span>'}</dd>
         <dt>Exports folder</dt><dd>${esc(info.downloads_dir || '')}</dd>
         <dt>App data</dt><dd>${esc(info.data_dir || '')}</dd>
@@ -1687,6 +1713,17 @@ PAGES.device = async (r, token) => {
     </div>
   </div>`);
 };
+
+function updateStatusHtml() {
+  const u = state.update;
+  if (!u || !u.enabled) return '<span class="dim">Update checks aren’t set up for this copy</span>';
+  const btn = ' <button class="btn btn-sm btn-ghost" data-action="check-update">Check now</button>';
+  if (u.update_available) {
+    return `<a href="${esc(u.download_url || '#')}" target="_blank" rel="noopener" style="color:var(--accent);font-weight:600">Version ${esc(u.latest)} is available, download</a>${u.notes ? `<div class="dim" style="font-size:12.5px;margin-top:4px">${esc(u.notes)}</div>` : ''}`;
+  }
+  if (u.error) return `<span style="color:var(--warn)">Couldn’t check right now</span>${btn}`;
+  return `Up to date${btn}`;
+}
 
 // After a settings-triggered restart, wait until the server answers again
 async function waitForServer(timeoutMs = 25000) {
@@ -2122,6 +2159,29 @@ const ACTIONS = {
     route();
   },
   'pick-device': el => pickDevice(el.dataset.sid),
+  'reauth': async () => {
+    const ok = await confirmDialog({
+      title: 'Sign in to Tablo again?',
+      text: "You'll be signed out, then asked for your Tablo email and password. Your recordings and schedule on the Tablo aren't affected.",
+      confirm: 'Continue',
+    });
+    if (!ok) return;
+    await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    state.shows = null;
+    state.scheduled.items = null;
+    await loadStatus();
+    route();
+  },
+  'check-update': async el => {
+    el.disabled = true;
+    const u = await checkForUpdate(true);
+    el.disabled = false;
+    if (!u) toast("Couldn't check for updates", 'error');
+    else if (u.error) toast(u.error, 'error');
+    else if (u.update_available) toast(`Version ${u.latest} is available`, 'success');
+    else toast(`You're on the latest version (${u.current})`, 'success');
+    if (parseRoute().name === 'device') route();
+  },
 };
 
 const INPUTS = {
@@ -2295,6 +2355,8 @@ async function init() {
   api('/api/exports').then(({ jobs }) => setActiveExports(jobs.filter(j => j.status === 'downloading' || j.status === 'pending').length)).catch(() => {});
   setInterval(pollStatus, 5000);
   setInterval(() => setSyncState(state.isSyncing), 60000);
+  checkForUpdate();
+  setInterval(() => checkForUpdate(), 6 * 3600 * 1000);
 }
 
 document.addEventListener('DOMContentLoaded', init);

@@ -13,7 +13,13 @@ import shutil
 from pathlib import Path
 
 APP_NAME = "TabloView"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
+
+# Update notices: a public URL to version.json ({"version", "download_url", "notes"}), written by
+# packaging/build.ps1 next to the installer. Empty = don't check. TABLOVIEW_UPDATE_URL overrides.
+UPDATE_INFO_URL = ""
+# Where people download the installer; build.ps1 copies this into version.json
+RELEASE_DOWNLOAD_URL = ""
 
 IS_PACKAGED = getattr(sys, "frozen", False)
 

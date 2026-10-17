@@ -394,6 +394,7 @@ class LibrarySyncService:
                                         "air_datetime": ad.get('datetime') or '',
                                         "duration": ad.get('duration') or 0,
                                         "channel_call_sign": ch.get('call_sign') or ch.get('name') or '',
+                                        "channel_identifier": ch.get('channel_identifier'),
                                         "channel_network": ch.get('network') or '',
                                         "qualifiers": qual,
                                         "is_new": is_new,

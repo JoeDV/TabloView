@@ -53,7 +53,10 @@ async def get_cached_cloud_grid(day_str: str) -> Dict[str, Any]:
     try:
         loop = asyncio.get_event_loop()
         r = await loop.run_in_executor(None, lambda: requests.get(url, headers=headers, timeout=15))
+        if r.status_code in (401, 403):
+            tablo_manager.note_auth("cloud", ok=False)
         if r.status_code == 200:
+            tablo_manager.note_auth("cloud", ok=True)
             grid_list = r.json().get("grid", [])
             by_ident: Dict[str, List[Dict[str, Any]]] = {}
             ch_info: Dict[str, Dict[str, Any]] = {}
@@ -111,8 +114,12 @@ async def fetch_local_ota_map() -> Dict[str, Dict[str, Any]]:
 async def fetch_cloud_channels(client: TabloClient, include_ott: bool) -> list:
     """Fetch the cloud channel lineup (OTA + FAST). TabloClient is synchronous, so run it in a thread."""
     try:
-        return await asyncio.to_thread(client.channels, include_ott=include_ott)
+        channels = await asyncio.to_thread(client.channels, include_ott=include_ott)
+        tablo_manager.note_auth("cloud", ok=True)
+        return channels
     except Exception as e:
+        if re.search(r"\b40[13]\b", str(e)):
+            tablo_manager.note_auth("cloud", ok=False)
         print(f"[LiveTV] Error fetching cloud channels: {e}")
         return []
 
@@ -139,6 +146,39 @@ def mark_recording_now(airings: List[Dict[str, Any]], now_utc: datetime):
                 a["recording_now"] = True
         except (KeyError, ValueError, TypeError):
             continue
+
+
+_NEWS_GENRES = {"news", "newsmagazine", "weather", "public affairs", "politics", "talk"}
+_SPORTS_GENRES = {"sports", "sports event", "sports talk", "sports non-event", "football", "basketball",
+                  "baseball", "hockey", "soccer", "golf", "auto racing", "boxing", "wrestling", "tennis"}
+
+
+def channel_categories(c: Dict[str, Any]) -> List[str]:
+    """Live TV categories from what a channel airs in the window (genre share by airtime), so they
+    work in any market. A channel is News/Sports when at least 40% of its airtime is that genre;
+    channels that aren't mostly news or sports count as Entertainment."""
+    totals = {"news": 0.0, "sports": 0.0}
+    total = 0.0
+    for a in c.get("airings") or []:
+        dur = float(a.get("duration") or 0)
+        genres = {str(g).lower() for g in (a.get("genres") or [])}
+        if (a.get("category") or "").lower() == "sports":
+            genres.add("sports")
+        total += dur
+        if genres & _NEWS_GENRES:
+            totals["news"] += dur
+        if genres & _SPORTS_GENRES:
+            totals["sports"] += dur
+    name = (c.get("name") or "").lower()
+    cats = [k for k, v in totals.items() if total and v / total >= 0.4]
+    # Channel names are a reliable hint for single-topic streaming channels
+    if "news" not in cats and any(w in name for w in ("news", "weather")):
+        cats.append("news")
+    if "sports" not in cats and "sport" in name:
+        cats.append("sports")
+    if not cats:
+        cats.append("entertainment")
+    return cats
 
 
 def pick_logo(logos: List[Dict[str, Any]]) -> Optional[str]:
@@ -351,6 +391,7 @@ async def get_live_epg(
     # 1. Fetch OTA airings in window from local SQLite
     epg_data = get_epg_schedule(hours=hours, start_iso=start_iso)
     by_channel = epg_data["airings_by_channel"]
+    by_identifier = epg_data.get("airings_by_identifier", {})
 
     window_start_dt = datetime.fromisoformat(epg_data["window_start"].replace("Z", "+00:00"))
     window_end_dt = datetime.fromisoformat(epg_data["window_end"].replace("Z", "+00:00"))
@@ -381,11 +422,11 @@ async def get_live_epg(
         c_dict = base_channel_dict(ch, cloud_ch_info, local_ota_map)
         c_dict["airings"] = []
 
-        # Match airings
+        # Match airings by the channel's stable identifier; fall back to call-sign variants for
+        # guide data synced before identifiers were stored
         clean_cs = ch.call_sign.upper().replace("-HD", "").replace("DT1", "").strip()
-        matched_airings = by_channel.get(ch.call_sign) or by_channel.get(clean_cs) or by_channel.get(f"{clean_cs}-1")
-        if not matched_airings and clean_cs in ("WDTI", "DYSTR"):
-            matched_airings = by_channel.get("DYSTR")
+        matched_airings = (by_identifier.get(ch.identifier) or by_channel.get(ch.call_sign)
+                           or by_channel.get(clean_cs) or by_channel.get(f"{clean_cs}-1"))
 
         if matched_airings:
             c_dict["airings"] = matched_airings
@@ -427,6 +468,8 @@ async def get_live_epg(
                             "is_primetime": False,
                             "is_premiere": "premiere" in (a.get("qualifierTags") or []),
                             "qualifiers": a.get("qualifierTags", []),
+                            "genres": a.get("genres") or [],
+                            "category": (a.get("show") or {}).get("category") or "",
                             "cover_url": poster_url
                         })
                 except Exception:
@@ -471,6 +514,7 @@ async def get_live_epg(
                 }
             ]
 
+        c_dict["categories"] = channel_categories(c_dict)
         channel_rows.append(c_dict)
 
     def sort_key(c):
@@ -526,6 +570,8 @@ async def tune_live_channel(req: TuneRequest):
                 "token": stream.token
             }
     except Exception as e:
+        if re.search(r"\b401\b", str(e)):
+            tablo_manager.note_auth("device", ok=False)
         print(f"[LiveTV] Error tuning channel {channel_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to tune live channel: {e}")
 

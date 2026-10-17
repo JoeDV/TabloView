@@ -9,6 +9,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 from ..config import APP_NAME, APP_VERSION, IS_PACKAGED, FFMPEG_PATH, HOME_DIR, DOWNLOADS_DIR
 from ..settings import load_settings, save_settings
+from ..updates import check_for_update
 from ..tablo_client import tablo_manager
 from ..sync_service import sync_service
 from ..database import get_sync_meta, get_export_jobs, delete_export_job
@@ -49,6 +50,12 @@ async def system_info(request: Request):
         "data_dir": str(HOME_DIR),
         "downloads_dir": str(DOWNLOADS_DIR),
     }
+
+
+@router.get("/system/update")
+async def update_status(force: bool = False):
+    """Is a newer TabloView published? (checked at most every few hours unless force=true)"""
+    return await check_for_update(force=force)
 
 
 @router.get("/settings")
@@ -98,6 +105,7 @@ async def get_library_status():
         "is_syncing": sync_service.is_syncing,
         "last_sync": last_sync,
         "last_error": sync_service.last_error,
+        "auth_problem": tablo_manager.auth_problem,
         "total_shows": int(total_shows),
         "total_episodes": int(total_episodes)
     }

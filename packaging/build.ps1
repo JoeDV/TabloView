@@ -70,5 +70,13 @@ if (-not $Iscc) { throw 'Inno Setup not found. Install it: winget install JRSoft
 & $Iscc /Q "/DAppVersion=$Version" packaging\installer.iss
 if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed' }
 
+# 6. version.json for in-app update notices. Publish it at UPDATE_INFO_URL (app/config.py);
+#    optional release notes come from packaging\release-notes.txt
+$DownloadUrl = & $Py -c "import sys; sys.path.insert(0, '.'); from app.config import RELEASE_DOWNLOAD_URL; print(RELEASE_DOWNLOAD_URL)"
+$NotesFile = Join-Path $PSScriptRoot 'release-notes.txt'
+$Notes = if (Test-Path $NotesFile) { (Get-Content $NotesFile -Raw).Trim() } else { '' }
+$Json = [ordered]@{ version = $Version; download_url = $DownloadUrl; notes = $Notes; published = (Get-Date).ToString('yyyy-MM-dd') } | ConvertTo-Json
+[IO.File]::WriteAllText((Join-Path $Root 'dist\version.json'), $Json, (New-Object Text.UTF8Encoding $false))  # UTF-8 without BOM
+
 $Out = Get-Item "dist\TabloView-Setup-$Version.exe"
 Write-Host ("Done: {0} ({1:N0} MB)" -f $Out.FullName, ($Out.Length / 1MB)) -ForegroundColor Green

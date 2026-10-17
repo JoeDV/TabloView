@@ -41,7 +41,8 @@ async def get_auth_status():
         "last_sync": last_sync,
         "total_shows": int(total_shows),
         "total_episodes": int(total_episodes),
-        "is_syncing": sync_service.is_syncing
+        "is_syncing": sync_service.is_syncing,
+        "auth_problem": tablo_manager.auth_problem,
     }
 
 
