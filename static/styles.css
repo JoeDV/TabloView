@@ -355,9 +355,25 @@ img { display: block; }
 .ep-table { margin: 24px 28px 0; max-width: 1624px; }
 .ep-head, .ep-row {
   display: grid; align-items: center; gap: 14px;
-  grid-template-columns: 22px 34px 86px minmax(0, 1fr) 130px 88px 132px 32px;
+  grid-template-columns: 22px 96px 86px minmax(0, 1fr) 130px 88px 132px 32px;
   padding: 0 14px;
 }
+/* Episode thumbnail (a frame from the recording) doubling as the play button */
+.ep-thumb {
+  position: relative; width: 96px; aspect-ratio: 16 / 9; padding: 0; border: 0; border-radius: 6px;
+  overflow: hidden; background: var(--surface-3); cursor: pointer; display: block;
+}
+.ep-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ep-thumb-play {
+  position: absolute; inset: 0; display: grid; place-items: center; color: #fff;
+  background: rgba(0,0,0,0.28); transition: background 0.15s;
+}
+.ep-thumb-play svg { filter: drop-shadow(0 1px 2px rgba(0,0,0,0.6)); }
+.ep-thumb:hover .ep-thumb-play { background: rgba(0,0,0,0.5); }
+.ep-row.watched .ep-thumb img { opacity: 0.55; }
+.ep-lock { display: inline-flex; vertical-align: -1px; margin-right: 6px; color: var(--text-2); }
+.art-badge.warn { background: var(--warn); color: #1d1400; }
+.epg-fav { display: inline-flex; margin-left: 6px; color: var(--warn); vertical-align: 0; }
 .ep-head { height: 36px; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); border-bottom: 1px solid var(--border); }
 .ep-row { min-height: 64px; border-bottom: 1px solid var(--border); border-radius: 8px; transition: background 0.1s; }
 .ep-row:hover { background: var(--surface); }
@@ -632,7 +648,8 @@ code { font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace; font-si
   .brand-text, .nav-item span:not(.nav-count), .nav-item .nav-count, .sidebar-status { display: none; }
   .nav-item { justify-content: center; padding: 10px; }
   .brand { justify-content: center; padding: 4px 0 18px; }
-  .ep-head, .ep-row { grid-template-columns: 22px 34px 70px minmax(0, 1fr) 110px 70px 32px; }
+  .ep-head, .ep-row { grid-template-columns: 22px 80px 70px minmax(0, 1fr) 110px 70px 32px; }
+  .ep-thumb { width: 80px; }
   .ep-col-status { display: none; }
   .hero-art { width: 280px; }
   .sched-row { grid-template-columns: 96px minmax(0, 1.4fr) 200px 110px; }
@@ -642,7 +659,8 @@ code { font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace; font-si
   .hero-inner { flex-direction: column; align-items: flex-start; }
   .hero-art { width: 100%; max-width: 420px; }
   .ep-head { display: none; }
-  .ep-row { grid-template-columns: 22px 34px minmax(0, 1fr) 32px; }
+  .ep-row { grid-template-columns: 22px 64px minmax(0, 1fr) 32px; }
+  .ep-thumb { width: 64px; }
   .ep-row .ep-se, .ep-row .ep-cell { display: none; }
   .upnext-row { grid-template-columns: 100px 1fr auto; }
   .upnext-row .thumb, .upnext-row .upnext-ch { display: none; }

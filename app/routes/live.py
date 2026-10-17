@@ -207,11 +207,13 @@ def base_channel_dict(ch, cloud_ch_info: Dict[str, Any], local_ota_map: Dict[str
         "name": clean_name,
         "logo_url": None,
         "resolution": "HD",
+        "favorite": False,
     }
 
-    # Local OTA enriched info (logos, resolution)
+    # Local OTA enriched info (logos, resolution, favorites set in Tablo's apps)
     if ch.identifier in local_ota_map:
         loc = local_ota_map[ch.identifier]
+        c_dict["favorite"] = bool(loc.get("favourite"))
         c_dict["resolution"] = loc.get("resolution", "HD").upper().replace("HD_", "") + "p" if loc.get("resolution") else "HD"
         c_dict["logo_url"] = pick_logo(loc.get("logos", []))
 

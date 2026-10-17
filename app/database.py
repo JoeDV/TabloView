@@ -277,8 +277,14 @@ def get_shows(
         query += " ORDER BY latest_recording_date DESC, title COLLATE NOCASE ASC"
 
     with get_connection() as conn:
-        rows = conn.execute(query, params).fetchall()
-        return [dict(r) for r in rows]
+        shows = [dict(r) for r in conn.execute(query, params).fetchall()]
+        incomplete: Dict[str, int] = {}
+        for r in conn.execute("SELECT show_id, raw_json FROM episodes").fetchall():
+            if recording_details(r["raw_json"])["incomplete"]:
+                incomplete[r["show_id"]] = incomplete.get(r["show_id"], 0) + 1
+    for s in shows:
+        s["incomplete_count"] = incomplete.get(s["id"], 0)
+    return shows
 
 
 def get_show_by_id(show_id: str) -> Optional[Dict[str, Any]]:
@@ -287,37 +293,51 @@ def get_show_by_id(show_id: str) -> Optional[Dict[str, Any]]:
         return dict(row) if row else None
 
 
+# A finished recording that stopped more than this many seconds before the show's scheduled end
+SHORT_RECORDING_SECONDS = 60
+
+
+def recording_details(raw_json: Any) -> Dict[str, Any]:
+    """Fields from the Tablo's own recording object (kept in raw_json at sync)."""
+    try:
+        raw = json.loads(raw_json or "{}") if isinstance(raw_json, str) else (raw_json or {})
+    except (TypeError, ValueError):
+        raw = {}
+    vd = raw.get("video_details") or {}
+    state = vd.get("state")
+    # recorded_offsets.end: seconds past the scheduled end (negative = stopped early)
+    ended_early = -int((vd.get("recorded_offsets") or {}).get("end") or 0)
+    snap = (raw.get("snapshot_image") or {}).get("image_id")
+    return {
+        "recording_state": state,
+        "recording_error": vd.get("error"),
+        "actual_duration": vd.get("duration"),
+        "ended_early": ended_early if state == "finished" and ended_early > SHORT_RECORDING_SECONDS else 0,
+        "incomplete": state == "failed" or (state == "finished" and ended_early > SHORT_RECORDING_SECONDS),
+        "protected": bool((raw.get("user_info") or {}).get("protected")),
+        "snapshot_url": f"/api/images/{snap}" if str(snap or "").isdigit() else None,
+        # Where the program itself starts: the Tablo begins recording a little early
+        "program_start": max(0, int(vd.get("seek") or 0)),
+    }
+
+
 def get_episodes_by_show(show_id: str) -> List[Dict[str, Any]]:
     with get_connection() as conn:
         rows = conn.execute("""
-            SELECT * FROM episodes 
-            WHERE show_id = ? 
-            ORDER BY 
+            SELECT * FROM episodes
+            WHERE show_id = ?
+            ORDER BY
                 CASE WHEN season_number > 0 THEN season_number ELSE 9999 END ASC,
                 CASE WHEN episode_number > 0 THEN episode_number ELSE 9999 END ASC,
                 air_date ASC
         """, (show_id,)).fetchall()
-        result = []
-        for r in rows:
-            d = dict(r)
-            try:
-                raw = json.loads(d.get("raw_json") or "{}")
-                vd = raw.get("video_details", {})
-                d["recording_state"] = vd.get("state")
-                d["recording_error"] = vd.get("error")
-                d["actual_duration"] = vd.get("duration")
-            except Exception:
-                d["recording_state"] = None
-                d["recording_error"] = None
-                d["actual_duration"] = None
-            result.append(d)
-        return result
+        return [{**dict(r), **recording_details(r["raw_json"])} for r in rows]
 
 
 def get_episode_by_id(episode_id: str) -> Optional[Dict[str, Any]]:
     with get_connection() as conn:
         row = conn.execute("SELECT * FROM episodes WHERE id = ? OR path = ?", (episode_id, episode_id)).fetchone()
-        return dict(row) if row else None
+        return {**dict(row), **recording_details(row["raw_json"])} if row else None
 
 
 def set_episode_progress(episode_id: str, position: Optional[int] = None, watched: Optional[bool] = None):
@@ -341,13 +361,18 @@ def get_in_progress_episodes(limit: int = 20) -> List[Dict[str, Any]]:
     with get_connection() as conn:
         rows = conn.execute("""
             SELECT e.id, e.show_id, e.show_title, e.title, e.season_number, e.episode_number,
-                   e.duration, e.position, e.air_date, s.cover_url, s.backdrop_url
+                   e.duration, e.position, e.air_date, e.raw_json, s.cover_url, s.backdrop_url
             FROM episodes e LEFT JOIN shows s ON s.id = e.show_id
             WHERE e.position > 0 AND e.status != 'Watched'
             ORDER BY e.air_date DESC
             LIMIT ?
         """, (limit,)).fetchall()
-        return [dict(r) for r in rows]
+        result = []
+        for r in rows:
+            d = dict(r)
+            d.update(recording_details(d.pop("raw_json")))
+            result.append(d)
+        return result
 
 
 def delete_episode(episode_id: str) -> Optional[str]:

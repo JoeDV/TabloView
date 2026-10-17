@@ -30,6 +30,8 @@ const ICONS = {
   tv: '<rect width="20" height="15" x="2" y="7" rx="2"/><path d="m17 2-5 5-5-5"/>',
   info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
   alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/>',
+  lock: '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  star: '<path d="M11.5 2.3a.6.6 0 0 1 1 0l2.8 5.7 6.3.9a.6.6 0 0 1 .3 1l-4.5 4.4 1 6.2a.6.6 0 0 1-.8.6L12 18.2l-5.6 2.9a.6.6 0 0 1-.8-.6l1-6.2L2.1 9.9a.6.6 0 0 1 .3-1l6.3-.9z" fill="currentColor"/>',
 };
 
 function icon(name, size = 18) {
@@ -438,6 +440,7 @@ function showCard(s) {
       <div class="media-art">
         ${artImg(s.cover_url || s.backdrop_url, s.title)}
         ${unwatched ? `<span class="art-badge new">${unwatched} unwatched</span>` : `<span class="art-badge">${s.episode_count}</span>`}
+        ${s.incomplete_count ? `<span class="art-badge art-badge-left warn" title="${plural(s.incomplete_count, 'recording')} didn’t record completely">${icon('alert', 12)}${s.incomplete_count}</span>` : ''}
       </div>
       <div class="media-meta">
         <div class="media-title">${esc(s.title)}</div>
@@ -453,7 +456,7 @@ function continueCard(ep) {
   return `
     <div class="media-card" data-action="play-ep" data-id="${esc(ep.id)}" data-mode="resume" title="Resume ${esc(ep.show_title)}">
       <div class="media-art">
-        ${artImg(ep.backdrop_url || ep.cover_url, ep.show_title)}
+        ${artImg(ep.snapshot_url || ep.backdrop_url || ep.cover_url, ep.show_title)}
         <div class="art-play"><span>${icon('play', 20)}</span></div>
         <div class="art-progress"><div style="width:${pct}%"></div></div>
       </div>
@@ -819,7 +822,7 @@ function renderShowPage() {
   const s = state.show;
   const eps = state.episodes;
   const unwatched = eps.filter(e => e.status !== 'Watched');
-  const watchedCount = eps.length - unwatched.length;
+  const watchedCount = eps.filter(e => e.status === 'Watched' && !e.protected).length;
   const totalSec = eps.reduce((n, e) => n + (e.duration || 0), 0);
   // Prefer an episode in progress, then the oldest unwatched one
   const nextEp = unwatched.find(e => (e.position || 0) > 30) || unwatched[0] || eps[0];
@@ -872,6 +875,10 @@ function episodeStatus(ep) {
       ? `<span class="tag tag-warn" title="Recording stopped after ${mins} min (${why})">Partial · ${mins}m</span>`
       : `<span class="tag tag-rec" title="Recording failed (${why})">Failed</span>`;
   }
+  if (ep.ended_early) {
+    const mins = Math.round((ep.actual_duration || 0) / 60);
+    return `<span class="tag tag-warn" title="The recording stopped ${fmt.dur(ep.ended_early)} before the show ended">Short · ${mins}m</span>`;
+  }
   if (ep.status === 'Watched') return '<span class="dim">Watched</span>';
   if ((ep.position || 0) > 30) {
     const left = fmt.dur((ep.duration || 0) - ep.position);
@@ -889,13 +896,18 @@ function progressBar(ep) {
 function episodeRow(ep) {
   const watched = ep.status === 'Watched';
   const sel = state.selected.has(ep.id);
+  // A frame from the recording itself; the series art stands in when the Tablo has none
+  const thumb = imgUrl(ep.snapshot_url || (state.show && (state.show.backdrop_url || state.show.cover_url)));
   return `
     <div class="ep-row ${watched ? 'watched' : ''} ${sel ? 'selected' : ''}" data-ep-row="${esc(ep.id)}">
       <input type="checkbox" class="checkbox" data-change="ep-select" data-id="${esc(ep.id)}" ${sel ? 'checked' : ''}>
-      <button class="icon-btn play" data-action="play-ep" data-id="${esc(ep.id)}" title="Play">${icon('play', 14)}</button>
+      <button class="ep-thumb" data-action="play-ep" data-id="${esc(ep.id)}" title="Play">
+        ${thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy">` : ''}
+        <span class="ep-thumb-play">${icon('play', 14)}</span>
+      </button>
       <div class="ep-se">${esc(fmt.se(ep.season_number, ep.episode_number) || '—')}</div>
       <div class="ep-main">
-        <div class="ep-title">${esc(episodeTitle(ep))}</div>
+        <div class="ep-title">${ep.protected ? `<span class="ep-lock" title="Protected on your Tablo: it won’t be deleted automatically, and Delete watched skips it">${icon('lock', 13)}</span>` : ''}${esc(episodeTitle(ep))}</div>
         ${ep.description ? `<div class="ep-desc" title="${esc(ep.description)}">${esc(ep.description)}</div>` : ''}
         ${progressBar(ep)}
       </div>
@@ -939,8 +951,8 @@ function updateBulkBar() {
 async function deleteEpisode(id) {
   const ep = state.episodes.find(e => e.id === id);
   const ok = await confirmDialog({
-    title: 'Delete this recording?',
-    text: `“${ep ? episodeTitle(ep) : 'This episode'}” will be permanently removed from your Tablo.`,
+    title: ep && ep.protected ? 'Delete this protected recording?' : 'Delete this recording?',
+    text: `“${ep ? episodeTitle(ep) : 'This episode'}” will be permanently removed from your Tablo.${ep && ep.protected ? ' It’s protected on your Tablo, so it would otherwise be kept.' : ''}`,
     confirm: 'Delete', danger: true,
   });
   if (!ok) return;
@@ -959,7 +971,12 @@ async function deleteEpisode(id) {
 async function bulkDelete() {
   const ids = Array.from(state.selected);
   if (!ids.length) return;
-  const ok = await confirmDialog({ title: `Delete ${plural(ids.length, 'recording')}?`, text: 'They will be permanently removed from your Tablo.', confirm: 'Delete', danger: true });
+  const prot = state.episodes.filter(e => state.selected.has(e.id) && e.protected).length;
+  const ok = await confirmDialog({
+    title: `Delete ${plural(ids.length, 'recording')}?`,
+    text: `They will be permanently removed from your Tablo.${prot ? ` ${prot === 1 ? 'One of them is' : `${prot} of them are`} protected on your Tablo.` : ''}`,
+    confirm: 'Delete', danger: true,
+  });
   if (!ok) return;
   try {
     const res = await api('/api/episodes/bulk_delete', { method: 'POST', body: JSON.stringify({ episode_ids: ids }) });
@@ -975,9 +992,15 @@ async function bulkDelete() {
 }
 
 async function deleteWatched() {
-  const watched = state.episodes.filter(e => e.status === 'Watched');
+  // Protected recordings are kept (the server skips them too)
+  const watched = state.episodes.filter(e => e.status === 'Watched' && !e.protected);
+  const kept = state.episodes.filter(e => e.status === 'Watched' && e.protected).length;
   if (!watched.length) return;
-  const ok = await confirmDialog({ title: `Delete ${plural(watched.length, 'watched episode')}?`, text: `All watched episodes of “${state.show.title}” will be permanently removed from your Tablo.`, confirm: 'Delete watched', danger: true });
+  const ok = await confirmDialog({
+    title: `Delete ${plural(watched.length, 'watched episode')}?`,
+    text: `${kept ? 'The' : 'All'} watched episodes of “${state.show.title}” will be permanently removed from your Tablo.${kept ? ` ${plural(kept, 'protected recording')} will be kept.` : ''}`,
+    confirm: 'Delete watched', danger: true,
+  });
   if (!ok) return;
   try {
     const res = await api(`/api/shows/delete_watched?show_id=${encodeURIComponent(state.show.id)}`, { method: 'POST' });
@@ -1447,8 +1470,14 @@ PAGES.live = async (r, token) => {
   await loadEpg(token, true);
 };
 
+// Favorites come from the Tablo (set in its TV apps); the filter only appears when there are some
+function hasFavorites() {
+  return !!(state.epg && state.epg.channels.some(c => c.favorite));
+}
+
 function epgCatButtons() {
-  return EPG_CATS.map(([k, label]) => `<button data-action="epg-cat" data-value="${k}" class="${state.epgCategory === k ? 'active' : ''}">${label}</button>`).join('');
+  const cats = hasFavorites() ? [['favorites', 'Favorites'], ...EPG_CATS] : EPG_CATS;
+  return cats.map(([k, label]) => `<button data-action="epg-cat" data-value="${k}" class="${state.epgCategory === k ? 'active' : ''}">${label}</button>`).join('');
 }
 
 async function loadEpg(token, scrollToNow = false) {
@@ -1462,6 +1491,7 @@ async function loadEpg(token, scrollToNow = false) {
     const res = await api(`/api/live/epg?hours=${EPG.HOURS}${startIso}`);
     if (token !== undefined && stale(token)) return;
     state.epg = res;
+    if (state.epgCategory === 'favorites' && !hasFavorites()) state.epgCategory = 'ota';
     const cats = $('#epgCats');
     if (cats) cats.innerHTML = epgCatButtons();
     renderEpg(scrollToNow);
@@ -1473,6 +1503,7 @@ async function loadEpg(token, scrollToNow = false) {
 
 function epgFilter(c) {
   const cat = state.epgCategory;
+  if (cat === 'favorites' && !c.favorite) return false;
   if (cat === 'ota' && c.kind !== 'ota') return false;
   if (cat === 'fast' && c.kind === 'ota') return false;
   const text = `${c.name} ${c.call_sign} ${c.network}`.toLowerCase();
@@ -1534,7 +1565,7 @@ function renderEpg(scrollToNow = false) {
     return `<div class="epg-row">
       <div class="epg-ch" style="width:${EPG.CH_W}px" data-action="watch-live" data-id="${esc(c.channel_id)}" data-name="${esc(name)}" data-kind="${esc(c.kind)}" title="Watch ${esc(name)} live">
         ${c.logo_url ? `<img class="epg-ch-logo" src="${esc(c.logo_url)}" alt="" loading="lazy">` : `<div class="epg-ch-logo-fallback">${esc((c.call_sign || 'TV').slice(0, 6))}</div>`}
-        <div class="epg-ch-info"><div class="epg-ch-num">${num ? `<b>${esc(num)}</b>` : ''}${esc(name)}</div>${sub ? `<div class="epg-ch-sub">${esc(sub)}</div>` : ''}</div>
+        <div class="epg-ch-info"><div class="epg-ch-num">${num ? `<b>${esc(num)}</b>` : ''}${esc(name)}${c.favorite ? `<span class="epg-fav" title="Favorite">${icon('star', 11)}</span>` : ''}</div>${sub ? `<div class="epg-ch-sub">${esc(sub)}</div>` : ''}</div>
         <span class="icon-btn play">${icon('play', 12)}</span>
       </div>
       <div class="epg-track" style="width:${trackW}px">${cells}</div>
@@ -1850,7 +1881,9 @@ const player = {
       mode = await chooseResume(ep);
       if (!mode) return;
     }
-    const start = typeof mode === 'number' ? Math.max(0, Math.floor(mode)) : (resumable && mode === 'resume' ? ep.position : 0);
+    const resuming = resumable && mode === 'resume';
+    // From the beginning means where the show starts: the Tablo begins recording a few seconds early
+    const start = typeof mode === 'number' ? Math.max(0, Math.floor(mode)) : (resuming ? ep.position : (ep && ep.program_start) || 0);
     const showTitle = ep ? ep.show_title || (state.show && state.show.title) || '' : '';
     const se = ep ? fmt.se(ep.season_number, ep.episode_number) : '';
     const title = ep ? [showTitle, se, episodeTitle(ep)].filter(Boolean).join(' · ') : 'Recording';
@@ -1864,11 +1897,11 @@ const player = {
     });
     this.showTimeline(true);
     this.open(title);
-    this.setStatus(`<span class="wait">${start ? `Resuming at ${fmtClock(start)}…` : 'Starting stream…'}</span>`);
+    this.setStatus(`<span class="wait">${resuming ? `Resuming at ${fmtClock(start)}…` : 'Starting stream…'}</span>`);
     try {
       const res = await api(`/api/episodes/${encodeURIComponent(id)}/watch?transcode=true&start=${start}`, { method: 'POST' });
       state.stream.sessionId = res.session_id;
-      this.start(res.stream_url, start ? `Resumed at ${fmtClock(start)}` : 'Recording');
+      this.start(res.stream_url, start && (resuming || typeof mode === 'number') ? `Resumed at ${fmtClock(start)}` : 'Recording');
       state.stream.progressTimer = setInterval(() => this.saveProgress(), 30000);
     } catch (err) {
       this.setStatus(`<span style="color:var(--rec)">Couldn't start playback: ${esc(err.message)}. Try “Open in VLC”.</span>`);

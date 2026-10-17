@@ -48,9 +48,10 @@ async def get_show_episodes_query(show_id: str = Query(...)):
 
 @router.post("/delete_watched")
 async def delete_watched_query(show_id: str = Query(...)):
-    """Delete all watched episodes for this show."""
+    """Delete all watched episodes for this show, except ones protected on the Tablo."""
     episodes = get_episodes_by_show(show_id)
-    watched = [ep for ep in episodes if ep.get("status") == "Watched"]
+    watched = [ep for ep in episodes if ep.get("status") == "Watched" and not ep.get("protected")]
+    kept = sum(1 for ep in episodes if ep.get("status") == "Watched" and ep.get("protected"))
 
     deleted_ids = []
     errors = []
@@ -74,6 +75,7 @@ async def delete_watched_query(show_id: str = Query(...)):
     return {
         "deleted_count": len(deleted_ids),
         "deleted_ids": deleted_ids,
+        "kept_protected": kept,
         "errors": errors,
         "show": updated_show
     }
