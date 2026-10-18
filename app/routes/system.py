@@ -5,14 +5,15 @@ import shutil
 import socket
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from ..config import APP_NAME, APP_VERSION, IS_PACKAGED, IS_STORE, FFMPEG_PATH, HOME_DIR, DOWNLOADS_DIR
 from ..settings import load_settings, save_settings
 from ..updates import check_for_update
+from .. import notifications, startup
 from ..tablo_client import tablo_manager
 from ..sync_service import sync_service
-from ..database import get_sync_meta, get_export_jobs, delete_export_job
+from ..database import get_sync_meta, get_export_jobs, delete_export_job, get_storage_by_show
 
 router = APIRouter(prefix="/api", tags=["system"])
 
@@ -20,6 +21,11 @@ router = APIRouter(prefix="/api", tags=["system"])
 class SettingsUpdate(BaseModel):
     allow_lan: Optional[bool] = None
     auto_sync_minutes: Optional[int] = Field(default=None, ge=0, le=1440)
+    notifications: Optional[bool] = None
+
+
+class StartupUpdate(BaseModel):
+    enabled: bool
 
 
 def _lan_ip() -> Optional[str]:
@@ -82,6 +88,28 @@ async def update_settings(update: SettingsUpdate, request: Request):
 async def get_storage():
     """Fetch storage usage from Tablo attached hard drive(s)."""
     return await tablo_manager.get_storage_info()
+
+
+@router.get("/system/startup")
+async def get_startup():
+    """Whether TabloView starts (in the tray) when the user signs in to Windows."""
+    return {**await startup.get_state(), "notifications_available": notifications.available()}
+
+
+@router.post("/system/startup")
+async def set_startup(update: StartupUpdate):
+    try:
+        return await startup.set_enabled(update.enabled)
+    except Exception as e:
+        print(f"[Startup] Couldn't change the startup setting: {e}")
+        raise HTTPException(status_code=500, detail=f"Couldn't change the startup setting: {e}")
+
+
+@router.get("/storage/shows")
+async def get_storage_shows():
+    """Which shows use the most space, and how much of it is watched (deletable) recordings."""
+    shows = get_storage_by_show()
+    return {"shows": shows, "total_bytes": sum(s["bytes"] for s in shows)}
 
 
 @router.post("/library/refresh")

@@ -7,7 +7,7 @@ A fast desktop interface for the **Tablo 4th Gen** DVR: browse and play recordin
 1. Get **TabloView for TabloTV** from the [Microsoft Store](https://apps.microsoft.com/detail/9NCWVSC7KX2N) (updates automatically), or download **`TabloView-Setup-<version>.exe`** and run it. No admin rights are needed; it installs just for your Windows account.
    - Windows may say *"Windows protected your PC"* because the installer isn't code-signed. Click **More info → Run anyway**.
 2. TabloView opens in your browser. **Sign in with your own Tablo account**; TabloView finds the Tablo on your home network.
-3. While it runs, TabloView has an icon in the system tray (bottom-right, near the clock). Right-click it to reopen the app, open your downloads folder, or quit.
+3. While it runs, TabloView has an icon in the system tray (bottom-right, near the clock). Right-click it to reopen the app, open your downloads folder, or quit. To have it start quietly in the tray when you sign in, turn on **Device → Desktop app → Start TabloView when I sign in to Windows**.
 
 Your password goes only to Tablo's sign-in service and is never saved. TabloView keeps the device access it receives in `%LOCALAPPDATA%\TabloView`, along with its settings and cache. MP4 exports are saved to `Downloads\TabloView`.
 
@@ -23,11 +23,12 @@ By default only the computer running TabloView can open it. To allow other devic
 
 ## Features
 
-- **Home**: recent recordings, what's recording in the next 48 hours, season premieres, and new primetime episodes.
-- **Library and show pages**: play in the browser, open in VLC, export to MP4, delete one, several, or all watched episodes.
+- **Home**: continue watching, recent recordings, what's recording in the next 48 hours, season premieres, and new primetime episodes.
+- **Library and show pages**: episode thumbnails, play in the browser (resume, full timeline, auto-play next episode), open in VLC, export to MP4, delete one, several, or all watched episodes. Protected recordings are kept, and short or failed recordings are tagged.
 - **Guide**: search everything airing on your channels; record a series (new or all episodes) or single airings.
-- **Live TV**: channel grid for local and streaming channels, with one-click tuning.
-- **Scheduled**: every series your Tablo records, with quick rule changes.
+- **Live TV**: channel grid for local and streaming channels with recording badges, a Favorites filter, and a warning before live TV takes a tuner a recording needs.
+- **Scheduled**: every series your Tablo records, upcoming recordings with Skip, and conflict warnings.
+- **Device**: sync settings, space used by each show with one-click cleanup, and (in the installed app) start with Windows and notifications for recording problems and conflicts.
 
 ## Running from source (developers)
 

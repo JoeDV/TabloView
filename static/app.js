@@ -185,6 +185,7 @@ const state = {
   isSyncing: false,
   activeExports: 0,
   bufferTarget: parseInt(store('tablo_buffer_target', '8'), 10) || 8,
+  autoplay: store('tablo_autoplay', '1') !== '0',
   stream: { sessionId: null, hls: null, handler: null, timer: null, episodeId: null, channelId: null },
 };
 
@@ -1726,10 +1727,12 @@ function renderDownloads(jobs) {
 // Device
 // ---------------------------------------------------------------------------
 PAGES.device = async (r, token) => {
-  const [, , info, settings] = await Promise.all([
+  const [, , info, settings, space, boot] = await Promise.all([
     loadStatus(), loadStorage(),
     api('/api/system/info').catch(() => ({})),
     api('/api/settings').catch(() => ({})),
+    api('/api/storage/shows').catch(() => null),
+    api('/api/system/startup').catch(() => ({})),
   ]);
   if (stale(token)) return;
   const st = state.status || {};
@@ -1747,6 +1750,27 @@ PAGES.device = async (r, token) => {
         <p class="dim" style="margin-top:10px;font-size:12.5px">Anyone on your Wi-Fi could then watch, schedule and delete recordings. Leave this off on shared or public networks.</p>`
       : '<p class="dim" style="font-size:13px">Running from source: network access follows the <code>--host</code> option in the start command.</p>'}
       ${info.listening_on_network && info.network_url ? `<p style="margin-top:12px">On other devices, open <b>${esc(info.network_url)}</b></p>` : ''}
+    </div>`;
+
+  const desktop = `
+    <div class="panel">
+      <h3>Desktop app</h3><div class="panel-sub">Run TabloView in the background so it can let you know when something needs attention.</div>
+      ${boot.supported ? `
+        <label class="switch-row">
+          <input type="checkbox" class="switch" data-change="startup" ${boot.enabled ? 'checked' : ''} ${boot.locked ? 'disabled' : ''}>
+          <span>Start TabloView when I sign in to Windows</span>
+        </label>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">${boot.locked
+          ? 'This was turned off in Task Manager. To turn it back on, open Task Manager → Startup apps and enable TabloView for TabloTV.'
+          : 'It starts quietly in the system tray; your browser opens only when you click the tray icon.'}</p>`
+      : '<p class="dim" style="font-size:13px">Starting with Windows is available in the installed app.</p>'}
+      ${boot.notifications_available ? `
+        <label class="switch-row" style="margin-top:14px">
+          <input type="checkbox" class="switch" data-change="notifications" ${settings.notifications !== false ? 'checked' : ''}>
+          <span>Notify me about recording problems and conflicts</span>
+        </label>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">A Windows notification when a recording fails or stops early, or when more shows are set to record at once than you have tuners (in the next 2 days). Each one is shown once.</p>`
+      : '<p class="dim" style="margin-top:10px;font-size:13px">Notifications are available in the installed app.</p>'}
     </div>`;
 
   const about = `
@@ -1804,12 +1828,19 @@ PAGES.device = async (r, token) => {
             <div class="meter" style="height:6px"><div class="meter-fill" style="width:${Math.min(d.percent_used, 100)}%"></div></div>
           </div>`).join('')}
       </div>
+      ${spaceByShowPanel(space, storage.connected ? storage.used_gb : 0)}
       <div class="panel">
         <h3>Playback</h3><div class="panel-sub">How much video to buffer before playback starts. Raise it if playback stutters.</div>
         <select class="select" data-change="buffer">
           ${[4, 8, 15, 30].map(v => `<option value="${v}" ${state.bufferTarget === v ? 'selected' : ''}>${v} seconds</option>`).join('')}
         </select>
+        <label class="switch-row" style="margin-top:16px">
+          <input type="checkbox" class="switch" data-change="autoplay" ${state.autoplay ? 'checked' : ''}>
+          <span>Play the next episode automatically</span>
+        </label>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">When a show ends, TabloView counts down 10 seconds to the next unwatched episode. You can cancel and keep watching.</p>
       </div>
+      ${desktop}
       ${network}
       ${about}
       <div class="panel" style="grid-column:1/-1">
@@ -1820,6 +1851,53 @@ PAGES.device = async (r, token) => {
     </div>
   </div>`);
 };
+
+// Which shows use the most space. The Tablo's per-recording sizes don't add up to the drive's usage
+// figure, so each show gets its share of the drive's real usage, labelled as approximate.
+function spaceByShowPanel(data, usedGb) {
+  const shows = (data && data.shows || []).filter(s => s.bytes > 0);
+  const total = data && data.total_bytes;
+  if (!shows.length || !total) return '';
+  const gb = bytes => (usedGb ? (bytes / total) * usedGb : bytes / 1024 ** 3);
+  const top = shows[0].bytes;
+  const rows = shows.map(s => `
+    <div class="space-row">
+      <button class="space-title" data-action="open-show" data-id="${esc(s.show_id)}" title="Open ${esc(s.title)}">${esc(s.title)}</button>
+      <div class="space-bar" title="${Math.round((s.bytes / total) * 100)}% of recordings">
+        <div class="space-fill" style="width:${(s.bytes / top) * 100}%"></div>
+        <div class="space-watched" style="width:${(s.watched_bytes / top) * 100}%"></div>
+      </div>
+      <div class="space-amt">about ${fmt.size(gb(s.bytes))}<span class="dim"> · ${plural(s.count, 'recording')}</span></div>
+      <div class="space-act">${s.watched_count
+        ? `<button class="btn btn-sm btn-danger" data-action="space-delete-watched" data-id="${esc(s.show_id)}" data-title="${esc(s.title)}" data-count="${s.watched_count}" data-kept="${s.protected_watched}" data-size="${esc(fmt.size(gb(s.watched_bytes)))}">${icon('trash', 13)}Delete ${s.watched_count} watched · ${fmt.size(gb(s.watched_bytes))}</button>`
+        : '<span class="dim">Nothing watched yet</span>'}</div>
+    </div>`).join('');
+  return `
+    <div class="panel" style="grid-column:1/-1">
+      <h3>Space by show</h3>
+      <div class="panel-sub">Biggest first. The orange part of each bar is recordings you’ve watched. Amounts are approximate.</div>
+      <div class="space-list">${rows}</div>
+    </div>`;
+}
+
+async function deleteWatchedForShow(el) {
+  const { id, title, count, kept, size } = el.dataset;
+  const ok = await confirmDialog({
+    title: `Delete ${plural(Number(count), 'watched episode')}?`,
+    text: `The watched episodes of “${title}” (about ${size}) will be permanently removed from your Tablo.${Number(kept) ? ` ${plural(Number(kept), 'protected recording')} will be kept.` : ''}`,
+    confirm: 'Delete watched', danger: true,
+  });
+  if (!ok) return;
+  try {
+    const res = await api(`/api/shows/delete_watched?show_id=${encodeURIComponent(id)}`, { method: 'POST' });
+    toast(`Deleted ${plural(res.deleted_count, 'watched episode')}`, 'success');
+    if (res.errors && res.errors.length) toast(`${res.errors.length} couldn't be deleted: ${res.errors[0]}`, 'error');
+    state.shows = null;
+    route();
+  } catch (err) {
+    toast(`Delete failed: ${err.message}`, 'error');
+  }
+}
 
 function updateStatusHtml() {
   const u = state.update;
@@ -1895,11 +1973,16 @@ const player = {
 
     this.finishEpisode();
     this.stopStream();
+    this.hideUpNext();
     Object.assign(state.stream, {
       episodeId: id, channelId: null, offset: start,
       duration: ep ? ep.actual_duration || ep.duration || 0 : 0,
       lastSaved: start, markedWatched: false,
+      // The show itself ends here; the recording runs on a little past it
+      programEnd: ep && ep.duration ? (ep.program_start || 0) + ep.duration : 0,
+      nextEp: null, upNextOffered: false,
     });
+    if (ep) this.findNext(ep).then(next => { if (state.stream.episodeId === id) state.stream.nextEp = next; });
     this.showTimeline(true);
     this.open(title);
     this.setStatus(`<span class="wait">${resuming ? `Resuming at ${fmtClock(start)}…` : 'Starting stream…'}</span>`);
@@ -1941,6 +2024,58 @@ const player = {
     const avail = $('#tlAvail');
     avail.style.left = pct(s.offset || 0);
     avail.style.width = `calc(${pct(this.availableEnd())} - ${pct(s.offset || 0)})`;
+    if (s.programEnd && pos >= s.programEnd) this.offerUpNext();
+  },
+
+  // --- Up next: when a show ends, count down to the next unwatched episode of the same show ---
+  async findNext(ep) {
+    let list = state.show && state.show.id === ep.show_id ? state.episodes : null;
+    if (!list) {
+      try { list = (await api(`/api/shows/episodes?show_id=${encodeURIComponent(ep.show_id)}`)).episodes || []; } catch { return null; }
+    }
+    state.stream.list = list;
+    const i = list.findIndex(e => e.id === ep.id);
+    return list.slice(i + 1).find(e => e.status !== 'Watched' && e.recording_state !== 'recording') || null;
+  },
+
+  offerUpNext() {
+    const s = state.stream;
+    if (!state.autoplay || s.upNextOffered || !s.nextEp || !s.episodeId) return;
+    s.upNextOffered = true;
+    const n = s.nextEp;
+    let left = 10;
+    const thumb = imgUrl(n.snapshot_url || (state.show && (state.show.backdrop_url || state.show.cover_url)));
+    const box = $('#upNext');
+    box.innerHTML = `
+      ${thumb ? `<img class="upnext-thumb" src="${esc(thumb)}" alt="">` : ''}
+      <div class="upnext-body">
+        <div class="upnext-label">Up next · <span id="upNextCount">${left}</span>s</div>
+        <div class="upnext-title">${esc([fmt.se(n.season_number, n.episode_number), episodeTitle(n)].filter(Boolean).join(' · '))}</div>
+        <div class="upnext-actions">
+          <button class="btn btn-primary btn-sm" data-action="upnext-play">${icon('play', 13)}Play now</button>
+          <button class="btn btn-sm" data-action="upnext-cancel">Cancel</button>
+        </div>
+      </div>`;
+    box.classList.remove('hidden');
+    s.upNextTimer = setInterval(() => {
+      left -= 1;
+      const c = $('#upNextCount');
+      if (c) c.textContent = left;
+      if (left <= 0) this.playNext();
+    }, 1000);
+  },
+
+  playNext() {
+    const n = state.stream.nextEp;
+    this.hideUpNext();
+    if (n) this.playEpisode(n.id, (n.position || 0) > 30 ? 'resume' : 'start');
+  },
+
+  hideUpNext() {
+    clearInterval(state.stream.upNextTimer);
+    state.stream.upNextTimer = null;
+    const box = $('#upNext');
+    if (box) { box.classList.add('hidden'); box.innerHTML = ''; }
   },
 
   // Jump within what's converted; anywhere else restarts conversion at that point
@@ -2078,6 +2213,7 @@ const player = {
 
   close() {
     const hadEpisode = !!state.stream.episodeId;
+    this.hideUpNext();
     this.finishEpisode();
     this.teardown();
     const video = this.video();
@@ -2107,7 +2243,8 @@ function fmtClock(sec) {
 }
 
 function findEpisode(id) {
-  return state.episodes.find(e => e.id === id) || (state.inProgress || []).find(e => e.id === id) || null;
+  return state.episodes.find(e => e.id === id) || (state.inProgress || []).find(e => e.id === id)
+    || (state.stream.list || []).find(e => e.id === id) || null;
 }
 
 function chooseResume(ep) {
@@ -2351,6 +2488,9 @@ const ACTIONS = {
 
   'close-player': () => player.close(),
   'player-vlc': () => player.openInVlc(),
+  'space-delete-watched': el => deleteWatchedForShow(el),
+  'upnext-play': () => player.playNext(),
+  'upnext-cancel': () => player.hideUpNext(),
 
   'run-inspector': () => runInspector(),
   'logout': async () => {
@@ -2445,6 +2585,22 @@ const CHANGES = {
     }
   },
   'buffer': el => { state.bufferTarget = parseInt(el.value, 10) || 8; save('tablo_buffer_target', state.bufferTarget); toast(`Buffer set to ${state.bufferTarget} seconds`); },
+  'autoplay': el => { state.autoplay = el.checked; save('tablo_autoplay', el.checked ? '1' : '0'); },
+  'startup': async el => {
+    try {
+      const res = await api('/api/system/startup', { method: 'POST', body: JSON.stringify({ enabled: el.checked }) });
+      el.checked = !!res.enabled;
+      if (res.enabled) toast('TabloView will start in the tray when you sign in', 'success');
+      else if (res.locked) { toast('Windows blocked this: turn TabloView on in Task Manager → Startup apps', 'error'); route(); }
+      else toast('TabloView won’t start with Windows');
+    } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
+  },
+  'notifications': async el => {
+    try {
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ notifications: el.checked }) });
+      toast(el.checked ? 'Notifications on' : 'Notifications off');
+    } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
+  },
   'select-device': async el => {
     try { await api(`/api/auth/select/${encodeURIComponent(el.value)}`, { method: 'POST' }); toast('Switched device. Syncing…', 'success'); await loadStatus(); state.shows = null; } catch (err) { toast(err.message, 'error'); }
   },
@@ -2550,6 +2706,8 @@ function wireEvents() {
   });
   track.addEventListener('mouseleave', () => $('#tlHover').classList.add('hidden'));
   $('#bufferSelect').addEventListener('change', e => { state.bufferTarget = parseInt(e.target.value, 10) || 8; save('tablo_buffer_target', state.bufferTarget); });
+  // Recordings without a known show length still offer the next episode when the video ends
+  $('#video').addEventListener('ended', () => { if (state.stream.episodeId) player.offerUpNext(); });
 
   window.addEventListener('hashchange', route);
   // Stop the backend FFmpeg session if the tab is closed mid-playback

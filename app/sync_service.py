@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 
 from .tablo_client import tablo_manager
+from .notifications import check_all
 from .database import (
     upsert_show,
     upsert_episode,
@@ -232,9 +233,10 @@ class LibrarySyncService:
             set_sync_meta("total_shows", str(len(shows_map)))
             set_sync_meta("total_episodes", str(len(episodes_list)))
 
-            # Also sync guide in background task
+            # Also sync guide in background task (it checks for conflicts when done)
             if include_guide:
                 asyncio.create_task(self.sync_guide())
+            await check_all(conflicts=not include_guide)
 
             print("[LibrarySync] Library sync finished successfully!")
             return {
@@ -262,9 +264,11 @@ class LibrarySyncService:
 
         self.is_guide_syncing = True
         try:
-            return await self._sync_guide()
+            result = await self._sync_guide()
         finally:
             self.is_guide_syncing = False
+        await check_all(recordings=False)
+        return result
 
     async def _sync_guide(self) -> Dict[str, Any]:
         print("[GuideSync] Starting OTA Guide sync...")

@@ -34,6 +34,7 @@ if sys.stdout is None or getattr(sys, "frozen", False):
 
 from app.config import APP_NAME, APP_VERSION, DOWNLOADS_DIR, LOG_DIR  # noqa: E402
 from app.settings import load_settings  # noqa: E402
+from app import notifications, startup  # noqa: E402
 
 
 def running_tabloview(port: int) -> bool:
@@ -135,10 +136,13 @@ def open_folder(path):
 def main():
     settings = load_settings()
     preferred = int(settings.get("port", 7070))
+    # Started by Windows at sign-in: stay in the tray instead of opening the browser
+    background = startup.launched_at_startup()
 
     # Already running? Just bring it up in the browser.
     if running_tabloview(preferred):
-        webbrowser.open(f"http://127.0.0.1:{preferred}/")
+        if not background:
+            webbrowser.open(f"http://127.0.0.1:{preferred}/")
         return
 
     runner = ServerRunner()
@@ -148,7 +152,10 @@ def main():
         _fatal(f"TabloView couldn't start. Details are in:\n{LOG_DIR / 'tabloview.log'}")
         return
     threading.Thread(target=runner.monitor, name="tabloview-monitor", daemon=True).start()
-    webbrowser.open(runner.url)
+    if background:
+        print("[Launcher] Started at sign-in; staying in the tray")
+    else:
+        webbrowser.open(runner.url)
 
     try:
         import pystray
@@ -176,6 +183,8 @@ def main():
         pystray.MenuItem("Quit TabloView", on_quit),
     )
     icon = pystray.Icon(APP_NAME, draw_icon(64), f"{APP_NAME} is running", menu)
+    # Recording problems and conflicts are announced from the tray icon
+    notifications.set_notifier(lambda title, message: icon.notify(message, title))
     icon.run()
 
 

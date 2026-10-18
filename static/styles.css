@@ -559,6 +559,38 @@ img { display: block; }
   background: rgba(10, 12, 16, 0.72); backdrop-filter: blur(6px); transition: opacity 0.3s;
 }
 .player.idle .player-timeline { opacity: 0; }
+/* Space by show (Device page) */
+.space-list { display: flex; flex-direction: column; margin-top: 6px; }
+.space-row {
+  display: grid; grid-template-columns: minmax(140px, 220px) minmax(120px, 1fr) 190px 250px;
+  gap: 16px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border);
+}
+.space-row:last-child { border-bottom: 0; }
+.space-title {
+  background: none; border: 0; padding: 0; color: var(--text); font: inherit; font-weight: 600; text-align: left;
+  cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.space-title:hover { color: var(--accent); }
+.space-bar { position: relative; height: 8px; border-radius: 4px; background: var(--surface-3); overflow: hidden; }
+.space-fill, .space-watched { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; }
+.space-fill { background: var(--accent); }
+.space-watched { background: var(--warn); }
+.space-amt { font-size: 13px; white-space: nowrap; }
+.space-act { justify-self: end; }
+@media (max-width: 1180px) { .space-row { grid-template-columns: minmax(120px, 180px) 1fr 160px; } .space-act { grid-column: 1 / -1; justify-self: start; } }
+
+/* Up next card */
+.upnext {
+  position: absolute; right: 24px; bottom: 76px; z-index: 3; display: flex; gap: 14px; align-items: center;
+  width: 440px; max-width: calc(100% - 48px); padding: 12px; border-radius: 12px;
+  background: rgba(20, 22, 30, 0.92); border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 12px 32px rgba(0,0,0,0.5);
+  animation: fade 0.2s ease-out;
+}
+.upnext-thumb { width: 150px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; flex: none; }
+.upnext-body { min-width: 0; }
+.upnext-label { font-size: 12px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+.upnext-title { font-weight: 650; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.upnext-actions { display: flex; gap: 8px; margin-top: 10px; }
 .tl-time { font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--text-2); min-width: 54px; text-align: center; }
 .tl-track { position: relative; flex: 1; height: 8px; border-radius: 8px; background: rgba(255, 255, 255, 0.14); cursor: pointer; }
 .tl-avail { position: absolute; top: 0; bottom: 0; border-radius: 8px; background: rgba(255, 255, 255, 0.28); }

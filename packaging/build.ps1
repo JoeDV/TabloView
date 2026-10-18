@@ -14,7 +14,8 @@ if (-not (Test-Path $Py)) {
     python -m venv .build-venv
     & $Py -m pip install --upgrade pip
 }
-& $Py -m pip install -q -r requirements.txt pyinstaller pystray pillow
+# winrt-*: Start with Windows in the Microsoft Store package (app/startup.py)
+& $Py -m pip install -q -r requirements.txt pyinstaller pystray pillow winrt-runtime winrt-Windows.ApplicationModel winrt-Windows.ApplicationModel.Activation winrt-Windows.Foundation
 if ($LASTEXITCODE -ne 0) { throw 'pip install failed' }
 
 # 1b. Unit tests must pass before anything is packaged (they use a throwaway data folder)

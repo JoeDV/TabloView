@@ -1,1 +1,1 @@
-Playing or exporting a recording no longer opens a command window, and a Tablo that's slow to start playback now says so instead of showing an empty error. TabloView is also coming to the Microsoft Store.
+Episode thumbnails from the recordings, auto-play of the next episode, a Space by show view with one-click cleanup, start with Windows, notifications for failed recordings and conflicts, protected-recording locks, clearer tags for short or failed recordings, a Live TV Favorites filter, and playback that starts where the show does.

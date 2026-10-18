@@ -13,8 +13,9 @@ a = Analysis(
         (os.path.join(STAGE, 'ffmpeg'), 'ffmpeg'),
         (os.path.join(ROOT, 'LICENSE'), '.'),
     ],
-    # uvicorn picks its loop/protocol implementations dynamically; pystray picks its backend
-    hiddenimports=collect_submodules('uvicorn') + ['pystray._win32', 'app.main'],
+    # uvicorn picks its loop/protocol implementations dynamically; pystray picks its backend;
+    # the WinRT startup-task bindings are imported only inside functions (app/startup.py)
+    hiddenimports=collect_submodules('uvicorn') + collect_submodules('winrt') + ['pystray._win32', 'app.main'],
     excludes=['tkinter', 'unittest', 'pydoc_data'],
     noarchive=False,
 )

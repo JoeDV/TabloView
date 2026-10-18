@@ -355,6 +355,53 @@ def set_episode_progress(episode_id: str, position: Optional[int] = None, watche
     recalculate_show_stats(row["show_id"])
 
 
+def get_incomplete_recordings() -> List[Dict[str, Any]]:
+    """Recordings that failed or stopped early (see recording_details), newest first."""
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT id, show_title, title, season_number, episode_number, duration, air_date, raw_json
+            FROM episodes ORDER BY air_date DESC
+        """).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d.update(recording_details(d.pop("raw_json")))
+        if d["incomplete"]:
+            result.append(d)
+    return result
+
+
+def get_storage_by_show() -> List[Dict[str, Any]]:
+    """Space per recorded show, biggest first, from each recording's size as the Tablo reports it
+    (video_details.size, in bytes). These sizes don't add up to the drive's usage figure, so callers
+    should treat them as each show's share rather than exact amounts."""
+    shows: Dict[str, Dict[str, Any]] = {}
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT e.show_id, e.status, e.air_date, e.raw_json, s.title, s.cover_url, s.backdrop_url
+            FROM episodes e JOIN shows s ON s.id = e.show_id
+        """).fetchall()
+    for r in rows:
+        try:
+            raw = json.loads(r["raw_json"] or "{}")
+        except ValueError:
+            raw = {}
+        size = int((raw.get("video_details") or {}).get("size") or 0)
+        s = shows.setdefault(r["show_id"], {
+            "show_id": r["show_id"], "title": r["title"], "cover_url": r["cover_url"] or r["backdrop_url"],
+            "count": 0, "bytes": 0, "watched_count": 0, "watched_bytes": 0, "protected_watched": 0,
+        })
+        s["count"] += 1
+        s["bytes"] += size
+        if r["status"] == "Watched":
+            if (raw.get("user_info") or {}).get("protected"):
+                s["protected_watched"] += 1
+            else:
+                s["watched_count"] += 1
+                s["watched_bytes"] += size
+    return sorted(shows.values(), key=lambda s: s["bytes"], reverse=True)
+
+
 def get_in_progress_episodes(limit: int = 20) -> List[Dict[str, Any]]:
     """Partly watched recordings (resume point saved, not finished), newest airing first.
     (The Tablo doesn't record when something was last watched, so air date is the best order.)"""

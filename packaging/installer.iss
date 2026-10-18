@@ -37,7 +37,16 @@ Source: "..\dist\TabloView\*"; DestDir: "{app}"; Flags: ignoreversion recursesub
 Name: "{group}\TabloView"; Filename: "{app}\TabloView.exe"
 Name: "{group}\Uninstall TabloView"; Filename: "{uninstallexe}"
 Name: "{userdesktop}\TabloView"; Filename: "{app}\TabloView.exe"; Tasks: desktopicon
-Name: "{userstartup}\TabloView"; Filename: "{app}\TabloView.exe"; Tasks: startup
+
+[Registry]
+; Start with Windows, quietly in the tray. The same value is switched from Device in the app
+; (app/startup.py), and removed on uninstall either way.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "TabloView"; ValueData: """{app}\TabloView.exe"" --background"; Tasks: startup; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "TabloView"; Flags: uninsdeletevalue
+
+[InstallDelete]
+; Installers before 1.1.4 started TabloView from a Startup-folder shortcut (which opened the browser)
+Type: files; Name: "{userstartup}\TabloView.lnk"
 
 [Run]
 Filename: "{app}\TabloView.exe"; Description: "Open TabloView now"; Flags: nowait postinstall skipifsilent

@@ -9,6 +9,7 @@ DEFAULTS: Dict[str, Any] = {
     "allow_lan": False,  # packaged app: listen on all interfaces instead of 127.0.0.1 only
     "port": 7070,
     "auto_sync_minutes": 15,  # recordings sync interval; 0 = off (guide refreshes every GUIDE_SYNC_HOURS)
+    "notifications": True,  # tray notifications for failed/short recordings and recording conflicts
 }
 
 GUIDE_SYNC_HOURS = 6
