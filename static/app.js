@@ -1727,12 +1727,13 @@ function renderDownloads(jobs) {
 // Device
 // ---------------------------------------------------------------------------
 PAGES.device = async (r, token) => {
-  const [, , info, settings, space, boot] = await Promise.all([
+  const [, , info, settings, space, boot, playback] = await Promise.all([
     loadStatus(), loadStorage(),
     api('/api/system/info').catch(() => ({})),
     api('/api/settings').catch(() => ({})),
     api('/api/storage/shows').catch(() => null),
     api('/api/system/startup').catch(() => ({})),
+    api('/api/system/playback').catch(() => ({})),
   ]);
   if (stale(token)) return;
   const st = state.status || {};
@@ -1830,10 +1831,26 @@ PAGES.device = async (r, token) => {
       </div>
       ${spaceByShowPanel(space, storage.connected ? storage.used_gb : 0)}
       <div class="panel">
-        <h3>Playback</h3><div class="panel-sub">How much video to buffer before playback starts. Raise it if playback stutters.</div>
-        <select class="select" data-change="buffer">
-          ${[4, 8, 15, 30].map(v => `<option value="${v}" ${state.bufferTarget === v ? 'selected' : ''}>${v} seconds</option>`).join('')}
-        </select>
+        <h3>Playback</h3><div class="panel-sub">Picture quality and buffering for watching in the browser.</div>
+        <label class="switch-row" style="font-weight:400;cursor:default">
+          <span>Video quality</span>
+          <select class="select" data-change="video-quality" style="height:32px">
+            ${[['auto', 'Automatic (recommended)'], ['best', 'Best quality'], ['fastest', 'Fastest (older PCs)']]
+              .map(([v, label]) => `<option value="${v}" ${(playback.quality || 'auto') === v ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </label>
+        ${playback.encoder ? `<p class="dim" style="margin-top:6px;font-size:12.5px">Converting with ${esc(playback.encoder)}${playback.hardware ? ' (your graphics chip, so the CPU stays free)' : ''}.</p>` : ''}
+        <label class="switch-row" style="margin-top:14px">
+          <input type="checkbox" class="switch" data-change="smooth-motion" ${playback.smooth_motion ? 'checked' : ''} ${playback.quality === 'fastest' ? 'disabled' : ''}>
+          <span>Smooth motion (60 fps)</span>
+        </label>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">Shows antenna TV at its full 60 motion steps a second, like on the TV. Best for sports; uses more processing.</p>
+        <label class="switch-row" style="font-weight:400;cursor:default;margin-top:14px">
+          <span>Buffer before playing</span>
+          <select class="select" data-change="buffer" style="height:32px">
+            ${[4, 8, 15, 30].map(v => `<option value="${v}" ${state.bufferTarget === v ? 'selected' : ''}>${v} seconds</option>`).join('')}
+          </select>
+        </label>
         <label class="switch-row" style="margin-top:16px">
           <input type="checkbox" class="switch" data-change="autoplay" ${state.autoplay ? 'checked' : ''}>
           <span>Play the next episode automatically</span>
@@ -2114,7 +2131,7 @@ const player = {
     }
   },
 
-  async watchLive(channelId, name) {
+  async watchLive(channelId, name, kind) {
     this.finishEpisode();
     this.stopStream();
     state.stream.channelId = channelId;
@@ -2122,7 +2139,7 @@ const player = {
     this.open(`Live · ${name}`);
     this.setStatus(`<span class="wait">Tuning ${esc(name)}…</span>`);
     try {
-      const res = await api('/api/live/tune', { method: 'POST', body: JSON.stringify({ channel_id: channelId, transcode: true }) });
+      const res = await api('/api/live/tune', { method: 'POST', body: JSON.stringify({ channel_id: channelId, transcode: true, kind }) });
       state.stream.sessionId = res.session_id;
       checkTuners();
       this.start(res.stream_url, 'Live');
@@ -2343,7 +2360,7 @@ async function watchLiveChecked(channelId, name, kind) {
       if (!ok) return;
     }
   }
-  player.watchLive(channelId, name);
+  player.watchLive(channelId, name, kind);
 }
 
 function openVlc(url) {
@@ -2595,6 +2612,19 @@ const CHANGES = {
       else toast('TabloView won’t start with Windows');
     } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
   },
+  'video-quality': async el => {
+    try {
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ video_quality: el.value }) });
+      toast('Video quality saved. It applies to the next thing you play.');
+      route();
+    } catch (err) { toast(err.message, 'error'); }
+  },
+  'smooth-motion': async el => {
+    try {
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ smooth_motion: el.checked }) });
+      toast(`Smooth motion ${el.checked ? 'on' : 'off'}. It applies to the next thing you play.`);
+    } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
+  },
   'notifications': async el => {
     try {
       await api('/api/settings', { method: 'POST', body: JSON.stringify({ notifications: el.checked }) });
@@ -2706,8 +2736,12 @@ function wireEvents() {
   });
   track.addEventListener('mouseleave', () => $('#tlHover').classList.add('hidden'));
   $('#bufferSelect').addEventListener('change', e => { state.bufferTarget = parseInt(e.target.value, 10) || 8; save('tablo_buffer_target', state.bufferTarget); });
-  // Recordings without a known show length still offer the next episode when the video ends
-  $('#video').addEventListener('ended', () => { if (state.stream.episodeId) player.offerUpNext(); });
+  // Recordings without a known show length still offer the next episode when the video ends.
+  // A stalled stream can also fire 'ended', so only near the end of the recording itself.
+  $('#video').addEventListener('ended', () => {
+    const s = state.stream;
+    if (s.episodeId && s.duration && player.position() >= s.duration - 90) player.offerUpNext();
+  });
 
   window.addEventListener('hashchange', route);
   // Stop the backend FFmpeg session if the tab is closed mid-playback

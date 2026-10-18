@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, Response, JSONResponse
 from .config import (
     APP_NAME, APP_VERSION, STATIC_DIR, TRANSCODE_DIR, DOWNLOADS_DIR, IMAGE_CACHE_DIR, HOST, PORT,
 )
+from . import encoders
 from .database import init_db
 from .tablo_client import tablo_manager
 from .sync_service import sync_service, auto_sync_loop
@@ -26,6 +27,8 @@ async def lifespan(app: FastAPI):
     # Startup: initialize database tables
     print("[Startup] Initializing Tablo SQLite database...")
     init_db()
+    # Find out once which graphics-chip video encoder works here, before the first playback
+    encoders.detect_in_background()
 
     # If credentials/device already loaded, kick off an initial library sync in background
     # (sync_library starts the guide sync itself once it finishes)

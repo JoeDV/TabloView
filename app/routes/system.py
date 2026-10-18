@@ -4,13 +4,13 @@ import asyncio
 import shutil
 import socket
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from ..config import APP_NAME, APP_VERSION, IS_PACKAGED, IS_STORE, FFMPEG_PATH, HOME_DIR, DOWNLOADS_DIR
 from ..settings import load_settings, save_settings
 from ..updates import check_for_update
-from .. import notifications, startup
+from .. import encoders, notifications, startup
 from ..tablo_client import tablo_manager
 from ..sync_service import sync_service
 from ..database import get_sync_meta, get_export_jobs, delete_export_job, get_storage_by_show
@@ -22,6 +22,8 @@ class SettingsUpdate(BaseModel):
     allow_lan: Optional[bool] = None
     auto_sync_minutes: Optional[int] = Field(default=None, ge=0, le=1440)
     notifications: Optional[bool] = None
+    video_quality: Optional[Literal["auto", "best", "fastest"]] = None
+    smooth_motion: Optional[bool] = None
 
 
 class StartupUpdate(BaseModel):
@@ -103,6 +105,20 @@ async def set_startup(update: StartupUpdate):
     except Exception as e:
         print(f"[Startup] Couldn't change the startup setting: {e}")
         raise HTTPException(status_code=500, detail=f"Couldn't change the startup setting: {e}")
+
+
+@router.get("/system/playback")
+async def get_playback():
+    """Which video encoder playback uses on this PC, and the effective settings."""
+    settings = load_settings()
+    enc = await asyncio.to_thread(encoders.choose, settings.get("video_quality") or "auto")
+    smooth = settings.get("smooth_motion")
+    return {
+        "encoder": enc["label"],
+        "hardware": enc["hardware"],
+        "quality": settings.get("video_quality") or "auto",
+        "smooth_motion": (enc["hardware"] if smooth is None else bool(smooth)) and enc["name"] != "fastest",
+    }
 
 
 @router.get("/storage/shows")

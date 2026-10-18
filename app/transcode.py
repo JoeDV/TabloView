@@ -11,17 +11,38 @@ import subprocess
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from datetime import datetime, timezone
-from typing import Dict, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any
 
 import httpx
 from starlette.responses import Response, StreamingResponse
 from starlette.background import BackgroundTask
 
+from . import encoders
 from .config import TRANSCODE_DIR, DOWNLOADS_DIR, FFMPEG_PATH
 from .database import save_export_job
+from .settings import load_settings
 
 # The packaged app has no console, so Windows would open a console window for each ffmpeg it starts
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+
+def run_at_full_speed(proc: subprocess.Popen) -> None:
+    """Opt FFmpeg out of Windows 11 'efficiency mode' (EcoQoS). Started from a windowless background
+    app it can be throttled to slow cores and low clocks, which made live conversion fall below real
+    time even with idle CPU to spare."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        class PowerThrottlingState(ctypes.Structure):
+            _fields_ = [("Version", ctypes.c_ulong), ("ControlMask", ctypes.c_ulong), ("StateMask", ctypes.c_ulong)]
+
+        # ProcessPowerThrottling = 4; control EXECUTION_SPEED (1) and set it off (state 0)
+        state = PowerThrottlingState(1, 1, 0)
+        ctypes.windll.kernel32.SetProcessInformation(int(proc._handle), 4, ctypes.byref(state), ctypes.sizeof(state))
+    except Exception as e:
+        print(f"[Transcode] Couldn't turn off power throttling for FFmpeg: {e}")
 
 
 def force_rmtree(path: Path, quiet: bool = False) -> bool:
@@ -69,6 +90,7 @@ class StreamSession:
         self.created_at = datetime.now(timezone.utc)
         self.proc: Optional[subprocess.Popen] = None
         self.transcoded = False
+        self.encoder: Optional[str] = None  # what converted it, e.g. "Intel Quick Sync" or "copy"
 
 
 class TranscodeManager:
@@ -184,11 +206,84 @@ class TranscodeManager:
         except Exception as e:
             return Response(content=f"Proxy error: {e}", status_code=502)
 
-    async def start_browser_transcode(self, session_id: str, input_url: str, start: int = 0, live: bool = True) -> str:
-        """Transcode raw Tablo stream into H.264/AAC HLS for browser video player.
+    async def probe_video_codec(self, url: str) -> Optional[str]:
+        """The stream's video codec (e.g. 'h264', 'mpeg2video'), or None if it can't be read quickly."""
+        def run() -> str:
+            try:
+                return subprocess.run([FFMPEG_PATH, "-hide_banner", "-i", url], capture_output=True, text=True,
+                                      timeout=10, creationflags=NO_WINDOW).stderr
+            except Exception:
+                return ""
+        m = re.search(r"Video: (\w+)", await asyncio.to_thread(run))
+        return m.group(1) if m else None
+
+    def _video_plan(self, passthrough: bool) -> Dict[str, Any]:
+        """Encoder and filters from the Playback settings (see app/encoders.py)."""
+        settings = load_settings()
+        quality = settings.get("video_quality") or "auto"
+        if passthrough:
+            return {"encoder": None, "smooth": False, "quality": quality}
+        enc = encoders.choose(quality)
+        smooth = settings.get("smooth_motion")
+        # Smooth motion (60 fps) by default only where a graphics-chip encoder has the headroom
+        smooth = enc["hardware"] if smooth is None else bool(smooth)
+        return {"encoder": enc, "smooth": smooth and quality != "fastest", "quality": quality}
+
+    def _build_cmd(self, input_url: str, start: int, live: bool, plan: Dict[str, Any], session_dir: Path) -> List[str]:
+        if live:
+            read_args = []
+            hls_args = ["-hls_list_size", "30", "-hls_flags", "delete_segments+independent_segments"]
+        else:
+            # Stay well ahead of playback without racing through the whole file: unthrottled, a
+            # recording transcodes several times faster than real time and starves a live stream
+            # playing at the same time
+            read_args = ["-readrate", "2", "-readrate_initial_burst", "30"]
+            hls_args = ["-hls_list_size", "0", "-hls_playlist_type", "event", "-hls_flags", "independent_segments"]
+
+        enc = plan["encoder"]
+        if enc is None:
+            # Already browser-friendly H.264 (streaming channels): repackage without re-encoding
+            video = ["-c:v", "copy"]
+        else:
+            # Deinterlace only frames that are interlaced (1080i), leaving 720p/progressive alone;
+            # send_field turns each field into a frame (60 fps) for smooth motion. It also doubles
+            # sources that are already 60 fps (720p), so cap the result at 59.94.
+            deint = ("bwdif=mode=send_field:deint=interlaced,fps=60000/1001" if plan["smooth"]
+                     else "bwdif=mode=send_frame:deint=interlaced")
+            video = ["-vf", deint, *enc["args"], "-pix_fmt", enc["pix_fmt"],
+                     # A keyframe every 3 s: segments start cleanly and playback starts sooner
+                     "-force_key_frames", "expr:gte(t,n_forced*3)"]
+
+        return [
+            FFMPEG_PATH,
+            "-y",
+            "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+            # Drop corrupt packets from the OTA feed instead of decoding garbage
+            "-fflags", "+discardcorrupt",
+            *(["-ss", str(int(start))] if start and start > 0 else []),
+            *read_args,
+            "-i", input_url,
+            *video,
+            # Stretch/pad audio to its timestamps so input gaps cause a short blip, not garbled sound.
+            # 5.1 is mixed to stereo with the centre (dialogue) channel at full level and the
+            # surrounds lowered, so speech isn't drowned out
+            "-af", "aresample=async=1:ochl=stereo:clev=1.0:slev=0.6",
+            "-c:a", "aac", "-b:a", "192k", "-ac", "2",
+            "-f", "hls",
+            "-hls_time", "3",
+            *hls_args,
+            "-hls_segment_filename", str(session_dir / "%04d.ts"),
+            str(session_dir / "playlist.m3u8"),
+        ]
+
+    async def start_browser_transcode(self, session_id: str, input_url: str, start: int = 0, live: bool = True,
+                                      passthrough: bool = False) -> str:
+        """Convert a Tablo stream into H.264/AAC HLS for the browser player.
 
         live=True keeps a rolling ~90 s window (live TV). For recordings (live=False) every segment is
-        kept so the player can seek anywhere already transcoded, and `start` (seconds) resumes mid-show.
+        kept so the player can seek anywhere already converted, and `start` (seconds) resumes mid-show.
+        passthrough=True copies the video as is (for streams that are already H.264).
+        If a graphics-chip encoder or the copy fails before producing anything, it retries on the CPU.
         """
         sess = self.get_session(session_id)
         if not sess:
@@ -198,56 +293,49 @@ class TranscodeManager:
         session_dir.mkdir(exist_ok=True, parents=True)
         playlist_output = session_dir / "playlist.m3u8"
 
-        if live:
-            read_args = []
-            hls_args = ["-hls_list_size", "30", "-hls_flags", "delete_segments+independent_segments"]
-        else:
-            # Stay well ahead of playback without racing through the whole file: unthrottled, a
-            # recording transcodes at ~3x and starves a live stream playing at the same time
-            read_args = ["-readrate", "2", "-readrate_initial_burst", "30"]
-            hls_args = ["-hls_list_size", "0", "-hls_playlist_type", "event", "-hls_flags", "independent_segments"]
+        plan = await asyncio.to_thread(self._video_plan, passthrough)
+        for attempt in range(2):
+            cmd = self._build_cmd(input_url, start, live, plan, session_dir)
+            # The child process keeps its own inherited handle; close ours right away
+            with open(session_dir / "ffmpeg.log", "w", encoding="utf-8") as f:
+                proc = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT, cwd=str(session_dir),
+                                        creationflags=NO_WINDOW)
+            run_at_full_speed(proc)
+            sess.proc = proc
+            sess.transcoded = True
+            sess.encoder = "copy" if plan["encoder"] is None else plan["encoder"]["label"]
 
-        cmd = [
-            FFMPEG_PATH,
-            "-y",
-            "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
-            # Drop corrupt packets from the OTA feed instead of decoding garbage
-            "-fflags", "+discardcorrupt",
-            *(["-ss", str(int(start))] if start and start > 0 else []),
-            *read_args,
-            "-i", input_url,
-            "-vf", "yadif",
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
-            "-pix_fmt", "yuv420p",
-            # Stretch/pad audio to its timestamps so input gaps cause a short blip, not garbled sound
-            "-af", "aresample=async=1",
-            "-c:a", "aac", "-b:a", "128k", "-ac", "2",
-            "-f", "hls",
-            "-hls_time", "3",
-            *hls_args,
-            "-hls_segment_filename", str(session_dir / "%04d.ts"),
-            str(playlist_output)
-        ]
+            # Wait up to 12 seconds for at least 2 segments, for a smooth start
+            ready = False
+            for _ in range(30):
+                if playlist_output.exists() and playlist_output.stat().st_size > 0:
+                    try:
+                        if len(re.findall(r"\.ts", playlist_output.read_text(encoding="utf-8"))) >= 2:
+                            ready = True
+                            break
+                    except Exception:
+                        pass
+                if proc.poll() is not None:
+                    break
+                await asyncio.sleep(0.4)
 
-        log_file = session_dir / "ffmpeg.log"
-        # The child process keeps its own inherited handle; close ours right away
-        with open(log_file, "w", encoding="utf-8") as f:
-            proc = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT, cwd=str(session_dir),
-                                    creationflags=NO_WINDOW)
-        sess.proc = proc
-        sess.transcoded = True
+            failed = not ready and proc.poll() not in (None, 0)
+            if not failed or attempt == 1:
+                break
+            # Fall back to CPU encoding (the hardware encoder or the copy didn't work for this stream)
+            enc = plan["encoder"]
+            if enc is not None and enc["hardware"]:
+                encoders.mark_failed(enc["name"])
+            elif enc is not None:
+                break  # already on the CPU: nothing else to try
+            print(f"[Transcode] {sess.encoder} failed for session {session_id}; retrying on the CPU")
+            plan = {**plan, "encoder": encoders.cpu_fallback(plan["quality"]),
+                    "smooth": plan["smooth"] and plan["encoder"] is not None}
+            for old in session_dir.glob("*.ts"):
+                old.unlink(missing_ok=True)
+            playlist_output.unlink(missing_ok=True)
 
-        # Wait up to 12 seconds for playlist to be generated with at least 2 segments for smooth buffer
-        for _ in range(30):
-            if playlist_output.exists() and playlist_output.stat().st_size > 0:
-                try:
-                    text = playlist_output.read_text(encoding="utf-8")
-                    if len(re.findall(r"\.ts", text)) >= 2:
-                        break
-                except Exception:
-                    pass
-            await asyncio.sleep(0.4)
-
+        print(f"[Transcode] Session {session_id[:8]}: {sess.encoder}{', 60 fps' if plan['smooth'] else ''}")
         return f"/api/transcoded/{session_id}/playlist.m3u8"
 
     def clean_filename(self, name: str) -> str:

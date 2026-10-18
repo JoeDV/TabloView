@@ -227,6 +227,7 @@ def base_channel_dict(ch, cloud_ch_info: Dict[str, Any], local_ota_map: Dict[str
 class TuneRequest(BaseModel):
     channel_id: str
     transcode: bool = True
+    kind: Optional[str] = None  # 'ota' or 'fast', from the channel list
 
 
 class StopRequest(BaseModel):
@@ -569,9 +570,12 @@ async def tune_live_channel(req: TuneRequest):
             raise ValueError("No playlist URL returned by Tablo")
 
         if req.transcode:
-            # Start browser HLS transcode
+            # Streaming channels usually arrive as H.264 already: pass the video through untouched
+            # (sharper, less CPU). Antenna channels are MPEG-2 and always need converting.
+            passthrough = req.kind == "fast" and (await transcode_manager.probe_video_codec(stream.playlist_url)) == "h264"
             sess = transcode_manager.create_session(stream.playlist_url)
-            stream_url = await transcode_manager.start_browser_transcode(sess.session_id, stream.playlist_url)
+            stream_url = await transcode_manager.start_browser_transcode(sess.session_id, stream.playlist_url,
+                                                                         passthrough=passthrough)
             return {
                 "session_id": sess.session_id,
                 "stream_url": stream_url,

@@ -10,6 +10,8 @@ DEFAULTS: Dict[str, Any] = {
     "port": 7070,
     "auto_sync_minutes": 15,  # recordings sync interval; 0 = off (guide refreshes every GUIDE_SYNC_HOURS)
     "notifications": True,  # tray notifications for failed/short recordings and recording conflicts
+    "video_quality": "auto",  # browser playback: auto (graphics chip if available), best, fastest
+    "smooth_motion": None,  # 60 fps from 1080i; None = on when a graphics-chip encoder is in use
 }
 
 GUIDE_SYNC_HOURS = 6
