@@ -6,6 +6,8 @@ import ipaddress
 from pathlib import Path
 from contextlib import asynccontextmanager
 
+import httpx
+
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, JSONResponse
@@ -59,6 +61,12 @@ app = FastAPI(
 
 # No CORS middleware: the UI is served from this same origin, and allowing any
 # origin would let arbitrary websites drive the API (e.g. delete recordings).
+
+
+@app.exception_handler(httpx.TransportError)
+async def tablo_not_answering(request: Request, exc: httpx.TransportError):
+    """Any request that failed because the Tablo didn't answer gets the same plain explanation."""
+    return JSONResponse(status_code=503, content={"detail": tablo_manager.UNREACHABLE_MESSAGE})
 
 _LOCAL_NAMES = {"localhost", socket.gethostname().lower(), f"{socket.gethostname().lower()}.local"}
 _UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}

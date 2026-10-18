@@ -84,9 +84,10 @@ async def watch_episode(
     airing_path = ep["path"]
     try:
         watch_data = await tablo_manager.get_airing_watch_url(airing_path)
-    except httpx.TimeoutException:
-        print(f"[Watch] Tablo didn't answer the watch request for {airing_path} in time")
-        raise HTTPException(status_code=504, detail="Your Tablo didn't respond in time. Try again in a moment.")
+    except httpx.TransportError as e:
+        # Refused or timed out: the Tablo sometimes stops answering for a minute or so
+        print(f"[Watch] Tablo didn't answer the watch request for {airing_path}: {e!r}")
+        raise HTTPException(status_code=503, detail=tablo_manager.UNREACHABLE_MESSAGE)
     except Exception as e:
         print(f"[Watch] Watch request for {airing_path} failed: {e!r}")
         raise HTTPException(status_code=502, detail=f"Failed to start watch session on Tablo: {e or type(e).__name__}")

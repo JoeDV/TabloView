@@ -3,6 +3,7 @@
 import asyncio
 import shutil
 import socket
+import time
 from pathlib import Path
 from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException, Request
@@ -150,9 +151,26 @@ async def refresh_library():
     return {"status": "started", "message": "Library sync initiated"}
 
 
+_last_recheck = 0.0
+
+
+async def recheck_tablo() -> None:
+    """While the Tablo is marked as not answering, try it again at most every 15 s, so the banner
+    clears even on pages that don't otherwise contact the Tablo."""
+    global _last_recheck
+    if not tablo_manager.tablo_unreachable or time.time() - _last_recheck < 15:
+        return
+    _last_recheck = time.time()
+    try:
+        await asyncio.wait_for(tablo_manager.request_local("GET", "/server/info"), timeout=6)
+    except Exception:
+        pass  # still not answering; request_local keeps it marked
+
+
 @router.get("/library/status")
 async def get_library_status():
     """Check status of background library sync."""
+    await recheck_tablo()
     last_sync = get_sync_meta("last_sync")
     total_shows = get_sync_meta("total_shows") or "0"
     total_episodes = get_sync_meta("total_episodes") or "0"
@@ -162,6 +180,7 @@ async def get_library_status():
         "last_sync": last_sync,
         "last_error": sync_service.last_error,
         "auth_problem": tablo_manager.auth_problem,
+        "tablo_unreachable": tablo_manager.tablo_unreachable,
         "total_shows": int(total_shows),
         "total_episodes": int(total_episodes)
     }

@@ -7,6 +7,7 @@ import asyncio
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone, timedelta
 
+import httpx
 import requests
 from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel
@@ -284,7 +285,8 @@ async def get_tuner_status():
     except Exception as e:
         print(f"[LiveTV] Error reading tuners: {e}")
 
-    return {"tuners": [], "total": 0, "in_use": 0, "available": 0, "streams_in_use": 0, "streams_total": 0}
+    return {"tuners": [], "total": 0, "in_use": 0, "available": 0, "streams_in_use": 0, "streams_total": 0,
+            "unreachable": tablo_manager.tablo_unreachable}
 
 
 @router.get("/channels")
@@ -595,6 +597,11 @@ async def tune_live_channel(req: TuneRequest):
         if re.search(r"\b401\b", str(e)):
             tablo_manager.note_auth("device", ok=False)
         print(f"[LiveTV] Error tuning channel {channel_id}: {e}")
+        # TabloClient uses requests; a refused or timed-out connection means the Tablo isn't answering
+        if isinstance(e, (httpx.TransportError, requests.ConnectionError, requests.Timeout)):
+            if tablo_manager.unreachable_since is None:
+                tablo_manager.unreachable_since = time.time()
+            raise HTTPException(status_code=503, detail=tablo_manager.UNREACHABLE_MESSAGE)
         raise HTTPException(status_code=500, detail=f"Failed to tune live channel: {e}")
 
 

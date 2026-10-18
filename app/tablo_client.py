@@ -3,6 +3,7 @@ and HMAC-MD5 signed requests to the local Tablo hardware.
 """
 
 import json
+import time
 import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,7 +25,15 @@ class TabloManager:
         # Sign-in problems seen recently, by source ("device" = local Tablo, "cloud" = Tablo account);
         # cleared again as soon as a request from that source succeeds
         self.auth_problems: Dict[str, str] = {}
+        # When requests to the Tablo started failing to connect (None while it answers)
+        self.unreachable_since: Optional[float] = None
         self.load_cached_config()
+
+    UNREACHABLE_MESSAGE = "Your Tablo isn't responding right now. This usually clears up on its own: wait a minute and try again."
+
+    @property
+    def tablo_unreachable(self) -> bool:
+        return self.unreachable_since is not None
 
     AUTH_MESSAGES = {
         "device": "Your Tablo stopped accepting TabloView's access.",
@@ -133,12 +142,22 @@ class TabloManager:
         if body:
             headers["Content-Type"] = "application/json"
 
-        resp = await self._http.request(
-            method=method,
-            url=url,
-            content=body.encode() if body else None,
-            headers=headers
-        )
+        try:
+            resp = await self._http.request(
+                method=method,
+                url=url,
+                content=body.encode() if body else None,
+                headers=headers
+            )
+        except httpx.TransportError:
+            # Connection refused or timed out: the Tablo sometimes stops answering for a minute or so
+            if self.unreachable_since is None:
+                self.unreachable_since = time.time()
+                print("[TabloManager] Tablo isn't responding")
+            raise
+        if self.unreachable_since is not None:
+            print(f"[TabloManager] Tablo is responding again (after {time.time() - self.unreachable_since:.0f} s)")
+            self.unreachable_since = None
         if resp.status_code == 401:
             self.note_auth("device", ok=False)
         elif resp.status_code < 400:

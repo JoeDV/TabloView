@@ -329,6 +329,7 @@ async function pollStatus() {
   try {
     const s = await api('/api/library/status');
     showAuthProblem(s.auth_problem);
+    $('#reachBanner').classList.toggle('hidden', !s.tablo_unreachable || !!s.auth_problem);
     const wasSyncing = state.isSyncing;
     const prevSync = state.lastSync;
     setSyncState(s.is_syncing, s.last_sync);
@@ -1713,9 +1714,12 @@ async function checkTuners() {
     const total = t.total || 0, used = t.in_use || 0, held = t.held || 0, rec = t.recording || 0;
     const streams = t.streams_in_use || 0, streamsTotal = t.streams_total || 0;
     pill.classList.toggle('busy', used > 0 || streams > 0);
+    pill.classList.toggle('down', !total);
     if (!total) {
-      text.textContent = 'Tuners unavailable';
-      pill.title = "Couldn't read tuner status from the Tablo";
+      text.textContent = t.unreachable ? 'Tablo not responding' : 'Tuners unavailable';
+      pill.title = t.unreachable
+        ? "TabloView can't reach your Tablo right now. This usually clears up on its own: wait a minute."
+        : "Couldn't read tuner status from the Tablo";
       return;
     }
     text.textContent = `OTA ${used}/${total}` + (held ? ` · ${held} releasing` : '') + (streamsTotal ? ` · Stream ${streams}/${streamsTotal}` : '');
