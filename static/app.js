@@ -31,6 +31,14 @@ const ICONS = {
   info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
   alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/>',
   lock: '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  pause: '<rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor" stroke="none"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor" stroke="none"/>',
+  rewind: '<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><text x="12" y="15.5" text-anchor="middle" font-size="7.5" font-weight="700" fill="currentColor" stroke="none">10</text>',
+  forward: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/><text x="12" y="15.5" text-anchor="middle" font-size="7.5" font-weight="700" fill="currentColor" stroke="none">30</text>',
+  volume: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/>',
+  mute: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="m22 9-6 6M16 9l6 6"/>',
+  pip: '<rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="11" width="8" height="7" rx="1" fill="currentColor" stroke="none"/>',
+  fullscreen: '<path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>',
+  keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
   star: '<path d="M11.5 2.3a.6.6 0 0 1 1 0l2.8 5.7 6.3.9a.6.6 0 0 1 .3 1l-4.5 4.4 1 6.2a.6.6 0 0 1-.8.6L12 18.2l-5.6 2.9a.6.6 0 0 1-.8-.6l1-6.2L2.1 9.9a.6.6 0 0 1 .3-1l6.3-.9z" fill="currentColor"/>',
 };
 
@@ -245,12 +253,12 @@ function closeModal(result) {
   resolve && resolve(result);
 }
 
-function openModal(html, { onReady } = {}) {
+function openModal(html, { onReady, wide = false } = {}) {
   closeModal(false);
   return new Promise(resolve => {
     const el = document.createElement('div');
     el.className = 'overlay';
-    el.innerHTML = `<div class="dialog" role="dialog" aria-modal="true">${html}</div>`;
+    el.innerHTML = `<div class="dialog ${wide ? 'wide' : ''}" role="dialog" aria-modal="true">${html}</div>`;
     el.addEventListener('mousedown', e => { if (e.target === el) closeModal(false); });
     document.body.appendChild(el);
     hydrateIcons(el);
@@ -1343,9 +1351,72 @@ function conflictBanner(conflicts, { compact = false } = {}) {
   return `<div class="conflict-banner">
     <div class="conflict-head">${icon('alert', 18)}<b>${plural(conflicts.length, 'recording conflict')}</b>
       <span class="dim">One of the overlapping shows won't record. Cancel one, or record it from another airing.</span>
-      ${compact ? '<a class="btn btn-sm" href="#/scheduled?view=upcoming" style="margin-left:auto">Review</a>' : ''}</div>
+      <span style="margin-left:auto;display:flex;gap:8px">
+        <button class="btn btn-sm btn-primary" data-action="fix-conflicts">Fix…</button>
+        ${compact ? '<a class="btn btn-sm" href="#/scheduled?view=upcoming">Review</a>' : ''}
+      </span></div>
     ${compact ? '' : `<ul>${items}</ul>`}
   </div>`;
+}
+
+// Conflict helper: for each recording in a conflict, other airings of the same episode to record instead
+async function fixConflicts() {
+  let data;
+  try { data = await api('/api/guide/conflicts'); } catch (err) { toast(err.message, 'error'); return; }
+  if (!data.conflicts.length) { toast('No recording conflicts right now', 'success'); return; }
+  const when = iso => `${fmt.dayLabel(iso)} ${fmt.time(iso)}`;
+  const body = data.conflicts.map(c => `
+    <div class="fix-conflict">
+      <h4>${esc(when(c.start))}–${esc(fmt.time(c.end))} · ${c.count} recordings, ${c.tuners} tuners</h4>
+      ${c.recordings.map(r => {
+        const se = fmt.se(r.season_number, r.episode_number);
+        const alts = r.alternatives.length
+          ? r.alternatives.map(a => `
+              <div class="fix-alt">
+                <span class="grow">${esc(when(a.air_datetime))} on ${esc(a.channel_call_sign || a.channel_network || '')}
+                  ${a.resolves ? '<span class="tag tag-accent">Fixes it</span>' : '<span class="tag tag-warn" title="Recording this airing instead would still clash with something">Still busy then</span>'}</span>
+                <button class="btn btn-sm ${a.resolves ? 'btn-primary' : ''}" data-action="swap-recording" data-skip="${esc(r.path)}" data-record="${esc(a.path)}">Record this one instead</button>
+              </div>`).join('')
+          : `<div class="fix-alt"><span class="grow dim">No other airing of this episode in the next two weeks.</span>
+               <button class="btn btn-sm" data-action="skip-conflict" data-path="${esc(r.path)}" data-title="${esc(r.show_title)}">Don’t record</button></div>`;
+        return `<div class="fix-rec">
+          <div class="fix-rec-title">${esc(r.show_title)}${se ? ` <span class="dim">${esc(se)}</span>` : ''}${r.episode_title ? ` · ${esc(r.episode_title)}` : ''}</div>
+          <div class="dim" style="font-size:12.5px">${esc(when(r.air_datetime))} on ${esc(r.channel_call_sign || '')}</div>
+          ${alts}
+        </div>`;
+      }).join('')}
+    </div>`).join('');
+  openModal(`
+    <div class="dialog-body scroll">
+      <div class="dialog-title">Fix recording conflicts</div>
+      <div class="dialog-text">Your Tablo can record ${data.tuners} shows at once. Move one of these to another airing of the same episode, or don’t record it.</div>
+      ${body}
+    </div>
+    <div class="dialog-foot"><button class="btn" data-action="modal-ok">Done</button></div>`, { wide: true });
+}
+
+async function afterScheduleFix() {
+  state.upcoming = null;
+  closeModal(false);
+  route();
+  // Show what's left, if anything
+  const left = await api('/api/guide/conflicts').catch(() => null);
+  if (left && left.conflicts.length) fixConflicts();
+  else toast('No more recording conflicts', 'success');
+}
+
+async function showWhatsNew() {
+  try {
+    const w = await api('/api/system/whatsnew');
+    if (!w.show) return;
+    await openModal(`
+      <div class="dialog-body">
+        <div class="dialog-title">What’s new in TabloView ${esc(w.version)}</div>
+        <ul class="whatsnew-list">${w.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>
+      </div>
+      <div class="dialog-foot"><button class="btn btn-primary" data-action="modal-ok" data-autofocus>Got it</button></div>`);
+    api('/api/system/whatsnew/seen', { method: 'POST' }).catch(() => {});
+  } catch { /* not important */ }
 }
 
 function renderUpcomingList() {
@@ -1844,7 +1915,7 @@ PAGES.device = async (r, token) => {
           <input type="checkbox" class="switch" data-change="smooth-motion" ${playback.smooth_motion ? 'checked' : ''} ${playback.quality === 'fastest' ? 'disabled' : ''}>
           <span>Smooth motion (60 fps)</span>
         </label>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">Shows antenna TV at its full 60 motion steps a second, like on the TV. Best for sports; uses more processing.</p>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">Shows antenna TV at its full 60 motion steps a second, like on the TV. Best for sports. It works the graphics chip much harder; if playback hiccups, turn it off.</p>
         <label class="switch-row" style="font-weight:400;cursor:default;margin-top:14px">
           <span>Buffer before playing</span>
           <select class="select" data-change="buffer" style="height:32px">
@@ -1991,7 +2062,9 @@ const player = {
     this.finishEpisode();
     this.stopStream();
     this.hideUpNext();
+    this.clearMessage();
     Object.assign(state.stream, {
+      recoveries: 0, stallSince: 0, stallShown: false,
       episodeId: id, channelId: null, offset: start,
       duration: ep ? ep.actual_duration || ep.duration || 0 : 0,
       lastSaved: start, markedWatched: false,
@@ -2013,12 +2086,170 @@ const player = {
     }
   },
 
-  // --- Whole-recording timeline ---
+  // --- Player bar: whole-recording timeline, or the kept part of live TV, plus controls ---
   showTimeline(on) {
-    $('#playerTimeline').classList.toggle('hidden', !on || !state.stream.duration);
+    const live = !!state.stream.channelId;
+    $('#playerTimeline').classList.toggle('hidden', !on);
+    $('#pbLive').classList.toggle('hidden', !live);
+    $('#pbSpeed').disabled = live;  // live TV can't run faster than it's broadcast
     clearInterval(state.stream.timelineTimer);
     state.stream.timelineTimer = on ? setInterval(() => this.updateTimeline(), 500) : null;
     if (on) this.updateTimeline();
+  },
+
+  // Live TV: the window kept for pause/rewind ([start, end] in video time)
+  liveWindow() {
+    const v = this.video();
+    if (!v.seekable || !v.seekable.length) return null;
+    return { start: v.seekable.start(0), end: v.seekable.end(v.seekable.length - 1) };
+  },
+
+  updateLiveTimeline() {
+    const w = this.liveWindow();
+    const v = this.video();
+    if (!w || w.end <= w.start) {
+      $('#tlNow').textContent = 'LIVE';
+      $('#tlTotal').textContent = '';
+      return;
+    }
+    const span = w.end - w.start;
+    const behind = Math.max(0, w.end - v.currentTime);
+    const atLive = behind < 12;
+    $('#tlNow').textContent = atLive ? 'LIVE' : `−${fmtClock(behind)}`;
+    $('#tlTotal').textContent = fmtClock(span);
+    $('#tlTotal').title = 'How far back you can rewind';
+    $('#tlPlayed').style.width = `${Math.min(100, ((v.currentTime - w.start) / span) * 100)}%`;
+    $('#tlAvail').style.left = '0%';
+    $('#tlAvail').style.width = '100%';
+    const btn = $('#pbLive');
+    btn.classList.toggle('at-live', atLive);
+    btn.title = atLive ? 'You are watching live' : 'Jump to live';
+  },
+
+  // --- Controls (buttons and keyboard) ---
+  togglePlay() {
+    const v = this.video();
+    if (v.paused) v.play().catch(() => {}); else v.pause();
+  },
+
+  skip(seconds) {
+    const s = state.stream, v = this.video();
+    if (s.channelId) {
+      const w = this.liveWindow();
+      if (w) v.currentTime = Math.max(w.start, Math.min(w.end - 2, v.currentTime + seconds));
+    } else if (s.episodeId) {
+      this.seekTo(this.position() + seconds);
+    }
+    this.wake();
+  },
+
+  goLive() {
+    const w = this.liveWindow();
+    if (w) this.video().currentTime = Math.max(w.start, w.end - 6);
+    this.video().play().catch(() => {});
+  },
+
+  setSpeed(rate) {
+    state.playbackRate = rate;
+    $('#pbSpeed').value = String(rate);
+    if (!state.stream.channelId) this.video().playbackRate = rate;
+  },
+
+  stepSpeed(dir) {
+    const rates = [1, 1.1, 1.25, 1.5];
+    const i = Math.max(0, rates.indexOf(state.playbackRate || 1));
+    this.setSpeed(rates[Math.max(0, Math.min(rates.length - 1, i + dir))]);
+    toast(`Speed ${state.playbackRate}×`);
+  },
+
+  toggleMute() {
+    const v = this.video();
+    v.muted = !v.muted;
+  },
+
+  setVolume(value) {
+    const v = this.video();
+    v.volume = Math.max(0, Math.min(1, value));
+    v.muted = v.volume === 0;
+    save('tablo_volume', String(v.volume));
+  },
+
+  toggleFullscreen() {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else this.el().requestFullscreen().catch(() => {});
+  },
+
+  async togglePip() {
+    try {
+      if (document.pictureInPictureElement) await document.exitPictureInPicture();
+      else await this.video().requestPictureInPicture();
+    } catch { toast('Picture in picture isn’t available in this browser', 'error'); }
+  },
+
+  // Keep the play/mute buttons in step with the video
+  syncButtons() {
+    const v = this.video();
+    $('#pbPlay').innerHTML = icon(v.paused ? 'play' : 'pause', 22);
+    $('#pbPlay').title = v.paused ? 'Play (Space)' : 'Pause (Space)';
+    $('#pbMute').innerHTML = icon(v.muted || v.volume === 0 ? 'mute' : 'volume', 18);
+    $('#pbVolume').value = v.muted ? 0 : v.volume;
+  },
+
+  showHelp() {
+    const keys = [['Space or K', 'Play / pause'], ['← or J', 'Back 10 seconds'], ['→ or L', 'Ahead 30 seconds'],
+      ['↑ ↓', 'Volume'], ['M', 'Mute'], ['F', 'Full screen'], ['P', 'Picture in picture'],
+      ['&lt; &gt;', 'Slower / faster (recordings)'], ['Home', 'Back to live (live TV)'], ['Esc', 'Close the player']];
+    openModal(`<div class="dialog-body"><div class="dialog-title">Keyboard shortcuts</div>
+      <div class="kbd-list">${keys.map(([k, d]) => `<kbd>${k}</kbd><span>${d}</span>`).join('')}</div></div>
+      <div class="dialog-foot"><button class="btn btn-primary" data-action="modal-ok" data-autofocus>Got it</button></div>`);
+  },
+
+  // --- Stall watchdog: playing, but the picture hasn't moved ---
+  watchdog() {
+    const s = state.stream, v = this.video();
+    if (!s.sessionId || v.paused || v.seeking || v.ended) { s.stallSince = 0; s.lastTime = v.currentTime; return; }
+    if (v.currentTime !== s.lastTime) {
+      s.lastTime = v.currentTime;
+      if (s.stallSince) this.clearMessage();
+      s.stallSince = 0;
+      return;
+    }
+    s.stallSince = s.stallSince || Date.now();
+    const secs = (Date.now() - s.stallSince) / 1000;
+    if (secs > 5 && !s.stallShown) {
+      s.stallShown = true;
+      this.message('<span class="spinner"></span>Waiting for your Tablo…');
+    }
+    if (secs < 15) return;
+    s.stallSince = 0;
+    s.stallShown = false;
+    if (s.episodeId && (s.recoveries || 0) < 3) {
+      // Recordings: start the stream again from the same point (doesn't use a tuner)
+      const recoveries = (s.recoveries || 0) + 1;
+      console.warn(`[Player] Stalled; restarting at ${this.position()} s (attempt ${recoveries})`);
+      this.playEpisode(s.episodeId, this.position()).then(() => { state.stream.recoveries = recoveries; });
+    } else if (s.channelId) {
+      // Live TV: re-tuning could take another tuner, so ask rather than doing it automatically
+      this.message(`Live TV stopped responding. <button class="btn btn-sm btn-primary" data-action="pb-retune">Tune again</button>`);
+    } else {
+      this.message(`Your Tablo isn’t sending the recording. <button class="btn btn-sm" data-action="close-player">Close</button>`);
+    }
+  },
+
+  message(html) {
+    let el = $('#playerMsg');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'playerMsg';
+      el.className = 'player-msg';
+      this.el().appendChild(el);
+    }
+    el.innerHTML = html;
+  },
+
+  clearMessage() {
+    const el = $('#playerMsg');
+    if (el) el.remove();
   },
 
   // Seconds of the recording already converted and playable without restarting
@@ -2032,6 +2263,7 @@ const player = {
 
   updateTimeline() {
     const s = state.stream, dur = s.duration;
+    if (s.channelId) return this.updateLiveTimeline();
     if (!dur || !s.episodeId) return;
     const pct = x => `${Math.min(100, Math.max(0, (x / dur) * 100))}%`;
     const pos = this.position();
@@ -2134,8 +2366,11 @@ const player = {
   async watchLive(channelId, name, kind) {
     this.finishEpisode();
     this.stopStream();
-    state.stream.channelId = channelId;
-    state.stream.episodeId = null;
+    this.hideUpNext();
+    this.clearMessage();
+    Object.assign(state.stream, { channelId, channelName: name, channelKind: kind, episodeId: null,
+                                  stallSince: 0, stallShown: false });
+    this.showTimeline(true);
     this.open(`Live · ${name}`);
     this.setStatus(`<span class="wait">Tuning ${esc(name)}…</span>`);
     try {
@@ -2171,7 +2406,7 @@ const player = {
         }
         if (!started) {
           this.setStatus(`<span class="wait">Buffering ${ahead}s of ${target}s…</span>`);
-          if (ahead >= target) { started = true; video.play().catch(() => {}); }
+          if (ahead >= target) { started = true; this.begin(); }
         } else {
           const cls = ahead >= 4 ? 'good' : 'wait';
           this.setStatus(`${label} · <span class="${cls}">${ahead}s buffered</span>`);
@@ -2183,7 +2418,7 @@ const player = {
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         state.stream.timer = setInterval(check, 500);
         setTimeout(() => {
-          if (!started && state.stream.hls === hls) { started = true; video.play().catch(() => {}); }
+          if (!started && state.stream.hls === hls) { started = true; this.begin(); }
         }, 8000);
       });
       hls.on(Hls.Events.FRAG_BUFFERED, check);
@@ -2198,12 +2433,23 @@ const player = {
       state.stream.hls = hls;
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = url;
-      video.play().catch(() => {});
+      this.begin();
     }
+    state.stream.watchdogTimer = setInterval(() => this.watchdog(), 1000);
+  },
+
+  // Start playing, at the chosen speed for recordings (live TV always plays at 1x)
+  begin() {
+    const video = this.video();
+    const rate = state.stream.channelId ? 1 : (state.playbackRate || 1);
+    video.defaultPlaybackRate = rate;
+    video.playbackRate = rate;
+    video.play().catch(() => {});
   },
 
   teardown() {
     const s = state.stream;
+    if (s.watchdogTimer) { clearInterval(s.watchdogTimer); s.watchdogTimer = null; }
     if (s.timer) { clearInterval(s.timer); s.timer = null; }
     if (s.handler) { this.video().removeEventListener('progress', s.handler); s.handler = null; }
     if (s.hls) { s.hls.destroy(); s.hls = null; }
@@ -2231,6 +2477,9 @@ const player = {
   close() {
     const hadEpisode = !!state.stream.episodeId;
     this.hideUpNext();
+    this.clearMessage();
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
     this.finishEpisode();
     this.teardown();
     const video = this.video();
@@ -2506,6 +2755,34 @@ const ACTIONS = {
   'close-player': () => player.close(),
   'player-vlc': () => player.openInVlc(),
   'space-delete-watched': el => deleteWatchedForShow(el),
+  'fix-conflicts': () => fixConflicts(),
+  'swap-recording': async el => {
+    el.disabled = true;
+    try {
+      const res = await api('/api/guide/conflicts/swap', { method: 'POST', body: JSON.stringify({ skip_path: el.dataset.skip, record_path: el.dataset.record }) });
+      if (res.success) toast('Recording moved to the other airing', 'success');
+      else toast(res.error, 'error');
+      afterScheduleFix();
+    } catch (err) { el.disabled = false; toast(`Couldn't change the recording: ${err.message}`, 'error'); }
+  },
+  'skip-conflict': async el => {
+    const ok = await confirmDialog({ title: `Don’t record ${el.dataset.title}?`, text: 'Your Tablo will skip this airing. The series stays scheduled.', confirm: 'Don’t record' });
+    if (!ok) { fixConflicts(); return; }
+    try {
+      await api('/api/guide/episodes/schedule', { method: 'POST', body: JSON.stringify({ path: el.dataset.path, scheduled: false }) });
+      toast('Skipped', 'success');
+      afterScheduleFix();
+    } catch (err) { toast(`Couldn't skip: ${err.message}`, 'error'); }
+  },
+  'pb-play': () => player.togglePlay(),
+  'pb-back': () => player.skip(-10),
+  'pb-fwd': () => player.skip(30),
+  'pb-mute': () => player.toggleMute(),
+  'pb-full': () => player.toggleFullscreen(),
+  'pb-pip': () => player.togglePip(),
+  'pb-live': () => player.goLive(),
+  'pb-help': () => player.showHelp(),
+  'pb-retune': () => { const s = state.stream; player.watchLive(s.channelId, s.channelName, s.channelKind); },
   'upnext-play': () => player.playNext(),
   'upnext-cancel': () => player.hideUpNext(),
 
@@ -2713,29 +2990,66 @@ function wireEvents() {
     const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName);
     if (e.key === '/' && !typing) { e.preventDefault(); search.focus(); search.select(); return; }
     if (e.key === 'Escape') {
+      // In full screen the browser leaves full screen on Esc; don't also close the player
+      if (document.fullscreenElement) return;
       if (openMenuEl) closeMenu();
       else if (openOverlay) closeModal(false);
       else if (player.isOpen()) player.close();
       else if (state.selected.size) ACTIONS['bulk-clear']();
+      return;
     }
+    // Player shortcuts
+    if (!player.isOpen() || openOverlay || (typing && document.activeElement.id !== 'pbVolume') || e.ctrlKey || e.altKey || e.metaKey) return;
+    const v = $('#video');
+    const keys = {
+      ' ': () => player.togglePlay(), k: () => player.togglePlay(),
+      ArrowLeft: () => player.skip(-10), j: () => player.skip(-10),
+      ArrowRight: () => player.skip(30), l: () => player.skip(30),
+      ArrowUp: () => player.setVolume(v.volume + 0.1), ArrowDown: () => player.setVolume(v.volume - 0.1),
+      m: () => player.toggleMute(), f: () => player.toggleFullscreen(), p: () => player.togglePip(),
+      '>': () => player.stepSpeed(1), '<': () => player.stepSpeed(-1),
+      Home: () => { if (state.stream.channelId) player.goLive(); },
+      '?': () => player.showHelp(),
+    };
+    const fn = keys[e.key] || keys[e.key.toLowerCase()];
+    if (fn) { e.preventDefault(); fn(); player.wake(); }
   });
 
   $('#player').addEventListener('mousemove', () => player.wake());
 
   const track = $('#tlTrack');
-  const timeAt = e => {
+  const fractionAt = e => {
     const r = track.getBoundingClientRect();
-    return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * (state.stream.duration || 0);
+    return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
   };
-  track.addEventListener('click', e => player.seekTo(timeAt(e)));
+  const timeAt = e => fractionAt(e) * (state.stream.duration || 0);
+  track.addEventListener('click', e => {
+    if (state.stream.channelId) {
+      // Live TV: jump within what's been kept
+      const w = player.liveWindow();
+      if (w) $('#video').currentTime = Math.min(w.end - 2, w.start + fractionAt(e) * (w.end - w.start));
+    } else {
+      player.seekTo(timeAt(e));
+    }
+  });
   track.addEventListener('mousemove', e => {
     const hover = $('#tlHover');
-    hover.textContent = fmtClock(timeAt(e));
+    const w = state.stream.channelId && player.liveWindow();
+    hover.textContent = w ? `−${fmtClock((1 - fractionAt(e)) * (w.end - w.start))}` : fmtClock(timeAt(e));
     hover.style.left = `${e.clientX - track.getBoundingClientRect().left}px`;
     hover.classList.remove('hidden');
   });
   track.addEventListener('mouseleave', () => $('#tlHover').classList.add('hidden'));
   $('#bufferSelect').addEventListener('change', e => { state.bufferTarget = parseInt(e.target.value, 10) || 8; save('tablo_buffer_target', state.bufferTarget); });
+  const video = $('#video');
+  try { video.volume = Math.max(0, Math.min(1, parseFloat(store('tablo_volume', '1')))); } catch { /* default */ }
+  ['play', 'pause', 'volumechange'].forEach(ev => video.addEventListener(ev, () => player.syncButtons()));
+  video.addEventListener('click', () => player.togglePlay());
+  video.addEventListener('dblclick', () => player.toggleFullscreen());
+  $('#pbVolume').addEventListener('input', e => player.setVolume(parseFloat(e.target.value)));
+  $('#pbSpeed').addEventListener('change', e => { player.setSpeed(parseFloat(e.target.value)); e.target.blur(); });
+  // Don't leave player buttons focused: Space would press the button and the shortcut at once
+  $('#playerTimeline').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setTimeout(() => b.blur()); });
   // Recordings without a known show length still offer the next episode when the video ends.
   // A stalled stream can also fire 'ended', so only near the end of the recording itself.
   $('#video').addEventListener('ended', () => {
@@ -2759,6 +3073,7 @@ async function init() {
   wireEvents();
   await loadStatus();
   route();
+  showWhatsNew();
   loadStorage();
   loadScheduled().catch(() => {});
   api('/api/exports').then(({ jobs }) => setActiveExports(jobs.filter(j => j.status === 'downloading' || j.status === 'pending').length)).catch(() => {});

@@ -57,6 +57,53 @@ def find_conflicts(airings: List[Dict[str, Any]], tuners: int) -> List[Dict[str,
     } for w in windows]
 
 
+def same_episode(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+    """Two airings of the same episode: same series and season/episode numbers, or (without numbers)
+    the same episode title. Shows without either (news, live events) never match."""
+    if a.get("series_path") != b.get("series_path") or a.get("path") == b.get("path"):
+        return False
+    if (a.get("season_number") or 0) > 0 and (a.get("episode_number") or 0) > 0:
+        return (a.get("season_number"), a.get("episode_number")) == (b.get("season_number"), b.get("episode_number"))
+    title = (a.get("episode_title") or "").strip().lower()
+    return bool(title) and title == (b.get("episode_title") or "").strip().lower()
+
+
+def find_alternatives(scheduled: List[Dict[str, Any]], candidates: List[Dict[str, Any]],
+                      tuners: int) -> List[Dict[str, Any]]:
+    """For each conflict, the recordings involved and other airings of the same episodes.
+
+    scheduled: everything the Tablo will record (upcoming); candidates: future airings of those series,
+    scheduled or not. An alternative 'resolves' the conflict when recording it instead leaves that
+    time within the tuners and doesn't create a new conflict of its own."""
+    now = datetime.now(timezone.utc)
+    conflicts = find_conflicts([dict(a) for a in scheduled], tuners)
+    by_path = {a["path"]: a for a in scheduled}
+    result = []
+    for c in conflicts:
+        items = []
+        for path in c["paths"]:
+            a = by_path[path]
+            alts = []
+            for cand in candidates:
+                if cand.get("schedule_state") == "scheduled" or not same_episode(a, cand):
+                    continue
+                start, _ = _span(cand)
+                if start <= now:
+                    continue
+                trial = [dict(x) for x in scheduled if x["path"] != path] + [dict(cand)]
+                after = find_conflicts(trial, tuners)
+                resolves = not any(cand["path"] in w["paths"] for w in after) and \
+                    not any(w["start"] < c["end"] and w["end"] > c["start"] for w in after)
+                alts.append({**{k: cand.get(k) for k in ("path", "air_datetime", "duration", "channel_call_sign",
+                                                         "channel_network")}, "resolves": resolves})
+            alts.sort(key=lambda x: (not x["resolves"], x["air_datetime"]))
+            items.append({**{k: a.get(k) for k in ("path", "series_path", "show_title", "episode_title", "season_number",
+                                                   "episode_number", "air_datetime", "duration", "channel_call_sign")},
+                          "alternatives": alts[:5]})
+        result.append({**{k: c[k] for k in ("start", "end", "count", "tuners", "titles")}, "recordings": items})
+    return result
+
+
 def peak_overlap(airings: List[Dict[str, Any]]) -> int:
     """Most recordings running at the same moment."""
     events = []

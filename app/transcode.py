@@ -25,6 +25,12 @@ from .settings import load_settings
 # The packaged app has no console, so Windows would open a console window for each ffmpeg it starts
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
+HLS_SEGMENT_SECONDS = 3
+# How many times one stream's FFmpeg is restarted after dying mid-stream (see _supervise)
+MAX_STREAM_RESTARTS = 4
+# Live TV keeps this much behind the live point, for pause and rewind (about 1-1.5 GB on disk)
+LIVE_REWIND_MINUTES = 30
+
 
 def run_at_full_speed(proc: subprocess.Popen) -> None:
     """Opt FFmpeg out of Windows 11 'efficiency mode' (EcoQoS). Started from a windowless background
@@ -91,6 +97,8 @@ class StreamSession:
         self.proc: Optional[subprocess.Popen] = None
         self.transcoded = False
         self.encoder: Optional[str] = None  # what converted it, e.g. "Intel Quick Sync" or "copy"
+        self.stopped = False  # set when the player closes it, so the supervisor doesn't restart it
+        self.supervisor: Optional[asyncio.Task] = None
 
 
 class TranscodeManager:
@@ -121,6 +129,10 @@ class TranscodeManager:
 
     def stop_session(self, session_id: str):
         sess = self.sessions.pop(session_id, None)
+        if sess:
+            sess.stopped = True
+            if sess.supervisor:
+                sess.supervisor.cancel()
         if sess and sess.proc:
             try:
                 sess.proc.kill()
@@ -224,21 +236,29 @@ class TranscodeManager:
         if passthrough:
             return {"encoder": None, "smooth": False, "quality": quality}
         enc = encoders.choose(quality)
-        smooth = settings.get("smooth_motion")
-        # Smooth motion (60 fps) by default only where a graphics-chip encoder has the headroom
-        smooth = enc["hardware"] if smooth is None else bool(smooth)
+        # Smooth motion (60 fps) is opt-in: on an i7-1165G7, Quick Sync failed mid-stream ("device
+        # failed") in 4 of 6 one-minute runs at 60 fps and none at 30 fps
+        smooth = bool(settings.get("smooth_motion"))
         return {"encoder": enc, "smooth": smooth and quality != "fastest", "quality": quality}
 
-    def _build_cmd(self, input_url: str, start: int, live: bool, plan: Dict[str, Any], session_dir: Path) -> List[str]:
+    def _build_cmd(self, input_url: str, start: int, live: bool, plan: Dict[str, Any], session_dir: Path,
+                   resume: bool = False) -> List[str]:
         if live:
+            # Keep the last LIVE_REWIND_MINUTES so live TV can be paused and rewound
             read_args = []
-            hls_args = ["-hls_list_size", "30", "-hls_flags", "delete_segments+independent_segments"]
+            hls_args = ["-hls_list_size", str(LIVE_REWIND_MINUTES * 60 // HLS_SEGMENT_SECONDS),
+                        "-hls_flags", "delete_segments+independent_segments"]
         else:
             # Stay well ahead of playback without racing through the whole file: unthrottled, a
             # recording transcodes several times faster than real time and starves a live stream
             # playing at the same time
             read_args = ["-readrate", "2", "-readrate_initial_burst", "30"]
             hls_args = ["-hls_list_size", "0", "-hls_playlist_type", "event", "-hls_flags", "independent_segments"]
+        if resume:
+            # Continuing after FFmpeg died: add to the same playlist (FFmpeg numbers on from its last
+            # segment) with a discontinuity marker so the player handles the restarted timestamps
+            i = hls_args.index("-hls_flags") + 1
+            hls_args[i] += "+append_list+discont_start"
 
         enc = plan["encoder"]
         if enc is None:
@@ -251,8 +271,8 @@ class TranscodeManager:
             deint = ("bwdif=mode=send_field:deint=interlaced,fps=60000/1001" if plan["smooth"]
                      else "bwdif=mode=send_frame:deint=interlaced")
             video = ["-vf", deint, *enc["args"], "-pix_fmt", enc["pix_fmt"],
-                     # A keyframe every 3 s: segments start cleanly and playback starts sooner
-                     "-force_key_frames", "expr:gte(t,n_forced*3)"]
+                     # A keyframe every segment: segments start cleanly and playback starts sooner
+                     "-force_key_frames", f"expr:gte(t,n_forced*{HLS_SEGMENT_SECONDS})"]
 
         return [
             FFMPEG_PATH,
@@ -270,9 +290,9 @@ class TranscodeManager:
             "-af", "aresample=async=1:ochl=stereo:clev=1.0:slev=0.6",
             "-c:a", "aac", "-b:a", "192k", "-ac", "2",
             "-f", "hls",
-            "-hls_time", "3",
+            "-hls_time", str(HLS_SEGMENT_SECONDS),
             *hls_args,
-            "-hls_segment_filename", str(session_dir / "%04d.ts"),
+            "-hls_segment_filename", str(session_dir / "%05d.ts"),
             str(session_dir / "playlist.m3u8"),
         ]
 
@@ -336,7 +356,51 @@ class TranscodeManager:
             playlist_output.unlink(missing_ok=True)
 
         print(f"[Transcode] Session {session_id[:8]}: {sess.encoder}{', 60 fps' if plan['smooth'] else ''}")
+        if ready:
+            sess.supervisor = asyncio.create_task(self._supervise(sess, input_url, start, live, plan, session_dir))
         return f"/api/transcoded/{session_id}/playlist.m3u8"
+
+    @staticmethod
+    def _playlist_seconds(session_dir: Path) -> float:
+        """Seconds converted so far, from the session's playlist."""
+        try:
+            text = (session_dir / "playlist.m3u8").read_text(encoding="utf-8")
+        except OSError:
+            return 0.0
+        return sum(float(x) for x in re.findall(r"#EXTINF:([\d.]+)", text))
+
+    async def _supervise(self, sess: StreamSession, input_url: str, start: int, live: bool,
+                         plan: Dict[str, Any], session_dir: Path) -> None:
+        """Keep a stream going if FFmpeg dies part way through: a graphics-chip encoder can fail at
+        random ("device failed"), and the Tablo sometimes stops sending for a moment. FFmpeg is
+        restarted where it stopped, adding to the same playlist, so the player (which has several
+        seconds buffered) carries on. A second failure of a hardware encoder switches this stream to
+        the CPU's fastest setting."""
+        restarts = 0
+        while restarts < MAX_STREAM_RESTARTS:
+            while sess.proc.poll() is None:
+                await asyncio.sleep(1)
+            if sess.stopped or sess.proc.returncode == 0 or self.sessions.get(sess.session_id) is not sess:
+                return
+            restarts += 1
+            enc = plan["encoder"]
+            if enc is not None and enc["hardware"] and restarts >= 2:
+                plan = {**plan, "encoder": encoders.choose("fastest"), "smooth": False}
+            done = self._playlist_seconds(session_dir)
+            resume_at = start if live else int(start + done)
+            print(f"[Transcode] Session {sess.session_id[:8]}: FFmpeg stopped (code {sess.proc.returncode}); "
+                  f"restart {restarts} with {plan['encoder']['label'] if plan['encoder'] else 'copy'}"
+                  f"{'' if live else f' at {resume_at} s'}")
+            cmd = self._build_cmd(input_url, resume_at, live, plan, session_dir, resume=True)
+            with open(session_dir / "ffmpeg.log", "a", encoding="utf-8") as f:
+                f.write(f"\n===== restart {restarts} =====\n")
+                f.flush()
+                sess.proc = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT, cwd=str(session_dir),
+                                             creationflags=NO_WINDOW)
+            run_at_full_speed(sess.proc)
+            sess.encoder = "copy" if plan["encoder"] is None else plan["encoder"]["label"]
+            # A restart that dies straight away counts against the limit too
+            await asyncio.sleep(3)
 
     def clean_filename(self, name: str) -> str:
         """Sanitize filename for Windows/macOS/Linux."""

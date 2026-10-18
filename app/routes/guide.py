@@ -14,8 +14,9 @@ from ..database import (
     get_guide_highlight_counts,
     update_airing_schedule_states,
     get_upcoming_recordings,
+    get_series_airings,
 )
-from ..schedule_check import find_conflicts
+from ..schedule_check import find_conflicts, find_alternatives
 from ..tablo_client import tablo_manager
 from ..sync_service import sync_service, extract_image_url
 from .live import pick_logo
@@ -31,6 +32,11 @@ class SeriesScheduleRequest(BaseModel):
 class EpisodeScheduleRequest(BaseModel):
     path: str
     scheduled: bool
+
+
+class SwapRequest(BaseModel):
+    skip_path: str
+    record_path: str
 
 
 @router.get("/shows")
@@ -73,6 +79,42 @@ async def upcoming_recordings():
     tuners = (await model_tuner_count()) if tablo_manager.is_authenticated else None
     conflicts = find_conflicts(recordings, tuners) if tuners else []
     return {"tuners": tuners, "count": len(recordings), "recordings": recordings, "conflicts": conflicts}
+
+
+@router.get("/conflicts")
+async def conflict_alternatives():
+    """Each recording conflict with the recordings involved and other airings of those same episodes
+    (reruns, or the same network on another station) that could be recorded instead. From the cached
+    guide; no requests to the Tablo beyond the (cached) tuner count."""
+    from .live import model_tuner_count
+    scheduled = get_upcoming_recordings()
+    tuners = (await model_tuner_count()) if tablo_manager.is_authenticated else None
+    if not tuners:
+        return {"tuners": tuners, "conflicts": []}
+    candidates = get_series_airings(sorted({a["series_path"] for a in scheduled if a.get("series_path")}))
+    return {"tuners": tuners, "conflicts": find_alternatives(scheduled, candidates, tuners)}
+
+
+async def _set_scheduled(path: str, scheduled: bool) -> None:
+    path = path if path.startswith("/") else "/" + path
+    resp = await tablo_manager.request_local("PATCH", path, json.dumps({"scheduled": scheduled}))
+    if resp.status_code not in (200, 204):
+        raise HTTPException(status_code=502, detail=f"Tablo error {resp.status_code}: {resp.text[:120]}")
+    update_airing_schedule_states({path: "scheduled" if scheduled else "none"})
+
+
+@router.post("/conflicts/swap")
+async def swap_recording(req: SwapRequest):
+    """Record another airing of the same episode instead: schedule the new one first, then skip the
+    original, so a failure never leaves the episode unrecorded."""
+    if not tablo_manager.is_authenticated:
+        raise HTTPException(status_code=400, detail="Tablo device is not connected")
+    await _set_scheduled(req.record_path, True)
+    try:
+        await _set_scheduled(req.skip_path, False)
+    except HTTPException as e:
+        return {"success": False, "recorded": req.record_path, "error": f"Recorded the new time, but couldn't skip the original: {e.detail}"}
+    return {"success": True, "recorded": req.record_path, "skipped": req.skip_path}
 
 
 @router.get("/highlights")

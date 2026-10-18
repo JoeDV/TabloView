@@ -25,13 +25,16 @@ const ALLOWED_WRITES = [/^\/api\/episodes\/[^/]+\/watch/, /^\/api\/live\/stop$/]
 const SHIM = `(() => {
   if (window.__shim) return; window.__shim = true;
   window.__writes = []; window.__fake = {};
+  // No "What's new" card in tests (its "seen" request is faked, so it would show on every page)
+  window.__fake['/api/system/whatsnew'] = { show: false, notes: [] };
   const realFetch = window.fetch.bind(window);
   const allowed = ${JSON.stringify(ALLOWED_WRITES.map(r => r.source))}.map(s => new RegExp(s));
   const reply = b => new Response(JSON.stringify(b), { status: 200, headers: { 'Content-Type': 'application/json' } });
   window.fetch = async (url, opts = {}) => {
     const u = String(url), method = (opts.method || 'GET').toUpperCase();
+    // Faked answers stand in for reads only, so a write to a longer path (e.g. .../swap) is still caught below
     for (const [prefix, body] of Object.entries(window.__fake)) {
-      if (u.startsWith(prefix)) return reply(typeof body === 'function' ? body(await realFetch(url, opts).then(r => r.json())) : body);
+      if (method === 'GET' && u.startsWith(prefix)) return reply(typeof body === 'function' ? body(await realFetch(url, opts).then(r => r.json())) : body);
     }
     if (method !== 'GET' && !allowed.some(r => r.test(u.split('?')[0]))) {
       window.__writes.push([method, u, opts.body || '']);

@@ -122,6 +122,74 @@ export const SUITES = {
     t.check('Closing the player ends the session', gone);
   },
 
+  async controls(b, t) {
+    const shows = (await api('/api/shows')).shows;
+    if (!shows.length) return t.skip('Player controls', 'no recordings');
+    const eps = (await api(`/api/shows/episodes?show_id=${encodeURIComponent(shows[0].id)}`)).episodes;
+    const ep = eps.find(e => e.recording_state === 'finished' && e.status !== 'Watched') || eps[0];
+    await b.open(`#/show/${encodeURIComponent(shows[0].id)}`);
+    await b.waitFor(`document.querySelector('.ep-row')`);
+    await b.ev(`player.playEpisode(${JSON.stringify(ep.id)}, 'start')`);
+    t.check('Recording starts playing', await b.waitFor(`document.getElementById('video').currentTime > 4`, 45000));
+    t.check('Player bar with controls is shown', await b.ev(`!document.getElementById('playerTimeline').classList.contains('hidden') && !!document.querySelector('[data-action="pb-fwd"]')`));
+    const key = k => b.ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true }))`);
+    await key(' '); await sleep(400);
+    t.check('Space pauses', await b.ev(`document.getElementById('video').paused`));
+    await key(' '); await sleep(600);
+    t.check('Space plays again', await b.ev(`!document.getElementById('video').paused`));
+    // Far enough in that 10 s back stays within what's already converted (no restart)
+    await b.waitFor(`document.getElementById('video').currentTime > 14`, 30000);
+    const before = await b.ev('player.position()');
+    await key('ArrowLeft'); await sleep(800);
+    const back = await b.ev('player.position()');
+    t.check('← goes back 10 seconds', back <= before - 7 && back >= before - 13, `${before}s → ${back}s`);
+    await key('m'); await sleep(200);
+    t.check('M mutes', await b.ev(`document.getElementById('video').muted`));
+    await key('m');
+    await key('>'); await sleep(200);
+    t.check('> speeds up', (await b.ev(`document.getElementById('video').playbackRate`)) > 1);
+    await key('<');
+    await key('?'); await sleep(300);
+    t.check('? shows the keyboard shortcuts', /Keyboard shortcuts/.test(await b.ev(`(document.querySelector('.overlay .dialog-title') || {}).textContent || ''`)));
+    await b.ev(`closeModal(false)`);
+    // Simulated stall: stop loading and jump to the end of what's buffered; the watchdog should restart
+    // from the same point (spied, not sent)
+    await b.ev(`window.__restart = null; player.__realPlay = player.playEpisode; player.playEpisode = (id, mode) => { window.__restart = mode; return Promise.resolve(); };
+      state.stream.hls.stopLoad(); (() => { const v = document.getElementById('video'); v.currentTime = v.buffered.end(v.buffered.length - 1) - 1; })()`);
+    const restarted = await b.waitFor(`window.__restart !== null`, 40000);
+    t.check('A stalled stream restarts from where it stopped', restarted && Math.abs((await b.ev('window.__restart')) - (await b.ev('player.position()'))) < 5,
+      restarted ? `restart at ${await b.ev('window.__restart')}s` : 'no restart');
+    await b.ev(`player.playEpisode = player.__realPlay; player.close()`);
+    await sleep(1500);
+  },
+
+  async conflicts(b, t) {
+    const soon = h => new Date(Date.now() + h * 3600000).toISOString().replace(/\.\d+Z$/, 'Z');
+    await b.open('#/');
+    await b.ev(`window.__fake['/api/guide/conflicts'] = { tuners: 2, conflicts: [{ start: ${JSON.stringify(soon(3))}, end: ${JSON.stringify(soon(4))}, count: 3, tuners: 2, titles: ['A', 'B', 'C'],
+      recordings: [{ path: '/guide/series/episodes/1', show_title: 'Show A', episode_title: 'Pilot', season_number: 1, episode_number: 1, air_datetime: ${JSON.stringify(soon(3))}, channel_call_sign: 'WAAA',
+                     alternatives: [{ path: '/guide/series/episodes/2', air_datetime: ${JSON.stringify(soon(30))}, channel_call_sign: 'WBBB', resolves: true }] },
+                   { path: '/guide/series/episodes/3', show_title: 'Show B', episode_title: '', season_number: 0, episode_number: 0, air_datetime: ${JSON.stringify(soon(3))}, channel_call_sign: 'WCCC', alternatives: [] }] }] };
+      fixConflicts()`);
+    await sleep(600);
+    t.check('Conflict helper lists alternatives', /Record this one instead/.test(await b.ev(`document.querySelector('.overlay').textContent`)));
+    t.check('A show without reruns offers Don’t record', !!(await b.ev(`document.querySelector('[data-action="skip-conflict"]')`)));
+    await b.ev(`document.querySelector('[data-action="swap-recording"]').click()`); await sleep(800);
+    t.check('Moving a recording was intercepted, not sent', await b.ev(`window.__writes.some(w => w[1].startsWith('/api/guide/conflicts/swap') && w[2].includes('episodes/2'))`),
+      await b.ev(`JSON.stringify(window.__writes).slice(0, 200)`));
+    await b.ev(`closeModal(false)`);
+  },
+
+  async whatsnew(b, t) {
+    await b.open('#/');
+    await b.ev(`window.__fake['/api/system/whatsnew'] = { show: true, version: '9.9.9', notes: ['First thing', 'Second thing'] }; void showWhatsNew()`);
+    await sleep(600);
+    t.check('What’s new card shows the notes', /What’s new in TabloView 9\.9\.9/.test(await b.ev(`(document.querySelector('.overlay .dialog-title') || {}).textContent || ''`))
+      && (await b.ev(`document.querySelectorAll('.whatsnew-list li').length`)) === 2);
+    await b.ev(`document.querySelector('[data-action="modal-ok"]').click()`); await sleep(500);
+    t.check('Closing it records it as seen (intercepted)', await b.ev(`window.__writes.some(w => w[1] === '/api/system/whatsnew/seen')`));
+  },
+
   async resume(b, t) {
     const inProgress = (await api('/api/episodes/in_progress')).episodes;
     if (!inProgress.length) return t.skip('Resume', 'no partly watched recordings');

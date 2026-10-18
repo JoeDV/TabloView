@@ -633,6 +633,22 @@ def update_airing_schedule_states(states: Dict[str, str]):
         conn.commit()
 
 
+def get_series_airings(series_paths: List[str]) -> List[Dict[str, Any]]:
+    """Future airings of these series, recorded or not (for finding reruns of an episode)."""
+    if not series_paths:
+        return []
+    marks = ",".join("?" * len(series_paths))
+    with get_connection() as conn:
+        rows = conn.execute(f"""
+            SELECT path, series_path, show_title, episode_title, season_number, episode_number, air_datetime,
+                   duration, channel_call_sign, channel_network, schedule_state
+            FROM guide_airings
+            WHERE series_path IN ({marks}) AND datetime(air_datetime) > datetime('now')
+            ORDER BY air_datetime
+        """, series_paths).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_upcoming_recordings(within_hours: Optional[float] = None) -> List[Dict[str, Any]]:
     """Airings the Tablo plans to record that haven't finished yet, soonest first, with show art."""
     query = """

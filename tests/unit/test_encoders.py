@@ -44,14 +44,19 @@ class CommandTests(unittest.TestCase):
     def cmd(self, plan, live=False):
         return " ".join(transcode_manager._build_cmd("http://tablo/x.m3u8", 0, live, plan, Path("out")))
 
-    def test_hardware_defaults_to_smooth_motion(self):
+    def test_smooth_motion_is_opt_in(self):
         c = self.cmd(self.plan())
-        self.assertIn("bwdif=mode=send_field:deint=interlaced", c)
+        self.assertIn("bwdif=mode=send_frame:deint=interlaced", c)
         self.assertIn("-force_key_frames", c)
         self.assertIn("192k", c)
 
-    def test_smooth_motion_can_be_turned_off(self):
-        self.assertIn("mode=send_frame", self.cmd(self.plan(smooth_motion=False)))
+    def test_smooth_motion_when_turned_on(self):
+        self.assertIn("mode=send_field", self.cmd(self.plan(smooth_motion=True)))
+
+    def test_resume_appends_to_the_same_playlist(self):
+        c = transcode_manager._build_cmd("http://tablo/x.m3u8", 300, False, self.plan(), Path("out"), resume=True)
+        self.assertIn("append_list+discont_start", " ".join(c))
+        self.assertEqual(c[c.index("-ss") + 1], "300")
 
     def test_passthrough_copies_video(self):
         plan = transcode_manager._video_plan(passthrough=True)
