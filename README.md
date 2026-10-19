@@ -24,11 +24,11 @@ By default only the computer running TabloView can open it. To allow other devic
 ## Features
 
 - **Home**: continue watching, recent recordings, what's recording in the next 48 hours, season premieres, and new primetime episodes.
-- **Library and show pages**: episode thumbnails, play in the browser (resume, full timeline, auto-play next episode), open in VLC, export to MP4, delete one, several, or all watched episodes. Protected recordings are kept, and short or failed recordings are tagged.
+- **Library and show pages**: episode thumbnails, play in the browser (resume, full timeline, auto-play next episode, keyboard shortcuts), open in VLC, export to MP4, delete one, several, or all watched episodes. Protect recordings, set how many recordings of a show your Tablo keeps, or delete watched ones automatically after a few days. Short or failed recordings are tagged.
 - **Guide**: search everything airing on your channels; record a series (new or all episodes) or single airings.
-- **Live TV**: channel grid for local and streaming channels with recording badges, a Favorites filter, and a warning before live TV takes a tuner a recording needs.
-- **Scheduled**: every series your Tablo records, upcoming recordings with Skip, and conflict warnings.
-- **Device**: sync settings, space used by each show with one-click cleanup, and (in the installed app) start with Windows and notifications for recording problems and conflicts.
+- **Live TV**: channel grid for local and streaming channels with recording badges, a Favorites filter, and a warning before live TV takes a tuner a recording needs. Pause and rewind up to 30 minutes, and change channels from the player (C, Page Up / Page Down).
+- **Scheduled**: every series your Tablo records, upcoming recordings with Skip, and conflict warnings with a one-click fix (record another airing of the same episode).
+- **Device**: sync settings, playback quality (graphics-chip encoding, optional 60 fps), space used by each show with one-click cleanup, version history, and (in the installed app) start with Windows and notifications for recording problems and conflicts.
 
 ## Running from source (developers)
 

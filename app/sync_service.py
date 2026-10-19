@@ -367,11 +367,15 @@ class LibrarySyncService:
                     listed = len(airing_paths)
                     airing_paths = guide_airings_to_fetch(airing_paths)
                     print(f"[GuideSync] {listed} upcoming airings; fetching {len(airing_paths)} new or record-status ones")
-                    sem_air = asyncio.Semaphore(50)
+                    # A first sync (empty cache) fetches thousands: pace them so the Tablo keeps answering
+                    pace = len(airing_paths) > 300
+                    sem_air = asyncio.Semaphore(2 if pace else 50)
                     async def fetch_guide_airing(p: str):
                         async with sem_air:
                             try:
                                 r = await tablo_manager.request_bulk("GET", p)
+                                if pace:
+                                    await asyncio.sleep(0.1)
                                 if r.status_code == 200:
                                     d = r.json()
                                     ep = d.get('episode', {})

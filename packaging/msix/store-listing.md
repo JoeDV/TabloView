@@ -21,6 +21,16 @@ TabloView is a fast desktop interface for your Tablo DVR. Browse and play your r
 Sign in with your own Tablo account. Your password goes only to Tablo's sign-in service and is never saved. TabloView runs only on your PC unless you turn on network access for other devices at home.
 
 ## What's new in this version
+1.1.5:
+• Sharper playback: your PC's graphics chip converts the video when it can, with optional 60 fps Smooth motion for sports
+• Player controls: skip back/ahead, speed, picture-in-picture, full screen, keyboard shortcuts
+• Pause and rewind live TV (up to 30 minutes), and change channels from the player
+• Protect recordings, choose how many recordings of a show to keep, or delete watched ones automatically
+• Fix recording conflicts in a click by recording another airing instead
+• Playback that stalls recovers on its own
+• Far fewer "Tablo isn't responding" interruptions
+• Version history in Device → About
+
 1.1.4:
 • Episode thumbnails from the recordings themselves
 • Auto-play the next episode when a show ends (can be turned off)
