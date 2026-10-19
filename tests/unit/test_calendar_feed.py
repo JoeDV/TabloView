@@ -20,7 +20,8 @@ class CalendarFeedTests(unittest.TestCase):
         self.assertIn("UID:guide-series-episodes-298933@tabloview\r\n", ics)
         self.assertIn("DTSTART:20261019T233000Z\r\n", ics)
         self.assertIn("DTEND:20261020T000000Z\r\n", ics)
-        self.assertIn("SUMMARY:Jeopardy! — S43E26 · Episode 26\r\n", ics)
+        self.assertIn("SUMMARY:Jeopardy!\r\n", ics)
+        self.assertIn("DESCRIPTION:S43E26 · Episode 26\\nRecording on your Tablo from NBC WTHR.", ics.replace("\r\n ", ""))
         self.assertTrue(ics.startswith("BEGIN:VCALENDAR\r\n") and ics.endswith("END:VCALENDAR\r\n"))
 
     def test_text_is_escaped_and_long_lines_folded(self):
