@@ -11,6 +11,7 @@ from typing import Optional, Dict, Any, List
 
 from .tablo_client import tablo_manager
 from .notifications import check_all
+from . import cleanup
 from .database import (
     upsert_show,
     upsert_episode,
@@ -237,6 +238,7 @@ class LibrarySyncService:
             if include_guide:
                 asyncio.create_task(self.sync_guide())
             await check_all(conflicts=not include_guide)
+            await cleanup.run()
 
             print("[LibrarySync] Library sync finished successfully!")
             return {

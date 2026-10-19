@@ -14,6 +14,7 @@ from ..database import (
     recalculate_show_stats,
     set_episode_progress,
     get_in_progress_episodes,
+    set_episode_protected,
 )
 from ..tablo_client import tablo_manager
 from ..transcode import transcode_manager
@@ -31,6 +32,10 @@ class ProgressRequest(BaseModel):
 
 class WatchedRequest(BaseModel):
     watched: bool
+
+
+class ProtectRequest(BaseModel):
+    protected: bool
 
 
 @router.get("/in_progress")
@@ -67,6 +72,26 @@ async def set_watched(episode_id: str, req: WatchedRequest):
         set_episode_progress(ep["id"], position=0)
     set_episode_progress(ep["id"], watched=req.watched)
     return {"success": True, "watched": req.watched, "show": get_show_by_id(ep["show_id"])}
+
+
+@router.post("/{episode_id}/protected")
+async def set_protected(episode_id: str, req: ProtectRequest):
+    """Protect a recording on the Tablo (it's then never deleted to make room or by cleanup), or unprotect it."""
+    ep = get_episode_by_id(episode_id)
+    if not ep:
+        raise HTTPException(status_code=404, detail="Episode not found")
+    resp = await tablo_manager.request_local("PATCH", ep["path"], json.dumps({"protected": req.protected}))
+    if resp.status_code not in (200, 204):
+        raise HTTPException(status_code=502, detail=f"Tablo error {resp.status_code}")
+    # The Tablo answers with the updated recording; make sure it took the change
+    try:
+        echoed = (resp.json().get("user_info") or {}).get("protected")
+    except ValueError:
+        echoed = None
+    if echoed is not None and bool(echoed) != req.protected:
+        raise HTTPException(status_code=502, detail="The Tablo didn't accept the change")
+    set_episode_protected(ep["id"], req.protected)
+    return {"success": True, "protected": req.protected}
 
 
 @router.post("/{episode_id}/watch")

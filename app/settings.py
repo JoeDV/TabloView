@@ -12,6 +12,7 @@ DEFAULTS: Dict[str, Any] = {
     "notifications": True,  # tray notifications for failed/short recordings and recording conflicts
     "video_quality": "auto",  # browser playback: auto (graphics chip if available), best, fastest
     "smooth_motion": False,  # 60 fps from 1080i (opt-in: harder on graphics-chip encoders)
+    "cleanup_days": {},  # show_id -> delete watched recordings this many days after watching (app/cleanup.py)
     "last_seen_version": None,  # newest version whose "What's new" card was shown (app/whatsnew.py)
 }
 

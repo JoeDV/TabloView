@@ -355,6 +355,54 @@ def set_episode_progress(episode_id: str, position: Optional[int] = None, watche
     recalculate_show_stats(row["show_id"])
 
 
+def _patch_raw(table: str, row_id: str, change) -> None:
+    """Apply change(raw_dict) to a cached Tablo object, so the UI reflects an edit before the next sync."""
+    with get_connection() as conn:
+        row = conn.execute(f"SELECT raw_json FROM {table} WHERE id = ?", (row_id,)).fetchone()
+        if not row:
+            return
+        try:
+            raw = json.loads(row["raw_json"] or "{}")
+        except ValueError:
+            raw = {}
+        change(raw)
+        conn.execute(f"UPDATE {table} SET raw_json = ? WHERE id = ?", (json.dumps(raw), row_id))
+        conn.commit()
+
+
+def set_episode_protected(episode_id: str, protected: bool) -> None:
+    _patch_raw("episodes", episode_id, lambda raw: raw.setdefault("user_info", {}).update(protected=protected))
+
+
+def show_keep(show: Optional[Dict[str, Any]]) -> Optional[int]:
+    """The Tablo's keep rule for a recorded series: how many of the newest recordings it keeps (None = all)."""
+    try:
+        raw = json.loads((show or {}).get("raw_json") or "{}")
+    except (TypeError, ValueError):
+        return None
+    keep = raw.get("keep") or {}
+    return int(keep["count"]) if keep.get("rule") == "count" and keep.get("count") else None
+
+
+def set_show_keep(show_id: str, keep: Dict[str, Any]) -> None:
+    _patch_raw("shows", show_id, lambda raw: raw.update(keep=keep))
+
+
+def get_watched_episodes() -> List[Dict[str, Any]]:
+    """Every watched recording, for the automatic cleanup."""
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT id, show_id, show_title, title, season_number, episode_number, path, raw_json
+            FROM episodes WHERE status = 'Watched'
+        """).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["protected"] = recording_details(d.pop("raw_json"))["protected"]
+        result.append(d)
+    return result
+
+
 def get_incomplete_recordings() -> List[Dict[str, Any]]:
     """Recordings that failed or stopped early (see recording_details), newest first."""
     with get_connection() as conn:

@@ -20,6 +20,8 @@ const ICONS = {
   refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
   back: '<path d="m15 18-6-6 6-6"/>',
   next: '<path d="m9 18 6-6-6-6"/>',
+  up: '<path d="m18 15-6-6-6 6"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
   trash: '<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
   play: '<path d="M6 3.8v16.4a1 1 0 0 0 1.5.86l13.2-8.2a1 1 0 0 0 0-1.72L7.5 2.94A1 1 0 0 0 6 3.8z" fill="currentColor" stroke="none"/>',
   more: '<circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/><circle cx="5" cy="12" r="1.6" fill="currentColor"/>',
@@ -861,6 +863,7 @@ function renderShowPage() {
             ${watchedCount ? `<button class="btn btn-lg btn-danger" data-action="delete-watched">${icon('trash', 16)}Delete ${watchedCount} watched</button>` : ''}
             <span id="seriesLinkSlot"></span>
           </div>
+          ${showRules(s, eps)}
         </div>
       </div>
     </div>
@@ -874,6 +877,101 @@ function renderShowPage() {
     <div style="height:60px"></div>`);
   updateBulkBar();
   if (state.seriesLink) placeSeriesLink(state.seriesLink);
+}
+
+const KEEP_CHOICES = [1, 2, 3, 5, 10, 20];
+const CLEANUP_CHOICES = [1, 3, 7, 14, 30];
+
+// Keep (a rule on the Tablo, which deletes older recordings itself) and automatic cleanup (TabloView
+// deletes watched ones some days after watching)
+function showRules(s, eps) {
+  if (!eps.length) return '';
+  const keepOpts = [...new Set([...KEEP_CHOICES, ...(s.keep ? [s.keep] : [])])].sort((a, b) => a - b);
+  const cleanOpts = [...new Set([...CLEANUP_CHOICES, ...(s.cleanup_days ? [s.cleanup_days] : [])])].sort((a, b) => a - b);
+  const keep = (s.path || '').startsWith('/recordings/series/') ? `
+    <label class="rule-field" title="A rule on your Tablo: it deletes older recordings of this show itself, even when TabloView isn’t running">
+      <span>Keep</span>
+      <select class="select select-sm" data-change="show-keep">
+        <option value="">All recordings</option>
+        ${keepOpts.map(n => `<option value="${n}" ${s.keep === n ? 'selected' : ''}>Newest ${n}</option>`).join('')}
+      </select>
+    </label>` : '';
+  return `
+    <div class="hero-rules">
+      ${keep}
+      <label class="rule-field" title="TabloView deletes watched recordings of this show this long after you watch them, while it’s running (also in the tray). Protected recordings are kept.">
+        <span>Delete watched</span>
+        <select class="select select-sm" data-change="show-cleanup">
+          <option value="">Never</option>
+          ${cleanOpts.map(n => `<option value="${n}" ${s.cleanup_days === n ? 'selected' : ''}>${n === 1 ? 'After 1 day' : `After ${n} days`}</option>`).join('')}
+        </select>
+      </label>
+    </div>`;
+}
+
+function mergeShow(show) {
+  state.show = state.show && state.show.id === show.id ? { ...state.show, ...show } : show;
+}
+
+async function setKeep(el) {
+  const s = state.show;
+  const count = el.value ? Number(el.value) : null;
+  if (count) {
+    const newestFirst = [...state.episodes].sort((a, b) => (b.air_date || '').localeCompare(a.air_date || ''));
+    const goes = newestFirst.slice(count);
+    const ok = await confirmDialog({
+      title: `Keep only the newest ${plural(count, 'recording')} of ${s.title}?`,
+      text: `Your Tablo will delete older recordings of this show, ${goes.length ? `now (${plural(goes.length, 'recording')}) and ` : ''}as new ones are recorded, even when TabloView isn’t running.`,
+      confirm: goes.length ? 'Keep newest only' : 'Save', danger: goes.length > 0,
+    });
+    if (!ok) { el.value = s.keep || ''; return; }
+  }
+  el.disabled = true;
+  try {
+    const res = await api(`/api/shows/keep?show_id=${encodeURIComponent(s.id)}`, { method: 'POST', body: JSON.stringify({ count }) });
+    if (res.show) mergeShow(res.show);
+    toast(count ? `Your Tablo will keep the newest ${plural(count, 'recording')}` : 'Your Tablo will keep all recordings', 'success');
+    // The Tablo removes the extras itself; pick that up shortly
+    if (count && count < state.episodes.length) setTimeout(() => !state.isSyncing && refreshLibrary(), 8000);
+  } catch (err) {
+    el.value = s.keep || '';
+    toast(`Couldn't change the keep rule: ${err.message}`, 'error');
+  } finally {
+    el.disabled = false;
+  }
+}
+
+async function setCleanup(el) {
+  const s = state.show;
+  const days = el.value ? Number(el.value) : null;
+  if (days) {
+    const ok = await confirmDialog({
+      title: `Delete watched episodes of ${s.title} automatically?`,
+      text: `TabloView will permanently delete each watched recording ${days === 1 ? '1 day' : `${days} days`} after you watch it (checked after each sync, while TabloView is running or in the tray). Protected recordings are kept.`,
+      confirm: 'Turn on',
+    });
+    if (!ok) { el.value = s.cleanup_days || ''; return; }
+  }
+  try {
+    const res = await api(`/api/shows/cleanup?show_id=${encodeURIComponent(s.id)}`, { method: 'POST', body: JSON.stringify({ days }) });
+    if (res.show) mergeShow(res.show);
+    toast(days ? `Watched episodes will be deleted ${days === 1 ? '1 day' : `${days} days`} after watching` : 'Automatic cleanup off', 'success');
+  } catch (err) {
+    el.value = s.cleanup_days || '';
+    toast(`Couldn't save: ${err.message}`, 'error');
+  }
+}
+
+async function setProtected(id, value) {
+  try {
+    await api(`/api/episodes/${encodeURIComponent(id)}/protected`, { method: 'POST', body: JSON.stringify({ protected: value }) });
+    const ep = findEpisode(id);
+    if (ep) ep.protected = value;
+    toast(value ? 'Protected: it won’t be deleted automatically' : 'No longer protected', 'success');
+    rerenderAfterProgress();
+  } catch (err) {
+    toast(`Couldn't change protection: ${err.message}`, 'error');
+  }
 }
 
 function episodeStatus(ep) {
@@ -975,7 +1073,7 @@ async function deleteEpisode(id) {
     const res = await api(`/api/episodes/${encodeURIComponent(id)}`, { method: 'DELETE' });
     state.episodes = state.episodes.filter(e => e.id !== id);
     state.selected.delete(id);
-    if (res.show) state.show = res.show;
+    if (res.show) mergeShow(res.show);
     toast('Recording deleted', 'success');
     afterEpisodeChange();
   } catch (err) {
@@ -1022,7 +1120,7 @@ async function deleteWatched() {
     const deleted = new Set(res.deleted_ids || []);
     state.episodes = state.episodes.filter(e => !deleted.has(e.id));
     deleted.forEach(id => state.selected.delete(id));
-    if (res.show) state.show = res.show;
+    if (res.show) mergeShow(res.show);
     toast(`Deleted ${plural(res.deleted_count, 'watched episode')}`, 'success');
     if (res.errors && res.errors.length) toast(`${res.errors.length} couldn't be deleted: ${res.errors[0]}`, 'error');
     afterEpisodeChange();
@@ -1595,6 +1693,23 @@ function epgFilter(c) {
   return true;
 }
 
+function channelName(c) {
+  const num = c.major > 0 ? `${c.major}.${c.minor}` : '';
+  let name = c.name || c.call_sign || '';
+  if (num && name.startsWith(num)) name = name.slice(num.length).trim();
+  return { num, name };
+}
+
+// What a channel is airing now, and next
+function nowNext(c, now = Date.now()) {
+  const list = c.airings || [];
+  const i = list.findIndex(a => {
+    const start = new Date(a.air_datetime).getTime();
+    return start <= now && now < start + (a.duration || 0) * 1000;
+  });
+  return { now: list[i], next: i >= 0 ? list[i + 1] : list.find(a => new Date(a.air_datetime).getTime() > now) };
+}
+
 function renderEpg(scrollToNow = false) {
   const scroll = $('#epgScroll');
   if (!scroll || !state.epg) return;
@@ -1636,9 +1751,7 @@ function renderEpg(scrollToNow = false) {
       </div>`;
     }).join('');
 
-    const num = c.major > 0 ? `${c.major}.${c.minor}` : '';
-    let name = c.name || c.call_sign || '';
-    if (num && name.startsWith(num)) name = name.slice(num.length).trim();
+    const { num, name } = channelName(c);
     const sub = [c.network && c.network.toLowerCase() !== name.toLowerCase() ? c.network : '', c.resolution].filter(Boolean).join(' · ');
     return `<div class="epg-row">
       <div class="epg-ch" style="width:${EPG.CH_W}px" data-action="watch-live" data-id="${esc(c.channel_id)}" data-name="${esc(name)}" data-kind="${esc(c.kind)}" title="Watch ${esc(name)} live">
@@ -2096,6 +2209,8 @@ const player = {
     $('#playerTimeline').classList.toggle('hidden', !on);
     $('#pbLive').classList.toggle('hidden', !live);
     $('#pbSpeed').disabled = live;  // live TV can't run faster than it's broadcast
+    $('#pbChannels').classList.toggle('hidden', !live);
+    if (!live) this.toggleChannels(false);
     clearInterval(state.stream.timelineTimer);
     state.stream.timelineTimer = on ? setInterval(() => this.updateTimeline(), 500) : null;
     if (on) this.updateTimeline();
@@ -2202,7 +2317,8 @@ const player = {
   showHelp() {
     const keys = [['Space or K', 'Play / pause'], ['← or J', 'Back 10 seconds'], ['→ or L', 'Ahead 30 seconds'],
       ['↑ ↓', 'Volume'], ['M', 'Mute'], ['F', 'Full screen'], ['P', 'Picture in picture'],
-      ['&lt; &gt;', 'Slower / faster (recordings)'], ['Home', 'Back to live (live TV)'], ['Esc', 'Close the player']];
+      ['&lt; &gt;', 'Slower / faster (recordings)'], ['Home', 'Back to live (live TV)'],
+      ['Page Up / Down', 'Previous / next channel (live TV)'], ['C', 'Channel list (live TV)'], ['Esc', 'Close the player']];
     openModal(`<div class="dialog-body"><div class="dialog-title">Keyboard shortcuts</div>
       <div class="kbd-list">${keys.map(([k, d]) => `<kbd>${k}</kbd><span>${d}</span>`).join('')}</div></div>
       <div class="dialog-foot"><button class="btn btn-primary" data-action="modal-ok" data-autofocus>Got it</button></div>`);
@@ -2388,6 +2504,99 @@ const player = {
     }
   },
 
+  // --- Live TV: channel list beside the picture, and channel up/down ---
+  // The guide's data, loaded (or refreshed when it's about to run out) on demand
+  async ensureEpg() {
+    const end = state.epg ? new Date(state.epg.window_end).getTime() : 0;
+    if (end - Date.now() > 30 * 60000) return;
+    try { state.epg = await api(`/api/live/epg?hours=${EPG.HOURS}`); } catch { /* the list stays as it was */ }
+  },
+
+  // Surf within the Live TV page's current filter, unless the channel being watched isn't in it
+  liveChannels() {
+    const all = (state.epg && state.epg.channels) || [];
+    const list = all.filter(epgFilter);
+    return list.some(c => c.channel_id === state.stream.channelId) ? list : all;
+  },
+
+  async toggleChannels(show) {
+    const panel = $('#chanPanel');
+    show = show === undefined ? panel.classList.contains('hidden') : show;
+    clearInterval(this.chanTimer);
+    this.el().classList.toggle('chan-open', show);
+    if (!show) { panel.classList.add('hidden'); return; }
+    panel.classList.remove('hidden');
+    if (!state.epg) panel.innerHTML = '<div class="loading-line" style="padding:20px"><span class="spinner"></span>Loading channels…</div>';
+    await this.ensureEpg();
+    this.renderChannels();
+    const cur = panel.querySelector('.current');
+    if (cur) cur.scrollIntoView({ block: 'center' });
+    this.chanTimer = setInterval(() => { this.ensureEpg().then(() => this.renderChannels()); }, 30000);
+  },
+
+  renderChannels() {
+    const panel = $('#chanPanel');
+    if (panel.classList.contains('hidden')) return;
+    const list = this.liveChannels();
+    const now = Date.now();
+    const scroll = panel.querySelector('.chan-list');
+    const top = scroll ? scroll.scrollTop : null;
+    panel.innerHTML = `<div class="chan-head">
+        <span>Channels</span>
+        <button class="pb-btn" data-action="pb-surf" data-dir="-1" title="Previous channel (Page Up)">${icon('up', 16)}</button>
+        <button class="pb-btn" data-action="pb-surf" data-dir="1" title="Next channel (Page Down)">${icon('down', 16)}</button>
+        <button class="pb-btn" data-action="pb-channels" title="Close (C)">${icon('x', 16)}</button>
+      </div>
+      <div class="chan-list">${list.length ? list.map(c => {
+        const { num, name } = channelName(c);
+        const { now: on, next } = nowNext(c, now);
+        const start = on ? new Date(on.air_datetime).getTime() : 0;
+        const pct = on && on.duration ? Math.min(100, Math.round(((now - start) / (on.duration * 1000)) * 100)) : 0;
+        return `<button class="chan-row ${c.channel_id === state.stream.channelId ? 'current' : ''}" data-action="pb-tune" data-id="${esc(c.channel_id)}" data-name="${esc(name)}" data-kind="${esc(c.kind)}">
+          ${c.logo_url ? `<img class="chan-logo" src="${esc(c.logo_url)}" alt="" loading="lazy">` : `<span class="chan-logo chan-logo-text">${esc((c.call_sign || 'TV').slice(0, 6))}</span>`}
+          <span class="chan-info">
+            <span class="chan-name">${num ? `<b>${esc(num)}</b>` : ''}${esc(name)}</span>
+            <span class="chan-now">${on ? esc(on.title) : '<span class="dim">No guide info</span>'}</span>
+            ${on ? `<span class="chan-bar"><span style="width:${pct}%"></span></span>` : ''}
+            ${next ? `<span class="chan-next">${esc(fmt.time(next.air_datetime))} ${esc(next.title)}</span>` : ''}
+          </span>
+        </button>`;
+      }).join('') : '<div class="dim" style="padding:20px">No channels in the guide yet.</div>'}</div>`;
+    hydrateIcons(panel);
+    if (top !== null) panel.querySelector('.chan-list').scrollTop = top;
+  },
+
+  // Channel up/down: show where you're headed, and tune once the presses stop, so flipping past
+  // channels doesn't tie up tuners (the Tablo holds a tuner for a while after each one)
+  async surf(dir) {
+    const s = state.stream;
+    if (!s.channelId) return;
+    await this.ensureEpg();
+    const list = this.liveChannels();
+    if (!list.length) return;
+    const from = s.surfIndex ?? list.findIndex(c => c.channel_id === s.channelId);
+    const idx = ((from < 0 ? 0 : from + dir) + list.length) % list.length;
+    s.surfIndex = idx;
+    const c = list[idx];
+    const { num, name } = channelName(c);
+    const on = nowNext(c).now;
+    const osd = $('#chanOsd');
+    osd.innerHTML = `<div><b>${esc(num)}</b> ${esc(name)}</div>${on ? `<span>${esc(on.title)}</span>` : ''}`;
+    osd.classList.remove('hidden');
+    clearTimeout(s.surfTimer);
+    s.surfTimer = setTimeout(() => {
+      s.surfIndex = null;
+      osd.classList.add('hidden');
+      if (c.channel_id !== s.channelId) this.tune(c.channel_id, name, c.kind);
+    }, 900);
+  },
+
+  async tune(channelId, name, kind) {
+    if (channelId === state.stream.channelId) return;
+    await watchLiveChecked(channelId, name, kind);
+    this.renderChannels();
+  },
+
   // Pre-buffer to the target before playing, then report buffer health
   start(url, label) {
     const video = this.video();
@@ -2491,6 +2700,10 @@ const player = {
     video.removeAttribute('src');
     video.load();
     this.el().classList.add('hidden');
+    this.toggleChannels(false);
+    clearTimeout(state.stream.surfTimer);
+    state.stream.surfIndex = null;
+    $('#chanOsd').classList.add('hidden');
     this.stopStream();
     if (state.stream.channelId) setTimeout(checkTuners, 1000);
     state.stream.channelId = null;
@@ -2559,7 +2772,7 @@ async function setWatched(id, watched) {
   try {
     const res = await api(`/api/episodes/${encodeURIComponent(id)}/watched`, { method: 'POST', body: JSON.stringify({ watched }) });
     applyProgressLocally(id, { watched });
-    if (res.show) state.show = res.show;
+    if (res.show) mergeShow(res.show);
     toast(watched ? 'Marked as watched' : 'Marked as unwatched', 'success');
     rerenderAfterProgress();
   } catch (err) {
@@ -2572,7 +2785,7 @@ async function markShowWatched(watched) {
   try {
     const res = await api(`/api/shows/mark_watched?show_id=${encodeURIComponent(state.show.id)}&watched=${watched}`, { method: 'POST' });
     (res.changed_ids || []).forEach(id => applyProgressLocally(id, { watched }));
-    if (res.show) state.show = res.show;
+    if (res.show) mergeShow(res.show);
     toast(`${watched ? 'Marked' : 'Unmarked'} ${plural((res.changed_ids || []).length, 'episode')} as watched`, 'success');
     if (res.errors && res.errors.length) toast(`${res.errors.length} couldn't be updated: ${res.errors[0]}`, 'error');
     rerenderAfterProgress();
@@ -2700,6 +2913,9 @@ const ACTIONS = {
         : { label: 'Mark as watched', icon: 'check', run: () => setWatched(id, true) },
       { label: 'Open in VLC', icon: 'external', run: () => openVlc(`/api/episodes/${encodeURIComponent(id)}/playlist.m3u`) },
       { label: 'Export MP4', icon: 'download', run: () => exportEpisode(id) },
+      ep.protected
+        ? { label: 'Unprotect', icon: 'lock', run: () => setProtected(id, false) }
+        : { label: 'Protect from deletion', icon: 'lock', run: () => setProtected(id, true) },
       { sep: true },
       { label: 'Delete recording', icon: 'trash', danger: true, run: () => deleteEpisode(id) },
     ]);
@@ -2786,6 +3002,9 @@ const ACTIONS = {
   'pb-pip': () => player.togglePip(),
   'pb-live': () => player.goLive(),
   'pb-help': () => player.showHelp(),
+  'pb-channels': () => player.toggleChannels(),
+  'pb-surf': el => player.surf(Number(el.dataset.dir)),
+  'pb-tune': el => player.tune(el.dataset.id, el.dataset.name, el.dataset.kind),
   'pb-retune': () => { const s = state.stream; player.watchLive(s.channelId, s.channelName, s.channelKind); },
   'upnext-play': () => player.playNext(),
   'upnext-cancel': () => player.hideUpNext(),
@@ -2882,6 +3101,8 @@ const CHANGES = {
       toast(`Couldn't save: ${err.message}`, 'error');
     }
   },
+  'show-keep': el => setKeep(el),
+  'show-cleanup': el => setCleanup(el),
   'buffer': el => { state.bufferTarget = parseInt(el.value, 10) || 8; save('tablo_buffer_target', state.bufferTarget); toast(`Buffer set to ${state.bufferTarget} seconds`); },
   'autoplay': el => { state.autoplay = el.checked; save('tablo_autoplay', el.checked ? '1' : '0'); },
   'startup': async el => {
@@ -3013,6 +3234,8 @@ function wireEvents() {
       m: () => player.toggleMute(), f: () => player.toggleFullscreen(), p: () => player.togglePip(),
       '>': () => player.stepSpeed(1), '<': () => player.stepSpeed(-1),
       Home: () => { if (state.stream.channelId) player.goLive(); },
+      PageUp: () => player.surf(-1), PageDown: () => player.surf(1),
+      c: () => { if (state.stream.channelId) player.toggleChannels(); },
       '?': () => player.showHelp(),
     };
     const fn = keys[e.key] || keys[e.key.toLowerCase()];

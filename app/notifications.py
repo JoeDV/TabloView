@@ -26,7 +26,7 @@ def available() -> bool:
     return _notifier is not None
 
 
-def _send(title: str, message: str) -> None:
+def send(title: str, message: str) -> None:
     if not _notifier or not load_settings().get("notifications", True):
         return
     try:
@@ -70,10 +70,10 @@ def check_recordings() -> List[Dict[str, Any]]:
     # Only keep recordings that still exist, so the list doesn't grow forever
     set_sync_meta("notified_recordings", json.dumps(sorted(current)))
     if len(new) == 1:
-        _send("Recording problem", f"{_label(new[0])}: {describe_problem(new[0])}.")
+        send("Recording problem", f"{_label(new[0])}: {describe_problem(new[0])}.")
     elif new:
         names = ", ".join(_label(p) for p in new[:3]) + (f" and {len(new) - 3} more" if len(new) > 3 else "")
-        _send("Recording problems", f"{len(new)} recordings didn't record completely: {names}.")
+        send("Recording problems", f"{len(new)} recordings didn't record completely: {names}.")
     return new
 
 
@@ -97,7 +97,7 @@ def check_conflicts(tuners: Optional[int]) -> List[Dict[str, Any]]:
     new = [c for k, c in keys.items() if k not in seen]
     set_sync_meta("notified_conflicts", json.dumps(sorted(keys)))
     for c in new[:2]:
-        _send("Recording conflict",
+        send("Recording conflict",
               f"{_when(c['start'])}: {c['count']} recordings but only {c['tuners']} tuners "
               f"({', '.join(c['titles'][:4])}). Open TabloView > Scheduled > Upcoming to skip one.")
     return new

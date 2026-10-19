@@ -180,6 +180,53 @@ export const SUITES = {
     await b.ev(`closeModal(false)`);
   },
 
+  async rules(b, t) {
+    const shows = await api('/api/shows');
+    const show = shows.shows.find(s => s.episode_count >= 3 && (s.path || '').startsWith('/recordings/series/'));
+    if (!show) return t.skip('Keep and cleanup rules', 'needs a recorded series with at least 3 recordings');
+    await b.open(`#/show/${encodeURIComponent(show.id)}`);
+    await b.waitFor(`document.querySelector('.ep-row')`);
+    t.check('Show page has Keep and Delete watched rules', await b.ev(`!!document.querySelector('[data-change="show-keep"]') && !!document.querySelector('[data-change="show-cleanup"]')`));
+    await b.ev(`(() => { const s = document.querySelector('[data-change="show-keep"]'); s.value = '1'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await sleep(400);
+    t.check('Keep newest 1 warns how many the Tablo will delete', /Keep only the newest 1 recording/.test(await b.ev(`(document.querySelector('.overlay .dialog-title') || {}).textContent || ''`))
+      && new RegExp(`now \\(${show.episode_count - 1} recordings\\)`).test(await b.ev(`document.querySelector('.overlay .dialog-text').textContent`)));
+    await b.ev(`document.querySelector('[data-action="modal-cancel"]').click()`); await sleep(400);
+    t.check('Cancel puts the choice back and sends nothing', await b.ev(`document.querySelector('[data-change="show-keep"]').value === '${show.keep || ''}' && !window.__writes.some(w => w[1].includes('/keep'))`));
+    await b.ev(`(() => { const s = document.querySelector('[data-change="show-cleanup"]'); s.value = '7'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await sleep(400);
+    await b.ev(`document.querySelector('[data-action="modal-ok"]').click()`); await sleep(600);
+    t.check('Cleanup rule saved (intercepted)', await b.ev(`window.__writes.some(w => w[1].startsWith('/api/shows/cleanup') && w[2].includes('"days":7'))`));
+    await b.ev(`document.querySelector('[data-action="ep-menu"]').click()`); await sleep(300);
+    await b.ev(`[...document.querySelectorAll('.menu-item')].find(x => /Protect from deletion|Unprotect/.test(x.textContent)).click()`); await sleep(600);
+    t.check('Protect sent to the episode (intercepted)', await b.ev(`window.__writes.some(w => /\\/api\\/episodes\\/.+\\/protected/.test(w[1]))`));
+  },
+
+  async channels(b, t) {
+    await b.open('#/live');
+    if (!await b.waitFor(`document.querySelector('.epg-cell')`, 40000)) return t.check('Live TV grid loads', false);
+    // Pretend a channel is playing (nothing is tuned), with a tuner warning so a channel change stops at the dialog
+    await b.ev(`window.__fake['/api/live/tune_check'] = { total: 4, in_use: 4, held: 0, free_after_tuning: 0, needed: 0, warn: false, no_free_tuner: true, recordings_soon: [] };
+      (() => { const c = state.epg.channels.filter(epgFilter)[0]; state.stream.channelId = c.channel_id; player.open('Live · test'); player.showTimeline(true); })()`);
+    t.check('Live player shows the Channels button', await b.ev(`!document.getElementById('pbChannels').classList.contains('hidden')`));
+    await b.ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'c' }))`); await sleep(600);
+    const rows = await b.ev(`document.querySelectorAll('#chanPanel .chan-row').length`);
+    t.check('C opens the channel list with what’s on', rows > 0 && await b.ev(`!!document.querySelector('#chanPanel .chan-row.current') && !!document.querySelector('#chanPanel .chan-now')`), `${rows} channels`);
+    await b.ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageDown' }))`); await sleep(200);
+    await b.ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageDown' }))`); await sleep(300);
+    t.check('Page Down shows where it’s heading', await b.ev(`!document.getElementById('chanOsd').classList.contains('hidden')`));
+    await sleep(1600);
+    const target = await b.ev(`(() => { const l = state.epg.channels.filter(epgFilter); return l[2 % l.length].channel_id; })()`);
+    const dialog = await b.ev(`(document.querySelector('.overlay .dialog-title') || {}).textContent || ''`);
+    const kind = await b.ev(`state.epg.channels.find(c => c.channel_id === ${JSON.stringify(target)}).kind`);
+    if (kind === 'ota') {
+      t.check('Two presses then a pause tunes once, two channels on (tuner check first)', dialog === 'Not enough tuners');
+      await b.ev(`document.querySelector('[data-action="modal-cancel"]').click()`); await sleep(300);
+    } else t.skip('Tuner check on channel change', 'the channel two down isn’t an antenna channel');
+    t.check('Nothing was tuned', !await b.ev(`window.__writes.some(w => w[1].startsWith('/api/live/tune'))`) || kind !== 'ota');
+    await b.ev(`state.stream.channelId = null; player.close()`);
+  },
+
   async whatsnew(b, t) {
     await b.open('#/');
     await b.ev(`window.__fake['/api/system/whatsnew'] = { show: true, version: '9.9.9', notes: ['First thing', 'Second thing'] }; void showWhatsNew()`);

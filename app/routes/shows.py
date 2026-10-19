@@ -2,6 +2,7 @@
 
 import json
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 from typing import Optional, List
 
 from ..database import (
@@ -11,10 +12,28 @@ from ..database import (
     delete_episode,
     recalculate_show_stats,
     set_episode_progress,
+    show_keep,
+    set_show_keep,
 )
 from ..tablo_client import tablo_manager
+from .. import cleanup
 
 router = APIRouter(prefix="/api/shows", tags=["shows"])
+
+
+class KeepRequest(BaseModel):
+    count: Optional[int] = Field(default=None, ge=1, le=50)  # None = keep everything
+
+
+class CleanupRequest(BaseModel):
+    days: Optional[int] = Field(default=None, ge=1, le=365)  # None = off
+
+
+def _with_rules(show: Optional[dict]) -> Optional[dict]:
+    """Add the show's keep rule (on the Tablo) and cleanup rule (in TabloView)."""
+    if show:
+        show = {**show, "keep": show_keep(show), "cleanup_days": cleanup.rules().get(show["id"])}
+    return show
 
 
 @router.get("")
@@ -38,7 +57,7 @@ async def get_show_episodes_query(show_id: str = Query(...)):
         raise HTTPException(status_code=404, detail="Show not found")
     episodes = get_episodes_by_show(show_id)
     return {
-        "show": show,
+        "show": _with_rules(show),
         "show_id": show_id,
         "show_title": show["title"],
         "count": len(episodes),
@@ -104,6 +123,38 @@ async def mark_show_watched(show_id: str = Query(...), watched: bool = Query(Tru
     return {"changed_ids": changed, "errors": errors, "show": get_show_by_id(show_id)}
 
 
+@router.post("/keep")
+async def set_keep(req: KeepRequest, show_id: str = Query(...)):
+    """Set the Tablo's keep rule for a recorded series: keep only the newest N recordings, or all.
+    The Tablo itself then deletes older ones, even while TabloView isn't running."""
+    if not tablo_manager.is_authenticated:
+        raise HTTPException(status_code=400, detail="Tablo device is not connected")
+    show = get_show_by_id(show_id)
+    if not show or not (show.get("path") or "").startswith("/recordings/series/"):
+        raise HTTPException(status_code=404, detail="Show not found")
+    keep = {"rule": "count", "count": req.count} if req.count else {"rule": "none", "count": None}
+    resp = await tablo_manager.request_local("PATCH", show["path"], json.dumps({"keep": keep}))
+    if resp.status_code not in (200, 204):
+        raise HTTPException(status_code=502, detail=f"Tablo error {resp.status_code}: {resp.text[:120]}")
+    try:
+        echoed = resp.json().get("keep")
+    except ValueError:
+        echoed = None
+    if echoed is not None and echoed.get("rule") != keep["rule"]:
+        raise HTTPException(status_code=502, detail="The Tablo didn't accept the change")
+    set_show_keep(show_id, echoed or keep)
+    return {"success": True, "show": _with_rules(get_show_by_id(show_id))}
+
+
+@router.post("/cleanup")
+async def set_cleanup(req: CleanupRequest, show_id: str = Query(...)):
+    """TabloView's automatic cleanup for a show: delete watched recordings N days after watching."""
+    if not get_show_by_id(show_id):
+        raise HTTPException(status_code=404, detail="Show not found")
+    cleanup.set_rule(show_id, req.days)
+    return {"success": True, "show": _with_rules(get_show_by_id(show_id))}
+
+
 @router.get("/{show_id:path}")
 async def get_show(show_id: str):
     show = get_show_by_id(show_id)
@@ -115,6 +166,6 @@ async def get_show(show_id: str):
         raise HTTPException(status_code=404, detail="Show not found")
     episodes = get_episodes_by_show(show["id"])
     return {
-        "show": show,
+        "show": _with_rules(show),
         "episodes": episodes
     }

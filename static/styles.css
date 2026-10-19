@@ -350,6 +350,9 @@ img { display: block; }
 .hero-desc { color: var(--text-2); margin-top: 12px; max-width: 760px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
 .hero-desc.expanded { -webkit-line-clamp: unset; }
 .hero-actions { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; align-items: center; }
+.hero-rules { display: flex; gap: 18px; margin-top: 14px; flex-wrap: wrap; align-items: center; }
+.rule-field { display: inline-flex; align-items: center; gap: 8px; color: var(--text-2); font-size: 13px; }
+.select-sm { height: 30px; font-size: 13px; padding-left: 10px; }
 
 /* ---------- Episode table ---------- */
 .ep-table { margin: 24px 28px 0; max-width: 1624px; }
@@ -591,6 +594,36 @@ img { display: block; }
   padding: 14px 18px; border-radius: 12px; background: rgba(20,22,30,0.92); border: 1px solid rgba(255,255,255,0.12);
   display: flex; gap: 12px; align-items: center;
 }
+/* Live TV: channel list beside the picture, and the channel up/down overlay */
+.chan-panel {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 360px; z-index: 3;
+  display: flex; flex-direction: column; background: rgba(12,14,20,0.94); border-left: 1px solid rgba(255,255,255,0.1);
+}
+.player.chan-open .player-timeline, .player.chan-open .player-top { right: 360px; }
+.chan-head { display: flex; align-items: center; gap: 2px; padding: 14px 10px 10px 18px; font-weight: 650; }
+.chan-head span { flex: 1; }
+.chan-list { overflow-y: auto; flex: 1; padding: 0 8px 12px; }
+.chan-row {
+  display: flex; gap: 12px; align-items: center; width: 100%; padding: 9px 10px; border: 0; border-radius: 10px;
+  background: transparent; color: #fff; font: inherit; text-align: left; cursor: pointer;
+}
+.chan-row:hover { background: rgba(255,255,255,0.08); }
+.chan-row.current { background: rgba(91,140,255,0.22); }
+.chan-logo { width: 52px; height: 32px; object-fit: contain; flex-shrink: 0; }
+.chan-logo-text { display: grid; place-items: center; font-size: 11px; font-weight: 700; border-radius: 6px; background: rgba(255,255,255,0.1); }
+.chan-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.chan-name { font-size: 12.5px; color: var(--text-2); }
+.chan-name b { color: #fff; margin-right: 6px; }
+.chan-now { font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chan-next { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chan-bar { height: 3px; border-radius: 2px; background: rgba(255,255,255,0.15); overflow: hidden; margin: 2px 0; }
+.chan-bar span { display: block; height: 100%; background: var(--accent); }
+.chan-osd {
+  position: absolute; top: 72px; left: 22px; z-index: 3; padding: 12px 16px; border-radius: 12px;
+  background: rgba(20,22,30,0.92); border: 1px solid rgba(255,255,255,0.12); font-size: 18px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.chan-osd span { font-size: 13.5px; color: var(--text-2); }
 .kbd-list { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; margin-top: 12px; font-size: 13.5px; }
 .kbd-list kbd {
   font: inherit; font-weight: 600; font-size: 12.5px; padding: 2px 7px; border-radius: 6px;
