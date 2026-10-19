@@ -3418,9 +3418,9 @@ const dual = {
     v.load();
   },
 
-  stopSession() {
+  stopSession(keepalive = false) {
     if (this.s.sessionId) {
-      fetch('/api/live/stop', { method: 'POST', headers: API_HEADERS, body: JSON.stringify({ session_id: this.s.sessionId }) }).catch(() => {});
+      fetch('/api/live/stop', { method: 'POST', headers: API_HEADERS, body: JSON.stringify({ session_id: this.s.sessionId }), keepalive }).catch(() => {});
     }
     this.s = {};
   },
@@ -4115,6 +4115,7 @@ function wireEvents() {
   window.addEventListener('pagehide', () => {
     if (state.stream.episodeId) player.saveProgress({ final: true });
     player.stopStream({ keepalive: true });
+    dual.stopSession(true);  // the second channel's tuner too
   });
 }
 
