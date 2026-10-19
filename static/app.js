@@ -1655,7 +1655,10 @@ PAGES.scheduled = async (r, token) => {
   paint(`<div class="page">
     <div class="page-head">
       <div><h1 class="page-title">Scheduled</h1><div class="page-sub">${upcomingView ? 'Every recording your Tablo plans to make over the next two weeks' : 'Series your Tablo records automatically'}</div></div>
-      <div class="page-head-actions"><button class="btn btn-ghost btn-sm" data-action="sync-guide">${icon('refresh', 15)}Refresh from Tablo</button></div>
+      <div class="page-head-actions">
+        ${upcomingView ? `<button class="btn btn-ghost btn-sm" data-action="calendar-help">${icon('calendar', 15)}Add to calendar</button>` : ''}
+        <button class="btn btn-ghost btn-sm" data-action="sync-guide">${icon('refresh', 15)}Refresh from Tablo</button>
+      </div>
     </div>
     <div class="toolbar">
       <div class="segmented tabs">${tab('#/scheduled', 'Series', !upcomingView, 'tabSeriesCount')}${tab('#/scheduled?view=upcoming', 'Upcoming recordings', upcomingView, 'tabUpcomingCount')}</div>
@@ -3488,6 +3491,21 @@ const ACTIONS = {
   'pb-pip': () => player.togglePip(),
   'pb-live': () => player.goLive(),
   'pb-help': () => player.showHelp(),
+  'calendar-help': () => openModal(`
+    <div class="dialog-body">
+      <div class="dialog-title">Add your recordings to a calendar</div>
+      <div class="dialog-text">Download a calendar file with everything your Tablo will record in the next two weeks, then import it:</div>
+      <ol class="whatsnew-list">
+        <li><b>Google Calendar:</b> on calendar.google.com, open Settings (gear) → <b>Import &amp; export</b> → choose the file. Tip: first create a calendar named “TabloView” (Settings → Add calendar) and import into it, so it’s easy to hide or remove.</li>
+        <li><b>Outlook:</b> open the file, or File → Open &amp; Export → Import.</li>
+        <li><b>iPhone / Mac:</b> open the file and choose a calendar.</li>
+      </ol>
+      <div class="dialog-text" style="margin-top:12px">It doesn’t update itself: download and import a new file after you change what’s recording.</div>
+    </div>
+    <div class="dialog-foot">
+      <button class="btn" data-action="modal-cancel">Close</button>
+      <a class="btn btn-primary" href="/api/guide/upcoming.ics" download onclick="setTimeout(() => closeModal(true), 300)">${icon('download', 15)}Download calendar file</a>
+    </div>`),
   'set-pin': async () => { if (await setPinDialog()) route(); },
   'pin-signout': async () => {
     if (!await confirmDialog({ title: 'Sign out other devices?', text: 'Every phone, tablet and other computer will have to enter the PIN again.', confirm: 'Sign out' })) return;

@@ -81,6 +81,15 @@ async def upcoming_recordings():
     return {"tuners": tuners, "count": len(recordings), "recordings": recordings, "conflicts": conflicts}
 
 
+@router.get("/upcoming.ics")
+async def upcoming_calendar():
+    """Upcoming recordings as a calendar file to import (Google Calendar, Outlook, Apple Calendar)."""
+    from fastapi.responses import Response
+    from .. import calendar_feed
+    return Response(calendar_feed.build(get_upcoming_recordings()), media_type="text/calendar; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="TabloView recordings.ics"'})
+
+
 @router.get("/returning")
 async def returning_shows():
     """Series you've recorded before with a season premiere coming up and no recording rule now."""
