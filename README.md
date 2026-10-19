@@ -23,12 +23,12 @@ There's no Linux package yet; on a Linux desktop it runs from source with `start
 
 ### Using it from a phone or another PC
 
-By default only the computer running TabloView can open it. To allow other devices on your home network, go to **Device → Network access**. If Windows asks about the firewall, allow **Private networks** only. Anyone on that network can then control your Tablo, so leave it off on shared Wi-Fi.
+By default only the computer running TabloView can open it. To allow other devices on your home network, go to **Device → Network access** and choose a PIN; other devices sign in with it once (the PC itself never asks). If Windows asks about the firewall, allow **Private networks** only. Leave it off on shared Wi-Fi.
 
 ## Features
 
-- **Home**: continue watching, recent recordings, what's recording in the next 48 hours, season premieres, and new primetime episodes.
-- **Library and show pages**: episode thumbnails, play in the browser (resume, full timeline, auto-play next episode, keyboard shortcuts), open in VLC, export to MP4, delete one, several, or all watched episodes. Protect recordings, set how many recordings of a show your Tablo keeps, or delete watched ones automatically after a few days. Short or failed recordings are tagged.
+- **Home**: continue watching, what's on now on your channels, recent recordings, what's recording in the next 48 hours, season premieres, and new primetime episodes.
+- **Library and show pages**: episode thumbnails, play in the browser (resume, timeline with preview frames, closed captions, sleep timer, auto-play next episode, keyboard shortcuts), skip commercials (found in the background for the shows you choose), open in VLC, export to MP4 (smaller H.264, or the original; several at once), delete one, several, or all watched episodes. Protect recordings, set how many recordings of a show your Tablo keeps, or delete watched ones automatically after a few days. Short or failed recordings are tagged, and recorded again from a rerun when there is one.
 - **Guide**: search everything airing on your channels; record a series (new or all episodes) or single airings.
 - **Live TV**: channel grid for local and streaming channels with recording badges, a Favorites filter, and a warning before live TV takes a tuner a recording needs. Pause and rewind up to 30 minutes, and change channels from the player (C, Page Up / Page Down).
 - **Scheduled**: every series your Tablo records, upcoming recordings with Skip, and conflict warnings with a one-click fix (record another airing of the same episode).
