@@ -3204,6 +3204,8 @@ const ACTIONS = {
       ep.status === 'Watched'
         ? { label: 'Mark as unwatched', icon: 'x', run: () => setWatched(id, false) }
         : { label: 'Mark as watched', icon: 'check', run: () => setWatched(id, true) },
+      // Partly watched: start over (clears the resume point, on the Tablo too)
+      ...(inProgress ? [{ label: 'Mark as unwatched', icon: 'x', run: () => setWatched(id, false) }] : []),
       { label: 'Open in VLC', icon: 'external', run: () => openVlc(`/api/episodes/${encodeURIComponent(id)}/playlist.m3u`) },
       { label: 'Export MP4', icon: 'download', run: () => exportEpisode(id) },
       ...(ep.incomplete ? [{ label: 'Record again…', icon: 'refresh', run: () => rerecordDialog(id) }] : []),
