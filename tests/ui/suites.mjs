@@ -350,7 +350,16 @@ export const SUITES = {
     t.check('Device → About offers Check now and Open in the Store', /Open in the Store/.test(await b.ev(`document.getElementById('view').textContent`)));
   },
 
-  async whatsnew(b, t) {
+  async returning(b, t) {
+    await b.open('#/guide');
+    await b.waitFor(`state.guideCache && state.guideCache.size > 0`, 30000);
+    // Any guide show, presented as one you used to record that's coming back
+    await b.ev(`(() => { const g = [...state.guideCache.values()][0]; window.__fake['/api/guide/returning'] = { shows: [{ ...g, schedule_rule: 'none', premiere_at: new Date(Date.now() + 86400000).toISOString(), premiere_season: 5 }] }; })(); location.hash = '#/'`);
+    await b.waitFor(`document.getElementById('rowBack')`, 30000);
+    t.check('Home shows Back for a new season with a Record button', await b.ev(`!!document.querySelector('#rowBack .rec-btn, #rowBack [data-action]')`));
+  },
+
+    async whatsnew(b, t) {
     await b.open('#/');
     await b.ev(`window.__fake['/api/system/whatsnew'] = { show: true, version: '9.9.9', notes: ['First thing', 'Second thing'] }; void showWhatsNew()`);
     await sleep(600);

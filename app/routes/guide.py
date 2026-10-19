@@ -81,6 +81,13 @@ async def upcoming_recordings():
     return {"tuners": tuners, "count": len(recordings), "recordings": recordings, "conflicts": conflicts}
 
 
+@router.get("/returning")
+async def returning_shows():
+    """Series you've recorded before with a season premiere coming up and no recording rule now."""
+    from .. import returning
+    return {"shows": returning.find()}
+
+
 @router.get("/conflicts")
 async def conflict_alternatives():
     """Each recording conflict with the recordings involved and other airings of those same episodes

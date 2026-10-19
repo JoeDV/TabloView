@@ -750,7 +750,7 @@ async function pickDevice(sid) {
 PAGES.home = async (r, token) => {
   paint(`<div class="page"><div class="page-head"><div><h1 class="page-title">Home</h1><div class="page-sub">&nbsp;</div></div></div>${skeletonGrid(5)}</div>`);
 
-  const [shows, sched, prem, prime, progress, upcomingRes] = await Promise.allSettled([
+  const [shows, sched, prem, prime, progress, upcomingRes, , back] = await Promise.allSettled([
     loadShows(),
     loadScheduled(),
     api('/api/guide/shows?highlight=premieres&sort=soonest&limit=24').then(r => cacheGuide(r.shows)),
@@ -758,6 +758,7 @@ PAGES.home = async (r, token) => {
     api('/api/episodes/in_progress').then(r => r.episodes || []),
     loadUpcoming(),
     player.ensureEpg(),
+    api('/api/guide/returning').then(r => cacheGuide(r.shows)),
   ]);
   if (stale(token)) return;
   state.inProgress = progress.value || [];
@@ -836,7 +837,19 @@ PAGES.home = async (r, token) => {
     }));
   }
 
-  const premList = prem.value || [];
+  // Series you recorded before, back with a new season and not set to record
+  const backList = back.value || [];
+  if (backList.length) {
+    parts.push(section({
+      title: 'Back for a new season',
+      sub: 'Shows you’ve recorded before',
+      rowId: 'rowBack',
+      body: `<div class="card-row" id="rowBack">${backList.map(guideCard).join('')}</div>`,
+    }));
+  }
+  const backPaths = new Set(backList.map(g => g.path));
+
+  const premList = (prem.value || []).filter(g => !backPaths.has(g.path));
   if (premList.length) {
     parts.push(section({
       title: 'Season premieres',
