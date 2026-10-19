@@ -241,8 +241,8 @@ class TranscodeManager:
         if passthrough:
             return {"encoder": None, "smooth": False, "quality": quality}
         enc = encoders.choose(quality)
-        # Smooth motion (60 fps) is opt-in: on an i7-1165G7, Quick Sync failed mid-stream ("device
-        # failed") in 4 of 6 one-minute runs at 60 fps and none at 30 fps
+        # Smooth motion (60 fps) is opt-in: it works the graphics chip twice as hard. (Its Quick Sync
+        # failures, 4 of 6 one-minute runs, were fixed by encoders.QSV_STABLE: 2 of 2 two-minute runs clean)
         smooth = bool(settings.get("smooth_motion"))
         return {"encoder": enc, "smooth": smooth and quality != "fastest", "quality": quality}
 

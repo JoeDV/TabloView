@@ -20,7 +20,8 @@ NOTES: Dict[str, List[str]] = {
         "Sleep timer in the player: stop after 15–90 minutes or at the end of the show.",
         "On now: what's airing on your channels, right on the Home page.",
         "Smaller MP4 exports (about a third smaller), and export several episodes at once.",
-        "Playback recovers when the video converter crashes, instead of stopping as if the show had ended.",
+        "Steadier playback on PCs with Intel graphics: the graphics chip's video encoder no longer drops out every so often.",
+        "If the video converter does stop, playback picks up again instead of ending as if the show were over.",
     ],
     "1.1.5": [
         "Sharper playback: your PC's graphics chip converts the video when it can. For sports, try Smooth motion (60 fps) in Device → Playback.",

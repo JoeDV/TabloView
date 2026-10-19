@@ -19,11 +19,17 @@ from .config import FFMPEG_PATH
 
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
+# Quick Sync with frames arriving at broadcast pace (from the Tablo) failed with "device failed (-17)"
+# within 20-30 s on an i7-1165G7 (Intel driver 30.0.101.1191, 2021); at full speed from a file it
+# didn't. With these it ran 2+ minutes of real streams and 12 paced runs without failing, and the
+# output is bit-for-bit the same.
+QSV_STABLE = ["-async_depth", "1", "-low_power", "0"]
+
 # name -> (label, encoder args at normal quality, args at best quality, pixel format)
 HARDWARE = {
     "qsv": ("Intel Quick Sync",
-            ["-c:v", "h264_qsv", "-preset", "veryfast", "-global_quality", "22", "-forced_idr", "1"],
-            ["-c:v", "h264_qsv", "-preset", "medium", "-global_quality", "19", "-forced_idr", "1"], "nv12"),
+            ["-c:v", "h264_qsv", *QSV_STABLE, "-preset", "veryfast", "-global_quality", "22", "-forced_idr", "1"],
+            ["-c:v", "h264_qsv", *QSV_STABLE, "-preset", "medium", "-global_quality", "19", "-forced_idr", "1"], "nv12"),
     "nvenc": ("NVIDIA NVENC",
               ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "23", "-b:v", "0", "-forced-idr", "1"],
               ["-c:v", "h264_nvenc", "-preset", "p6", "-rc", "vbr", "-cq", "20", "-b:v", "0", "-forced-idr", "1"], "yuv420p"),
@@ -40,7 +46,7 @@ FASTEST = ("CPU (x264, fastest)", ["-c:v", "libx264", "-preset", "ultrafast", "-
 # (playback's veryfast/22 is 3.7 GB/hour, larger than the original); x264 faster/CRF 25 gives
 # 2.3 GB/hour at 0.956 but only at about real time. NVENC/AMF values are by analogy, untested.
 EXPORT_ARGS = {
-    "qsv": ["-c:v", "h264_qsv", "-preset", "medium", "-global_quality", "26"],
+    "qsv": ["-c:v", "h264_qsv", *QSV_STABLE, "-preset", "medium", "-global_quality", "26"],
     "nvenc": ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "26", "-b:v", "0"],
     "amf": ["-c:v", "h264_amf", "-quality", "quality", "-rc", "cqp", "-qp_i", "25", "-qp_p", "27"],
     "cpu": ["-c:v", "libx264", "-preset", "faster", "-crf", "25"],
