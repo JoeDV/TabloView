@@ -576,6 +576,7 @@ async def tune_live_channel(req: TuneRequest):
             # (sharper, less CPU). Antenna channels are MPEG-2 and always need converting.
             passthrough = req.kind == "fast" and (await transcode_manager.probe_video_codec(stream.playlist_url)) == "h264"
             sess = transcode_manager.create_session(stream.playlist_url)
+            sess.tablo_token = stream.token
             stream_url = await transcode_manager.start_browser_transcode(sess.session_id, stream.playlist_url,
                                                                          passthrough=passthrough)
             return {

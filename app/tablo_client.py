@@ -273,6 +273,19 @@ class TabloManager:
         data = resp.json()
         return data
 
+    async def end_watch_session(self, token: Optional[str]) -> None:
+        """Tell the Tablo a watch session is over, so it frees the tuner straight away. Without this
+        it keeps the tuner reserved until the session times out on its own, and closing a few
+        channels in a row ties up every tuner. Never raises."""
+        if not token or not self.device:
+            return
+        try:
+            resp = await self.request_local("DELETE", f"/player/sessions/{token}")
+            if resp.status_code not in (200, 204, 404):
+                print(f"[TabloManager] Ending watch session: HTTP {resp.status_code}")
+        except Exception as e:
+            print(f"[TabloManager] Couldn't end a watch session: {e}")
+
     async def delete_airing(self, airing_path: str) -> bool:
         """Send signed DELETE request to local Tablo device."""
         if not self.device:

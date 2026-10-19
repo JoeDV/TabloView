@@ -101,6 +101,7 @@ class StreamSession:
         self.transcoded = False
         self.encoder: Optional[str] = None  # what converted it, e.g. "Intel Quick Sync" or "copy"
         self.stopped = False  # set when the player closes it, so the supervisor doesn't restart it
+        self.tablo_token: Optional[str] = None  # the Tablo's watch session, ended when this stops
         self.supervisor: Optional[asyncio.Task] = None
 
 
@@ -138,6 +139,13 @@ class TranscodeManager:
             sess.stopped = True
             if sess.supervisor:
                 sess.supervisor.cancel()
+            if sess.tablo_token:
+                # Free the tuner on the Tablo now rather than when its session times out
+                from .tablo_client import tablo_manager
+                try:
+                    asyncio.get_running_loop().create_task(tablo_manager.end_watch_session(sess.tablo_token))
+                except RuntimeError:
+                    pass  # no event loop (shutting down)
         if sess and sess.proc:
             try:
                 sess.proc.kill()

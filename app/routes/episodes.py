@@ -177,6 +177,7 @@ async def watch_episode(
         raise HTTPException(status_code=502, detail="No playlist_url received from Tablo")
 
     sess = transcode_manager.create_session(playlist_url)
+    sess.tablo_token = watch_data.get("token")
     # The whole recording's timeline previews, from the Tablo (one small file, cached per episode)
     if watch_data.get("bif_url_hd"):
         asyncio.create_task(previews.fetch(ep["id"], watch_data["bif_url_hd"], ep.get("recording_state") == "finished"))
