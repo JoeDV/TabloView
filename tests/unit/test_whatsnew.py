@@ -1,8 +1,14 @@
+try:
+    from . import _test_env  # noqa: F401
+except ImportError:
+    import _test_env  # noqa: F401
+
 import unittest
 from unittest import mock
 
 from app import whatsnew
 from app.config import APP_VERSION
+
 
 
 class WhatsNewTests(unittest.TestCase):

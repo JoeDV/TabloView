@@ -1,12 +1,19 @@
 """Runs the real FastAPI app in-process (against the throwaway data folder, not signed in to any Tablo)
 and checks the request guard, path-traversal protection and a few endpoints."""
-import unittest
+try:
+    from . import _test_env  # noqa: F401
+except ImportError:
+    import _test_env  # noqa: F401
 
+import unittest
+from unittest import mock
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.tablo_client import tablo_manager
 
 HDR = {"X-TabloView": "1"}
+
 
 
 class ApiGuardTests(unittest.TestCase):
@@ -45,9 +52,10 @@ class ApiGuardTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/settings", json={"auto_sync_minutes": -5}, headers=HDR).status_code, 422)
 
     def test_signed_out_status(self):
-        s = self.client.get("/api/auth/status").json()
-        self.assertFalse(s["authenticated"])
-        self.assertIsNone(s["auth_problem"])
+        with mock.patch.object(tablo_manager, "device", None):
+            s = self.client.get("/api/auth/status").json()
+            self.assertFalse(s["authenticated"])
+            self.assertIsNone(s["auth_problem"])
 
 
 if __name__ == "__main__":

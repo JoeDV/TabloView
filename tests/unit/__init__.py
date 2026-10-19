@@ -3,12 +3,8 @@
 Importing this package points TabloView at a throwaway data folder before any app module loads,
 so tests never touch your real database, settings, transcode folder or Tablo.
 """
-import atexit
-import os
-import shutil
-import tempfile
+try:
+    from . import _test_env  # noqa: F401
+except ImportError:
+    import _test_env  # noqa: F401
 
-_home = tempfile.mkdtemp(prefix="tabloview-test-")
-os.environ["TABLOVIEW_HOME"] = _home
-os.environ.pop("TABLOVIEW_UPDATE_URL", None)
-atexit.register(shutil.rmtree, _home, ignore_errors=True)

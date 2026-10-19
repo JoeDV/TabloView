@@ -1,3 +1,8 @@
+try:
+    from . import _test_env  # noqa: F401
+except ImportError:
+    import _test_env  # noqa: F401
+
 import asyncio
 import json
 import os
@@ -6,6 +11,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from app import updates
+
 
 
 class VersionServer:

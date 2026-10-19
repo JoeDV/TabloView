@@ -1,3 +1,8 @@
+try:
+    from . import _test_env  # noqa: F401
+except ImportError:
+    import _test_env  # noqa: F401
+
 import asyncio
 import unittest
 from unittest import mock
@@ -6,6 +11,7 @@ import httpx
 
 from app.tablo_client import tablo_manager
 from tablo_api.models import TabloDevice
+
 
 
 class UnreachableTests(unittest.TestCase):

@@ -1,9 +1,15 @@
+try:
+    from . import _test_env  # noqa: F401
+except ImportError:
+    import _test_env  # noqa: F401
+
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 from app import database as db
 from app import notifications
+
 
 
 def iso(dt):
