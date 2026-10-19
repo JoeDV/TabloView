@@ -17,6 +17,10 @@ To uninstall, use **Settings → Apps → Installed apps → TabloView**. Your s
 
 There's no Mac app yet; Mac users can run it from source with `start-mac.sh`. See [MAC.md](MAC.md).
 
+### Linux
+
+There's no Linux package yet; on a Linux desktop it runs from source with `start-linux.sh`, which can also add it to the applications menu. See [LINUX.md](LINUX.md).
+
 ### Using it from a phone or another PC
 
 By default only the computer running TabloView can open it. To allow other devices on your home network, go to **Device → Network access**. If Windows asks about the firewall, allow **Private networks** only. Anyone on that network can then control your Tablo, so leave it off on shared Wi-Fi.

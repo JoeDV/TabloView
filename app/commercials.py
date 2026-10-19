@@ -13,6 +13,7 @@ missed. When a recording's show and ads don't separate clearly at all, nothing i
 """
 
 import asyncio
+import os
 import re
 import subprocess
 import sys
@@ -139,7 +140,9 @@ def find_breaks(hists: List[List[float]], blacks: List[float]) -> Optional[List[
 # Tablo (it serves this like someone watching)
 READ_RATE = 4
 WORKER_INTERVAL = 60
-LOW_PRIORITY = (0x00004000 | subprocess.CREATE_NO_WINDOW) if sys.platform == "win32" else 0  # below normal
+# Below normal priority: Windows process class, nice 10 elsewhere
+LOW_PRIORITY = (0x00004000 | subprocess.CREATE_NO_WINDOW) if sys.platform == "win32" else 0
+LOW_PRIORITY_POSIX = None if sys.platform == "win32" else (lambda: os.nice(10))
 
 status: Dict[str, Optional[str]] = {"current": None}
 
@@ -188,7 +191,8 @@ def _analyze(url: str, log_path, stop: threading.Event) -> Optional[List[List[fl
     size = THUMB_W * THUMB_H * 3
     hists: List[List[float]] = []
     with open(log_path, "w", encoding="utf-8") as log:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=log, creationflags=LOW_PRIORITY)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=log, creationflags=LOW_PRIORITY,
+                                preexec_fn=LOW_PRIORITY_POSIX)
         watcher = threading.Thread(target=lambda: (stop.wait(), proc.poll() is None and proc.kill()), daemon=True)
         watcher.start()
         try:
