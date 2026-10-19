@@ -20,6 +20,7 @@ const ICONS = {
   refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
   back: '<path d="m15 18-6-6 6-6"/>',
   next: '<path d="m9 18 6-6-6-6"/>',
+  moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
   up: '<path d="m18 15-6-6-6 6"/>',
   down: '<path d="m6 9 6 6 6-6"/>',
   trash: '<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
@@ -234,7 +235,7 @@ function openMenu(anchor, items) {
     closeMenu();
     item.run && item.run();
   });
-  document.body.appendChild(menu);
+  (document.fullscreenElement || document.body).appendChild(menu);
   const r = anchor.getBoundingClientRect();
   const mw = menu.offsetWidth, mh = menu.offsetHeight;
   let left = r.right - mw;
@@ -262,7 +263,7 @@ function openModal(html, { onReady, wide = false } = {}) {
     el.className = 'overlay';
     el.innerHTML = `<div class="dialog ${wide ? 'wide' : ''}" role="dialog" aria-modal="true">${html}</div>`;
     el.addEventListener('mousedown', e => { if (e.target === el) closeModal(false); });
-    document.body.appendChild(el);
+    (document.fullscreenElement || document.body).appendChild(el);
     hydrateIcons(el);
     openOverlay = { el, resolve };
     onReady && onReady(el);
@@ -2471,7 +2472,7 @@ const player = {
 
   offerUpNext() {
     const s = state.stream;
-    if (!state.autoplay || s.upNextOffered || !s.nextEp || !s.episodeId) return;
+    if (!state.autoplay || s.upNextOffered || !s.nextEp || !s.episodeId || (state.sleep && state.sleep.endOfShow)) return;
     s.upNextOffered = true;
     const n = s.nextEp;
     let left = 10;
@@ -2659,6 +2660,72 @@ const player = {
     this.renderChannels();
   },
 
+  // --- Sleep timer: stop after some minutes, or when the current show ends. Survives auto-play to the
+  // next episode; cleared when the player closes. The last 15 seconds fade the sound out.
+  sleepMenu(anchor) {
+    const s = state.sleep;
+    const set = (minutes, endOfShow = false) => () => this.setSleep(minutes, endOfShow);
+    openMenu(anchor, [
+      { heading: 'Sleep timer' },
+      { label: 'Off', checked: !s, run: () => this.setSleep(null) },
+      ...[15, 30, 60, 90].map(m => ({ label: `${m} minutes`, checked: !!(s && s.minutes === m), run: set(m) })),
+      { label: 'End of this show', checked: !!(s && s.endOfShow), run: set(null, true) },
+    ]);
+  },
+
+  // When the current show ends, in wall-clock time: recordings from the playback position,
+  // live TV from the guide
+  showEndsAt() {
+    const st = state.stream;
+    if (st.episodeId) {
+      const end = st.programEnd || st.duration;
+      return end ? Date.now() + Math.max(0, end - this.position()) * 1000 / (this.video().playbackRate || 1) : null;
+    }
+    const c = ((state.epg && state.epg.channels) || []).find(x => x.channel_id === st.channelId);
+    const on = c && nowNext(c).now;
+    return on ? new Date(on.air_datetime).getTime() + (on.duration || 0) * 1000 : null;
+  },
+
+  setSleep(minutes, endOfShow = false) {
+    clearInterval(this.sleepTimer);
+    this.video().volume = state.sleep ? state.sleep.volume : this.video().volume;
+    state.sleep = null;
+    if (minutes || endOfShow) {
+      const until = endOfShow ? this.showEndsAt() : Date.now() + minutes * 60000;
+      if (!until) { toast('The end of this show isn’t known; choose a number of minutes instead', 'error'); this.syncSleep(); return; }
+      state.sleep = { minutes, endOfShow, until, volume: this.video().volume };
+      this.sleepTimer = setInterval(() => this.sleepTick(), 1000);
+      toast(endOfShow ? `Playback stops at the end of this show (${fmt.time(new Date(until).toISOString())})` : `Playback stops in ${minutes} minutes`);
+    }
+    this.syncSleep();
+  },
+
+  sleepTick() {
+    const s = state.sleep;
+    if (!s) return;
+    // A recording's end moves when it's paused or skipped through
+    if (s.endOfShow && state.stream.episodeId) s.until = this.showEndsAt() || s.until;
+    const left = s.until - Date.now();
+    const v = this.video();
+    if (left <= 15000 && !v.paused) v.volume = s.volume * Math.max(0, left / 15000);
+    if (left <= 0) {
+      this.setSleep(null);
+      this.close();
+      toast('Sleep timer: playback stopped');
+      return;
+    }
+    this.syncSleep();
+  },
+
+  syncSleep() {
+    const b = $('#pbSleep');
+    const s = state.sleep;
+    const mins = s ? Math.max(1, Math.ceil((s.until - Date.now()) / 60000)) : 0;
+    b.classList.toggle('on', !!s);
+    $('#pbSleepLeft').textContent = s ? `${mins}m` : '';
+    b.title = s ? `Sleep timer: stops in ${mins} minute${mins === 1 ? '' : 's'}` : 'Sleep timer';
+  },
+
   // Pre-buffer to the target before playing, then report buffer health
   start(url, label) {
     const video = this.video();
@@ -2762,6 +2829,7 @@ const player = {
     video.removeAttribute('src');
     video.load();
     this.el().classList.add('hidden');
+    if (state.sleep) this.setSleep(null);
     this.toggleChannels(false);
     clearTimeout(state.stream.surfTimer);
     state.stream.surfIndex = null;
@@ -3064,6 +3132,7 @@ const ACTIONS = {
   'pb-pip': () => player.togglePip(),
   'pb-live': () => player.goLive(),
   'pb-help': () => player.showHelp(),
+  'pb-sleep': el => player.sleepMenu(el),
   'version-history': () => showVersionHistory(),
   'pb-channels': () => player.toggleChannels(),
   'pb-surf': el => player.surf(Number(el.dataset.dir)),

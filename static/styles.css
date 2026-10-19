@@ -577,6 +577,9 @@ img { display: block; }
 }
 .pb-btn:hover { background: rgba(255,255,255,0.14); }
 .pb-main { width: 46px; height: 46px; }
+.pb-sleep { width: auto; min-width: 38px; padding: 0 9px; border-radius: 19px; gap: 5px; display: inline-flex; align-items: center; justify-content: center; font-size: 12.5px; font-weight: 600; }
+.pb-sleep.on { background: rgba(91,140,255,0.28); }
+.pb-sleep span:empty { display: none; }
 .pb-volume { width: 96px; accent-color: #fff; }
 .pb-speed {
   height: 30px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.08);

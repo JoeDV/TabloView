@@ -243,6 +243,21 @@ export const SUITES = {
     t.check('The banner goes away when the guide is loaded', await b.ev(`document.getElementById('guideBanner').classList.contains('hidden')`));
   },
 
+  async sleep(b, t) {
+    await b.open('#/');
+    // The player's controls without a stream (nothing is played or tuned)
+    await b.ev(`state.stream.episodeId = 'test'; state.stream.duration = 1800; state.stream.programEnd = 1800; player.open('Test'); player.showTimeline(true)`);
+    await b.ev(`document.getElementById('pbSleep').click()`); await sleep(300);
+    const items = await b.ev(`[...document.querySelectorAll('.menu-item')].map(x => x.textContent.trim()).join('|')`);
+    t.check('Sleep timer menu offers minutes and end of show', /15 minutes/.test(items) && /End of this show/.test(items), items);
+    await b.ev(`[...document.querySelectorAll('.menu-item')].find(x => /30 minutes/.test(x.textContent)).click()`); await sleep(300);
+    t.check('The button shows the time left', (await b.ev(`document.getElementById('pbSleepLeft').textContent`)) === '30m');
+    await b.ev(`state.sleep.until = Date.now() + 1500`); await sleep(3000);
+    t.check('When it runs out the player closes', await b.ev(`document.getElementById('player').classList.contains('hidden') && !state.sleep`));
+    t.check('…and says why', /Sleep timer/.test(await b.ev(`document.getElementById('toasts').textContent`)));
+    await b.ev(`state.stream.episodeId = null`);
+  },
+
   async whatsnew(b, t) {
     await b.open('#/');
     await b.ev(`window.__fake['/api/system/whatsnew'] = { show: true, version: '9.9.9', notes: ['First thing', 'Second thing'] }; void showWhatsNew()`);
