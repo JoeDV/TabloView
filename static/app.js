@@ -21,6 +21,8 @@ const ICONS = {
   back: '<path d="m15 18-6-6 6-6"/>',
   next: '<path d="m9 18 6-6-6-6"/>',
   moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+  dual: '<rect x="2" y="5" width="9" height="14" rx="2"/><rect x="13" y="5" width="9" height="14" rx="2"/>',
+  layout: '<rect x="3" y="4" width="18" height="16" rx="2"/><rect x="12" y="12" width="7" height="6" rx="1"/>',
   cc: '<rect x="2" y="5" width="20" height="14" rx="3"/><path d="M10 10.2a2.5 2.5 0 1 0 0 3.6M17 10.2a2.5 2.5 0 1 0 0 3.6"/>',
   up: '<path d="m18 15-6-6-6 6"/>',
   down: '<path d="m6 9 6 6 6-6"/>',
@@ -2452,6 +2454,8 @@ async function runInspector() {
 const player = {
   el: () => $('#player'),
   video: () => $('#video'),
+  // With two channels open, play/pause and picture-in-picture act on the one you're hearing
+  activeVideo: () => (dual.on && dual.active === 'second' ? $('#video2') : $('#video')),
   setStatus(html) { $('#playerStatus').innerHTML = html; },
 
   open(title) {
@@ -2526,6 +2530,8 @@ const player = {
     $('#pbLive').classList.toggle('hidden', !live);
     $('#pbSpeed').disabled = live;  // live TV can't run faster than it's broadcast
     $('#pbChannels').classList.toggle('hidden', !live);
+    $('#pbDual').classList.toggle('hidden', !on || dual.on);
+    $('#pbLayout').classList.toggle('hidden', !on || !dual.on);
     if (live || !on) { $('#tlBreaks').innerHTML = ''; $('#skipBreak').classList.add('hidden'); }
     if (!live) this.toggleChannels(false);
     clearInterval(state.stream.timelineTimer);
@@ -2564,7 +2570,7 @@ const player = {
 
   // --- Controls (buttons and keyboard) ---
   togglePlay() {
-    const v = this.video();
+    const v = this.activeVideo();
     if (v.paused) v.play().catch(() => {}); else v.pause();
   },
 
@@ -2618,13 +2624,17 @@ const player = {
   async togglePip() {
     try {
       if (document.pictureInPictureElement) await document.exitPictureInPicture();
-      else await this.video().requestPictureInPicture();
+      else await this.activeVideo().requestPictureInPicture();
     } catch { toast('Picture in picture isn’t available in this browser', 'error'); }
   },
 
   // Keep the play/mute buttons in step with the video
   syncButtons() {
     const v = this.video();
+    // Volume and mute apply to both channels (which one you hear is chosen separately)
+    const v2 = $('#video2');
+    if (v2.volume !== v.volume) v2.volume = v.volume;
+    if (v2.muted !== v.muted) v2.muted = v.muted;
     $('#pbPlay').innerHTML = icon(v.paused ? 'play' : 'pause', 22);
     $('#pbPlay').title = v.paused ? 'Play (Space)' : 'Pause (Space)';
     $('#pbMute').innerHTML = icon(v.muted || v.volume === 0 ? 'mute' : 'volume', 18);
@@ -2635,7 +2645,7 @@ const player = {
     const keys = [['Space or K', 'Play / pause'], ['← or J', 'Back 10 seconds'], ['→ or L', 'Ahead 30 seconds'],
       ['↑ ↓', 'Volume'], ['M', 'Mute'], ['F', 'Full screen'], ['P', 'Picture in picture'],
       ['&lt; &gt;', 'Slower / faster (recordings)'], ['Home', 'Back to live (live TV)'],
-      ['Page Up / Down', 'Previous / next channel (live TV)'], ['S', 'Skip a commercial break'], ['T', 'Captions on / off'], ['C', 'Channel list (live TV)'], ['Esc', 'Close the player']];
+      ['Page Up / Down', 'Previous / next channel (live TV)'], ['S', 'Skip a commercial break'], ['T', 'Captions on / off'], ['2', 'Watch a live channel alongside'], ['Tab', 'Hear the other channel'], ['L', 'Layout of two channels'], ['C', 'Channel list (live TV)'], ['Esc', 'Close the player']];
     openModal(`<div class="dialog-body"><div class="dialog-title">Keyboard shortcuts</div>
       <div class="kbd-list">${keys.map(([k, d]) => `<kbd>${k}</kbd><span>${d}</span>`).join('')}</div></div>
       <div class="dialog-foot"><button class="btn btn-primary" data-action="modal-ok" data-autofocus>Got it</button></div>`);
@@ -2887,6 +2897,7 @@ const player = {
       state.stream.sessionId = res.session_id;
       checkTuners();
       this.start(res.stream_url, 'Live');
+      dual.render();
     } catch (err) {
       this.setStatus(`<span style="color:var(--rec)">Couldn't tune this channel: ${esc(err.message)}</span>`);
       checkTuners();
@@ -2911,6 +2922,7 @@ const player = {
   async toggleChannels(show) {
     const panel = $('#chanPanel');
     show = show === undefined ? panel.classList.contains('hidden') : show;
+    if (!show) dual.picking = false;
     clearInterval(this.chanTimer);
     this.el().classList.toggle('chan-open', show);
     if (!show) { panel.classList.add('hidden'); return; }
@@ -2931,7 +2943,7 @@ const player = {
     const scroll = panel.querySelector('.chan-list');
     const top = scroll ? scroll.scrollTop : null;
     panel.innerHTML = `<div class="chan-head">
-        <span>Channels</span>
+        <span>${dual.picking ? 'Pick a second channel' : dual.on ? `Change ${dual.active === 'second' ? dual.s.name : state.stream.channelName}` : 'Channels'}</span>
         <button class="pb-btn" data-action="pb-surf" data-dir="-1" title="Previous channel (Page Up)">${icon('up', 16)}</button>
         <button class="pb-btn" data-action="pb-surf" data-dir="1" title="Next channel (Page Down)">${icon('down', 16)}</button>
         <button class="pb-btn" data-action="pb-channels" title="Close (C)">${icon('x', 16)}</button>
@@ -2981,6 +2993,8 @@ const player = {
   },
 
   async tune(channelId, name, kind) {
+    if (dual.picking) return dual.start(channelId, name, kind);
+    if (dual.on && dual.active === 'second') return dual.retune(channelId, name, kind);
     if (channelId === state.stream.channelId) return;
     await watchLiveChecked(channelId, name, kind);
     this.renderChannels();
@@ -2989,8 +3003,10 @@ const player = {
   // --- Closed captions: the broadcast's own captions travel inside the converted video (FFmpeg keeps
   // them), and hls.js turns them into a text track; this only shows or hides it
   applyCaptions() {
-    for (const t of this.video().textTracks) {
-      t.mode = state.captions ? 'showing' : 'hidden';
+    const tracks = [...[...this.video().textTracks].map(t => [t, 'main']), ...[...$('#video2').textTracks].map(t => [t, 'second'])];
+    for (const [t, pane] of tracks) {
+      // With two channels, the one you aren't hearing shows captions so you can still follow it
+      t.mode = state.captions || (dual.on && dual.active !== pane) ? 'showing' : 'hidden';
       if (!t.__raised) {
         // Broadcast captions sit on the bottom rows, under the player bar: lift them above it
         t.__raised = true;
@@ -3182,6 +3198,7 @@ const player = {
     video.removeAttribute('src');
     video.load();
     this.el().classList.add('hidden');
+    dual.stop();
     if (state.sleep) this.setSleep(null);
     this.toggleChannels(false);
     clearTimeout(state.stream.surfTimer);
@@ -3291,6 +3308,11 @@ function rerenderAfterProgress() {
 // Antenna channels use a tuner the Tablo keeps for a while after you stop watching. Before tuning,
 // warn if that would leave too few tuners for recordings starting soon (or none are free).
 async function watchLiveChecked(channelId, name, kind) {
+  if (await tunerOk(kind, name)) player.watchLive(channelId, name, kind);
+}
+
+// Before taking an antenna tuner: warn if that would leave too few for recordings about to start
+async function tunerOk(kind, name) {
   if (kind === 'ota') {
     let c = null;
     try { c = await api('/api/live/tune_check'); } catch { /* don't block watching on a failed check */ }
@@ -3305,12 +3327,235 @@ async function watchLiveChecked(channelId, name, kind) {
         text = `${first.title}${others > 0 ? ` and ${plural(others, 'other recording')}` : ''} will start recording at ${fmt.time(first.start)}. ` +
           `Watching ${name} now would leave ${plural(c.free_after_tuning, 'free tuner')}${heldNote}, so ${others > 0 ? 'some recordings' : 'the recording'} could fail.`;
       }
-      const ok = await confirmDialog({ title: 'Not enough tuners', text, confirm: 'Watch anyway', danger: true });
-      if (!ok) return;
+      return confirmDialog({ title: 'Not enough tuners', text, confirm: 'Watch anyway', danger: true });
     }
   }
-  player.watchLive(channelId, name, kind);
+  return true;
 }
+
+// ---------------------------------------------------------------------------
+// Two channels at once (live TV). The player keeps running the first channel (timeline, pause,
+// rewind); this runs the second in #video2. Both go through Web Audio: a gain per channel picks the
+// one you hear (a muted element would also be silent to the level meter), and an analyser per
+// channel notices when the one you aren't hearing suddenly gets loud.
+// ---------------------------------------------------------------------------
+const dual = {
+  on: false, picking: false, active: 'main', layout: 'side', s: {},
+  LAYOUTS: ['side', 'pip', 'full'],
+  LAYOUT_NAMES: { side: 'Side by side', pip: 'Big and small', full: 'Full screen (Tab flips)' },
+
+  // "+ Second channel": pick one from the channel list
+  async add() {
+    if (this.on || !(state.stream.channelId || state.stream.episodeId)) return;
+    this.picking = true;
+    await player.toggleChannels(true);
+  },
+
+  async start(channelId, name, kind) {
+    this.picking = false;
+    player.toggleChannels(false);
+    if (channelId === state.stream.channelId) { toast('That channel is already playing'); return; }
+    if (!await tunerOk(kind, name)) return;
+    this.ensureAudio();
+    if (!await this.load(channelId, name, kind)) return;
+    this.on = true;
+    this.active = 'main';
+    player.el().classList.add('dual');
+    $('#paneSecond').classList.remove('hidden');
+    this.setLayout(this.layout);
+    player.showTimeline(true);
+    this.applySound();
+    this.startMeter();
+    checkTuners();
+  },
+
+  async load(channelId, name, kind) {
+    const v = $('#video2');
+    this.teardown();
+    try {
+      const res = await api('/api/live/tune', { method: 'POST', body: JSON.stringify({ channel_id: channelId, transcode: true, kind }) });
+      this.s = { channelId, name, kind, sessionId: res.session_id, url: res.stream_url };
+    } catch (err) {
+      toast(`Couldn't tune ${name}: ${err.message}`, 'error');
+      return false;
+    }
+    if (window.Hls && Hls.isSupported()) {
+      const hls = new Hls({ enableWorker: true, backBufferLength: 30, maxBufferLength: 30 });
+      hls.loadSource(this.s.url);
+      hls.attachMedia(v);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => v.play().catch(() => {}));
+      hls.on(Hls.Events.ERROR, (evt, data) => {
+        if (!data.fatal) return;
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+        else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+      });
+      this.hls = hls;
+    } else {
+      v.src = this.s.url;
+      v.play().catch(() => {});
+    }
+    v.volume = player.video().volume;
+    v.muted = player.video().muted;
+    this.render();
+    return true;
+  },
+
+  // Change the second channel (from the channel list while you're hearing it)
+  async retune(channelId, name, kind) {
+    if (channelId === this.s.channelId || channelId === state.stream.channelId) return;
+    if (!await tunerOk(kind, name)) return;
+    this.stopSession();
+    await this.load(channelId, name, kind);
+    this.applySound();
+    checkTuners();
+  },
+
+  teardown() {
+    if (this.hls) { this.hls.destroy(); this.hls = null; }
+    const v = $('#video2');
+    v.pause();
+    v.removeAttribute('src');
+    v.load();
+  },
+
+  stopSession() {
+    if (this.s.sessionId) {
+      fetch('/api/live/stop', { method: 'POST', headers: API_HEADERS, body: JSON.stringify({ session_id: this.s.sessionId }) }).catch(() => {});
+    }
+    this.s = {};
+  },
+
+  // Back to one channel (the second one's tuner is freed)
+  stop() {
+    this.picking = false;
+    if (!this.on) return;
+    this.on = false;
+    this.stopSession();
+    this.teardown();
+    this.end();
+  },
+
+  end() {
+    this.on = false;
+    this.active = 'main';
+    clearInterval(this.meterTimer);
+    const p = player.el();
+    p.classList.remove('dual', 'dual-side', 'dual-pip', 'dual-full');
+    $('#paneSecond').classList.add('hidden');
+    $('#paneMain').classList.add('active');
+    $('#paneSecond').classList.remove('active', 'buzz');
+    this.applySound();
+    player.applyCaptions();
+    if (player.isOpen()) player.showTimeline(true);
+    setTimeout(checkTuners, 1000);
+  },
+
+  // The × on a picture: closing the first channel keeps the second playing as the only one
+  close(pane) {
+    if (!this.on) return;
+    if (pane === 'second') { this.stop(); return; }
+    const s = this.s;
+    player.finishEpisode();  // a recording: keep where you got to
+    player.stopStream();
+    player.teardown();
+    this.teardown();
+    this.s = {};
+    Object.assign(state.stream, { episodeId: null, channelId: s.channelId, channelName: s.name, channelKind: s.kind, sessionId: s.sessionId });
+    $('#playerTitle').textContent = `Live · ${s.name}`;
+    this.end();
+    player.start(s.url, 'Live');
+  },
+
+  swap() {
+    if (!this.on) return;
+    this.active = this.active === 'main' ? 'second' : 'main';
+    this.applySound();
+    player.renderChannels();
+  },
+
+  paneClick(pane) {
+    if (this.active !== pane) this.swap();
+    else player.togglePlay();
+  },
+
+  setLayout(layout) {
+    this.layout = layout;
+    const p = player.el();
+    p.classList.remove('dual-side', 'dual-pip', 'dual-full');
+    if (this.on) p.classList.add(`dual-${layout}`);
+  },
+
+  cycleLayout() {
+    if (!this.on) return;
+    this.setLayout(this.LAYOUTS[(this.LAYOUTS.indexOf(this.layout) + 1) % this.LAYOUTS.length]);
+    toast(this.LAYOUT_NAMES[this.layout]);
+  },
+
+  // Labels: channel name, and a speaker on the one you're hearing
+  render() {
+    const label = (el, name, on) => { el.innerHTML = `${on ? icon('volume', 14) : ''}<span>${esc(name || '')}</span>`; };
+    label($('#labelMain'), state.stream.channelId ? state.stream.channelName : $('#playerTitle').textContent, this.active === 'main');
+    label($('#labelSecond'), this.s.name, this.active === 'second');
+  },
+
+  ensureAudio() {
+    if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    this.ctx.resume().catch(() => {});
+    for (const v of [$('#video'), $('#video2')]) {
+      if (v.__audio) continue;
+      const src = this.ctx.createMediaElementSource(v);
+      const analyser = this.ctx.createAnalyser();
+      analyser.fftSize = 2048;
+      const gain = this.ctx.createGain();
+      src.connect(analyser);
+      src.connect(gain).connect(this.ctx.destination);
+      v.__audio = { analyser, gain, samples: new Float32Array(2048) };
+    }
+  },
+
+  applySound() {
+    const main = $('#video').__audio, second = $('#video2').__audio;
+    if (main) main.gain.gain.value = !this.on || this.active === 'main' ? 1 : 0;
+    if (second) second.gain.gain.value = this.on && this.active === 'second' ? 1 : 0;
+    $('#paneMain').classList.toggle('active', !this.on || this.active === 'main');
+    $('#paneSecond').classList.toggle('active', this.on && this.active === 'second');
+    player.applyCaptions();
+    this.render();
+  },
+
+  // "Something's happening": the channel you aren't hearing gets much louder than it has been
+  startMeter() {
+    clearInterval(this.meterTimer);
+    this.level = { fast: 0, slow: 0, ticks: 0, quietUntil: 0 };
+    this.meterTimer = setInterval(() => this.meter(), 200);
+  },
+
+  meter() {
+    const silent = this.active === 'main' ? $('#video2') : $('#video');
+    const a = silent.__audio;
+    if (!this.on || !a || silent.paused) return;
+    a.analyser.getFloatTimeDomainData(a.samples);
+    let sum = 0;
+    for (const x of a.samples) sum += x * x;
+    const rms = Math.sqrt(sum / a.samples.length);
+    const L = this.level;
+    L.fast = L.fast * 0.7 + rms * 0.3;
+    L.ticks++;
+    const loud = L.ticks > 50 && L.fast > Math.max(0.02, L.slow * 2.2);
+    if (loud && Date.now() > L.quietUntil) {
+      L.quietUntil = Date.now() + 30000;
+      const pane = this.active === 'main' ? $('#paneSecond') : $('#paneMain');
+      pane.classList.remove('buzz');
+      void pane.offsetWidth;
+      pane.classList.add('buzz');
+      const label = pane.querySelector('.pane-label span');
+      const was = label.textContent;
+      label.textContent = `${was} · Something’s happening`;
+      setTimeout(() => { pane.classList.remove('buzz'); this.render(); }, 6000);
+    }
+    if (!loud) L.slow = L.ticks < 25 ? (L.slow + rms) / 2 : L.slow * 0.99 + rms * 0.01;
+  },
+};
 
 function openVlc(url) {
   window.location.href = url;
@@ -3491,6 +3736,9 @@ const ACTIONS = {
   'pb-pip': () => player.togglePip(),
   'pb-live': () => player.goLive(),
   'pb-help': () => player.showHelp(),
+  'dual-add': () => dual.add(),
+  'dual-layout': () => dual.cycleLayout(),
+  'dual-close': el => dual.close(el.dataset.pane),
   'calendar-help': () => openModal(`
     <div class="dialog-body">
       <div class="dialog-title">Add your recordings to a calendar</div>
@@ -3789,6 +4037,9 @@ function wireEvents() {
       c: () => { if (state.stream.channelId) player.toggleChannels(); },
       s: () => { if (!$('#skipBreak').classList.contains('hidden')) player.skipBreak(); },
       t: () => player.toggleCaptions(),
+      2: () => dual.add(),
+      l: () => dual.cycleLayout(),
+      Tab: () => { if (dual.on) dual.swap(); },
       '?': () => player.showHelp(),
     };
     const fn = keys[e.key] || keys[e.key.toLowerCase()];
@@ -3844,7 +4095,9 @@ function wireEvents() {
   video.textTracks.addEventListener('addtrack', () => player.applyCaptions());
   try { video.volume = Math.max(0, Math.min(1, parseFloat(store('tablo_volume', '1')))); } catch { /* default */ }
   ['play', 'pause', 'volumechange'].forEach(ev => video.addEventListener(ev, () => player.syncButtons()));
-  video.addEventListener('click', () => player.togglePlay());
+  video.addEventListener('click', () => (dual.on ? dual.paneClick('main') : player.togglePlay()));
+  $('#video2').addEventListener('click', () => dual.paneClick('second'));
+  $('#video2').textTracks.addEventListener('addtrack', () => player.applyCaptions());
   video.addEventListener('dblclick', () => player.toggleFullscreen());
   $('#pbVolume').addEventListener('input', e => player.setVolume(parseFloat(e.target.value)));
   $('#pbSpeed').addEventListener('change', e => { player.setSpeed(parseFloat(e.target.value)); e.target.blur(); });

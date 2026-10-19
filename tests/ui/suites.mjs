@@ -359,6 +359,29 @@ export const SUITES = {
     t.check('Home shows Back for a new season with a Record button', await b.ev(`!!document.querySelector('#rowBack .rec-btn, #rowBack [data-action]')`));
   },
 
+    // Uses an antenna tuner for about a minute: runs only with TABLOVIEW_ALLOW_TUNE=1
+  async dual(b, t) {
+    if (!process.env.TABLOVIEW_ALLOW_TUNE) return t.skip('Two channels at once', 'set TABLOVIEW_ALLOW_TUNE=1 to tune for real');
+    const shows = (await api('/api/shows')).shows;
+    const eps = (await api(`/api/shows/episodes?show_id=${encodeURIComponent(shows[0].id)}`)).episodes;
+    const ep = eps.find(e => e.recording_state === 'finished') || eps[0];
+    await b.open(`#/show/${encodeURIComponent(shows[0].id)}`);
+    await b.waitFor(`document.querySelector('.ep-row')`);
+    await b.ev(`player.playEpisode(${JSON.stringify(ep.id)}, 'start')`);
+    await b.waitFor(`$('#video').currentTime > 3`, 60000);
+    await b.ev(`$('#pbDual').click()`);
+    await b.waitFor(`document.querySelector('#chanPanel .chan-row')`, 30000);
+    t.check('The channel list asks for a second channel', /second channel/.test(await b.ev(`document.querySelector('.chan-head span').textContent`)));
+    await b.ev(`[...document.querySelectorAll('#chanPanel .chan-row')].find(r => r.dataset.kind === 'ota').click()`);
+    t.check('A live channel plays alongside the recording', await b.waitFor(`dual.on && $('#video2').currentTime > 3 && !$('#video').paused`, 60000));
+    await b.ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }))`); await sleep(500);
+    t.check('Tab moves the sound to the other channel', await b.ev(`dual.active === 'second' && $('#video').__audio.gain.gain.value === 0 && $('#video2').__audio.gain.gain.value === 1`));
+    await b.ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'l' }))`); await sleep(300);
+    t.check('L changes the layout', await b.ev(`player.el().classList.contains('dual-pip')`));
+    await b.ev(`dual.close('second')`); await sleep(1000);
+    t.check('Closing the live channel leaves the recording playing with its sound', await b.ev(`!dual.on && !$('#video').paused && $('#video').__audio.gain.gain.value === 1`));
+  },
+
     async whatsnew(b, t) {
     await b.open('#/');
     await b.ev(`window.__fake['/api/system/whatsnew'] = { show: true, version: '9.9.9', notes: ['First thing', 'Second thing'] }; void showWhatsNew()`);

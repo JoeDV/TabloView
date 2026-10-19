@@ -572,6 +572,32 @@ img { display: block; }
 .player-tools .btn { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.12); }
 .player-tools .btn:hover { background: rgba(255,255,255,0.16); }
 .player video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+/* Two channels at once: side by side, big and small, or one full screen (the other keeps playing) */
+.panes { position: absolute; inset: 0; display: flex; background: #000; }
+.pane { position: relative; flex: 1; min-width: 0; }
+.pane-label, .pane-close { display: none; }
+.player.dual .pane-label {
+  display: flex; align-items: center; gap: 6px; position: absolute; left: 12px; top: 64px; z-index: 2; pointer-events: none;
+  padding: 4px 10px; border-radius: 8px; background: rgba(0,0,0,0.6); font-size: 13px; font-weight: 600;
+}
+.player.dual .pane-close {
+  display: grid; place-items: center; position: absolute; right: 12px; top: 64px; z-index: 2; width: 30px; height: 30px;
+  border: 0; border-radius: 50%; background: rgba(0,0,0,0.6); color: #fff; font-size: 18px; cursor: pointer;
+}
+.player.dual.idle .pane-close { opacity: 0; }
+.player.dual-side .pane { border: 2px solid transparent; }
+.player.dual-side .pane.active, .player.dual-pip .pane:not(.active) { border: 2px solid var(--accent); }
+.player.dual-side .pane:not(.active) { border-color: rgba(255,255,255,0.08); }
+.player.dual-pip .pane.active, .player.dual-full .pane.active { position: absolute; inset: 0; }
+.player.dual-pip .pane:not(.active) {
+  position: absolute; right: 24px; bottom: 120px; width: 30%; aspect-ratio: 16 / 9; z-index: 3;
+  border-radius: 10px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,0.6); cursor: pointer;
+}
+.player.dual-pip .pane:not(.active) .pane-label, .player.dual-pip .pane:not(.active) .pane-close { top: 8px; }
+.player.dual-full .pane:not(.active) { position: absolute; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
+.pane.buzz { animation: buzz 0.9s ease-in-out 4; }
+.pane.buzz .pane-label { background: var(--warn); color: #000; }
+@keyframes buzz { 50% { box-shadow: inset 0 0 0 4px var(--warn), 0 0 24px rgba(242,184,75,0.6); } }
 /* Player bar: whole-recording timeline (the video's own timeline starts at 0 when resuming mid-show,
    and for live TV covers only what's been kept) plus playback controls */
 .player-timeline {
