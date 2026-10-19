@@ -307,6 +307,10 @@ export const SUITES = {
       await b.ev(`[...document.querySelectorAll('.menu-item')].find(x => /Find commercials/.test(x.textContent)).click()`); await sleep(500);
       t.check('Find commercials queues just that recording (intercepted)', await b.ev(`window.__writes.some(w => w[1] === '/api/episodes/${menuEp}/find_commercials')`));
     } else t.skip('Find commercials for one recording', 'every recording is already done or queued');
+    await b.ev(`window.__fake['/api/library/status'] = real => ({ ...real, commercials: { state: 'running', episode_id: 'x', title: 'Show S1E2', percent: 42, minutes_left: 5, waiting: 0 } }); pollStatus()`);
+    await sleep(600);
+    t.check('Sidebar shows the commercial finder’s progress', /Finding commercials · 42%/.test(await b.ev(`$('#adText').textContent`)) && await b.ev(`!$('#adLine').classList.contains('hidden')`));
+    await b.ev(`delete window.__fake['/api/library/status']; pollStatus()`);
     // The player with a 30-minute recording and one break at 5:00-7:00 (nothing is played)
     await b.ev(`window.__seek = null; player.__realPlay = player.playEpisode; player.playEpisode = (id, mode) => { window.__seek = mode; return Promise.resolve(); };
       Object.assign(state.stream, { episodeId: 'test', duration: 1800, offset: 0, breaks: [{ start: 300, end: 420 }], skippedBreaks: new Set(), autoSkip: false });

@@ -368,6 +368,7 @@ async function pollStatus() {
     const s = await api('/api/library/status');
     showAuthProblem(s.auth_problem);
     showGuideProgress(s.guide_progress);
+    showCommercialProgress(s.commercials);
     // While a guide load waits out the Tablo's break, its banner already says so
     const waiting = s.guide_progress && s.guide_progress.waiting_seconds !== null;
     $('#reachBanner').classList.toggle('hidden', !s.tablo_unreachable || !!s.auth_problem || !!waiting);
@@ -441,6 +442,31 @@ function showGuideProgress(p) {
     state.guideRefreshedAt = p.done;
     refreshGuidePages();
   }
+}
+
+// Commercial finding: a line in the sidebar, and live progress on the episode being analyzed
+function showCommercialProgress(c) {
+  const line = $('#adLine');
+  const was = state.adProgress;
+  state.adProgress = c;
+  line.classList.toggle('hidden', !c);
+  if (c) {
+    const left = c.minutes_left ? ` · about ${c.minutes_left} min left` : '';
+    const more = c.waiting ? ` (${c.waiting} more waiting)` : '';
+    $('#adText').innerHTML = c.state === 'running'
+      ? `<b>Finding commercials${c.percent != null ? ` · ${c.percent}%` : ''}</b><span>${esc(c.title || '')}${left}${more}</span>`
+      : c.state === 'paused'
+        ? `<b>Finding commercials paused</b><span>while something plays · ${plural(c.waiting, 'recording')} waiting</span>`
+        : `<b>Finding commercials</b><span>${plural(c.waiting, 'recording')} waiting</span>`;
+    $('#adSpin').classList.toggle('hidden', c.state !== 'running');
+  }
+  for (const el of $$('[data-ad-ep]')) {
+    const mine = c && c.state === 'running' && c.episode_id === el.dataset.adEp;
+    el.textContent = mine ? `Finding commercials${c.percent != null ? ` · ${c.percent}%` : ''}`
+      : c && c.state === 'paused' ? 'Paused while playing' : 'Waiting';
+  }
+  // One finished: show its result on the show page
+  if (was && was.state === 'running' && (!c || c.episode_id !== was.episode_id)) refreshCurrentPageQuietly();
 }
 
 function refreshGuidePages() {
@@ -1151,8 +1177,10 @@ function commercialTag(ep) {
       ? `<span class="ad-tag" title="${plural(ep.commercial_breaks, 'commercial break')} marked; skip them in the player">${icon('next', 11)}${ep.commercial_breaks}</span>`
       : '<span class="ad-tag dim" title="No commercial breaks found">0</span>';
   }
-  if (ep.commercials === 'queued') return '<span class="ad-tag dim" title="Waiting to have its commercial breaks found (when nothing is playing)">…</span>';
-  if (ep.commercials === 'analyzing') return '<span class="ad-tag" title="Finding the commercial breaks…"><span class="spinner" style="width:10px;height:10px"></span></span>';
+  if (ep.commercials === 'queued' || ep.commercials === 'analyzing') {
+    const running = ep.commercials === 'analyzing' || (state.adProgress && state.adProgress.episode_id === ep.id);
+    return `<span class="ad-tag ad-progress ${running ? '' : 'dim'}" data-ad-ep="${esc(ep.id)}" title="Commercial breaks are found in the background while nothing is playing">${running ? 'Finding commercials' : 'Waiting'}</span>`;
+  }
   if (ep.commercials === 'unreliable') return '<span class="ad-tag dim" title="The show and its ads look too much alike to mark the breaks safely">–</span>';
   return '';
 }

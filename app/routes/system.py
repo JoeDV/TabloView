@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from ..config import APP_NAME, APP_VERSION, IS_PACKAGED, IS_STORE, FFMPEG_PATH, HOME_DIR, DOWNLOADS_DIR
 from ..settings import load_settings, save_settings
 from ..updates import check_for_update
-from .. import encoders, lanauth, notifications, startup, whatsnew
+from .. import commercials, encoders, lanauth, notifications, startup, whatsnew
 from ..tablo_client import tablo_manager
 from ..sync_service import sync_service
 from ..database import get_sync_meta, get_export_jobs, delete_export_job, get_storage_by_show
@@ -259,6 +259,7 @@ async def get_library_status():
         "auth_problem": tablo_manager.auth_problem,
         "tablo_unreachable": tablo_manager.tablo_unreachable,
         "guide_progress": guide_progress(),
+        "commercials": commercials.summary(),
         "total_shows": int(total_shows),
         "total_episodes": int(total_episodes)
     }

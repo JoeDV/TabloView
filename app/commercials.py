@@ -18,6 +18,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from .config import FFMPEG_PATH, TRANSCODE_DIR
@@ -139,12 +140,14 @@ def find_breaks(hists: List[List[float]], blacks: List[float]) -> Optional[List[
 # Read the recording at 4x real time: a 30-minute show takes about 8 minutes, without hurrying the
 # Tablo (it serves this like someone watching)
 READ_RATE = 4
-WORKER_INTERVAL = 60
+WORKER_INTERVAL = 30
 # Below normal priority: Windows process class, nice 10 elsewhere
 LOW_PRIORITY = (0x00004000 | subprocess.CREATE_NO_WINDOW) if sys.platform == "win32" else 0
 LOW_PRIORITY_POSIX = None if sys.platform == "win32" else (lambda: os.nice(10))
 
-status: Dict[str, Optional[str]] = {"current": None}
+# The recording being analyzed: {"current": episode id, "title", "done": seconds read, "total", "started"}
+status: Dict[str, object] = {"current": None}
+_summary_cache: Dict[str, object] = {"at": 0.0, "value": None}
 
 
 def enabled_shows() -> List[str]:
@@ -177,15 +180,47 @@ def pending(shows: Optional[List[str]] = None) -> List[Dict[str, str]]:
     qmarks = ",".join("?" * len(queued)) or "''"
     with get_connection() as conn:
         rows = conn.execute(f"""
-            SELECT e.id, e.path, e.show_id, e.show_title, e.raw_json FROM episodes e
+            SELECT e.id, e.path, e.show_id, e.show_title, e.season_number, e.episode_number, e.duration, e.raw_json
+            FROM episodes e
             LEFT JOIN commercials c ON c.episode_id = e.id
             WHERE c.episode_id IS NULL
               AND (e.id IN ({qmarks}) OR (e.show_id IN ({marks}) AND e.status != 'Watched'))
             ORDER BY e.air_date DESC
         """, [*queued, *shows]).fetchall()
-    found = [{"id": r["id"], "path": r["path"], "show_id": r["show_id"], "show_title": r["show_title"]}
-             for r in rows if recording_details(r["raw_json"])["recording_state"] == "finished"]
+    found = []
+    for r in rows:
+        details = recording_details(r["raw_json"])
+        if details["recording_state"] == "finished":
+            se = f" S{r['season_number']}E{r['episode_number']}" if r["season_number"] and r["episode_number"] else ""
+            found.append({"id": r["id"], "path": r["path"], "show_id": r["show_id"], "show_title": r["show_title"],
+                          "title": f"{r['show_title']}{se}", "duration": details["actual_duration"] or r["duration"] or 0})
     return sorted(found, key=lambda ep: ep["id"] not in queued)  # stable: keeps newest first within each
+
+
+def summary() -> Optional[Dict[str, object]]:
+    """For the status line: what the commercial finder is doing, or None when it has nothing to do.
+    state: running (with percent and minutes_left), paused (something is playing) or waiting."""
+    if status.get("current"):
+        total = float(status.get("total") or 0)
+        done = float(status.get("done") or 0)
+        elapsed = time.time() - float(status.get("started") or time.time())
+        left = (total - done) / (done / elapsed) / 60 if done > 30 and elapsed > 0 and total > done else None
+        return {"state": "running", "episode_id": status["current"], "title": status.get("title"),
+                "percent": min(99, round(done / total * 100)) if total else None,
+                "minutes_left": max(1, round(left)) if left else None,
+                "waiting": max(0, len(_cached_pending()) - 1)}
+    queue = _cached_pending()
+    if not queue:
+        return None
+    return {"state": "paused" if _busy() else "waiting", "waiting": len(queue)}
+
+
+def _cached_pending() -> List[Dict[str, str]]:
+    """pending(), at most every 15 s (the status line asks every few seconds)."""
+    if time.time() - float(_summary_cache["at"]) > 15:
+        _summary_cache["value"] = pending() if (enabled_shows() or queued_episodes()) else []
+        _summary_cache["at"] = time.time()
+    return _summary_cache["value"] or []
 
 
 def _busy() -> bool:
@@ -194,7 +229,7 @@ def _busy() -> bool:
     return bool(transcode_manager.sessions) or any(not t.done() for t in transcode_manager.export_tasks.values())
 
 
-def _analyze(url: str, log_path, stop: threading.Event) -> Optional[List[List[float]]]:
+def _analyze(url: str, log_path, stop: threading.Event, progress: Optional[Dict[str, object]] = None) -> Optional[List[List[float]]]:
     """One FFmpeg pass: black frames to the log, a tiny frame per second to us. None if stopped."""
     cmd = [FFMPEG_PATH, "-hide_banner", "-nostats", "-readrate", str(READ_RATE), "-i", url,
            "-filter_complex",
@@ -215,6 +250,8 @@ def _analyze(url: str, log_path, stop: threading.Event) -> Optional[List[List[fl
                 if len(frame) < size:
                     break
                 hists.append(histogram(frame))
+                if progress is not None:
+                    progress["done"] = len(hists)
             proc.wait()
         finally:
             stop.set()
@@ -232,7 +269,7 @@ async def analyze(ep: Dict[str, str]) -> Optional[str]:
         raise RuntimeError("the Tablo didn't return a stream")
     log_path = TRANSCODE_DIR / f"ads_{ep['id']}.log"
     stop = threading.Event()
-    job = asyncio.get_running_loop().run_in_executor(None, _analyze, url, log_path, stop)
+    job = asyncio.get_running_loop().run_in_executor(None, _analyze, url, log_path, stop, status)
     while not job.done():
         await asyncio.sleep(2)
         if _busy():
@@ -265,7 +302,7 @@ async def worker_loop() -> None:
             if not queue:
                 continue
             ep = queue[0]
-            status["current"] = ep["id"]
+            status.update(current=ep["id"], title=ep["title"], done=0, total=ep["duration"], started=time.time())
             try:
                 await analyze(ep)
             except Exception as e:
@@ -273,6 +310,7 @@ async def worker_loop() -> None:
                 save_commercials(ep["id"], "failed", error=str(e)[:300])
             finally:
                 status["current"] = None
+                _summary_cache["at"] = 0.0
         except asyncio.CancelledError:
             raise
         except Exception as e:
