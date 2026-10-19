@@ -258,6 +258,20 @@ export const SUITES = {
     await b.ev(`state.stream.episodeId = null`);
   },
 
+  async exports(b, t) {
+    const shows = await api('/api/shows');
+    const show = shows.shows.find(s => s.episode_count >= 2);
+    if (!show) return t.skip('Export several', 'needs a show with at least 2 recordings');
+    await b.open(`#/show/${encodeURIComponent(show.id)}`);
+    await b.waitFor(`document.querySelector('.ep-row')`);
+    await b.ev(`(() => { const c = document.querySelectorAll('[data-change="ep-select"]'); [c[0], c[1]].forEach(x => { x.checked = true; x.dispatchEvent(new Event('change', { bubbles: true })); }); })()`);
+    await sleep(300);
+    await b.ev(`document.querySelector('[data-action="bulk-export"]').click()`); await sleep(600);
+    t.check('Export MP4 on 2 selected episodes queues both (intercepted)', await b.ev(`window.__writes.some(w => w[1] === '/api/episodes/export_batch' && JSON.parse(w[2]).episode_ids.length === 2)`));
+    await b.go('#/device', `document.querySelector('[data-change="export-format"]')`);
+    t.check('Device page has the export format setting', (await b.ev(`document.querySelector('[data-change="export-format"]').options.length`)) === 2);
+  },
+
   async whatsnew(b, t) {
     await b.open('#/');
     await b.ev(`window.__fake['/api/system/whatsnew'] = { show: true, version: '9.9.9', notes: ['First thing', 'Second thing'] }; void showWhatsNew()`);

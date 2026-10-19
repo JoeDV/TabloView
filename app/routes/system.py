@@ -25,6 +25,7 @@ class SettingsUpdate(BaseModel):
     notifications: Optional[bool] = None
     video_quality: Optional[Literal["auto", "best", "fastest"]] = None
     smooth_motion: Optional[bool] = None
+    export_format: Optional[Literal["smaller", "original"]] = None
 
 
 class StartupUpdate(BaseModel):

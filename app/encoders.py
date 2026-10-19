@@ -35,6 +35,17 @@ CPU = ("CPU (x264)", ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22"],
        ["-c:v", "libx264", "-preset", "faster", "-crf", "20"], "yuv420p")
 FASTEST = ("CPU (x264, fastest)", ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "26"], None, "yuv420p")
 
+# MP4 exports aim for a smaller file rather than encoding speed. Measured on a 60 s 1080i recording
+# (original broadcast video 3.2 GB/hour): Quick Sync medium/26 gives 2.2 GB/hour at SSIM 0.954
+# (playback's veryfast/22 is 3.7 GB/hour, larger than the original); x264 faster/CRF 25 gives
+# 2.3 GB/hour at 0.956 but only at about real time. NVENC/AMF values are by analogy, untested.
+EXPORT_ARGS = {
+    "qsv": ["-c:v", "h264_qsv", "-preset", "medium", "-global_quality", "26"],
+    "nvenc": ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "26", "-b:v", "0"],
+    "amf": ["-c:v", "h264_amf", "-quality", "quality", "-rc", "cqp", "-qp_i", "25", "-qp_p", "27"],
+    "cpu": ["-c:v", "libx264", "-preset", "faster", "-crf", "25"],
+}
+
 _working: Optional[List[str]] = None
 _failed: set = set()
 _lock = threading.Lock()
@@ -85,6 +96,11 @@ def cpu_fallback(quality: str = "auto") -> Dict[str, Any]:
     label, normal, high, pix = CPU
     return {"name": "cpu", "label": label, "hardware": False,
             "args": high if quality == "best" else normal, "pix_fmt": pix}
+
+
+def for_export(enc: Dict[str, Any]) -> Dict[str, Any]:
+    """The same encoder with the smaller-file export settings."""
+    return {**enc, "args": EXPORT_ARGS.get(enc["name"], EXPORT_ARGS["cpu"])}
 
 
 def detect_in_background() -> None:

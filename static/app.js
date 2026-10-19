@@ -1193,6 +1193,19 @@ function afterEpisodeChange() {
   view().scrollTop = scroll;
 }
 
+async function bulkExport() {
+  const ids = Array.from(state.selected);
+  if (!ids.length) return;
+  try {
+    const res = await api('/api/episodes/export_batch', { method: 'POST', body: JSON.stringify({ episode_ids: ids }) });
+    setActiveExports(state.activeExports + (res.count || ids.length));
+    toast(`${plural(res.count || ids.length, 'export')} queued. They run one at a time; track them under Downloads.`, 'success');
+    ACTIONS['bulk-clear']();
+  } catch (err) {
+    toast(`Export failed: ${err.message}`, 'error');
+  }
+}
+
 async function exportEpisode(id) {
   try {
     await api(`/api/episodes/${encodeURIComponent(id)}/export`, { method: 'POST' });
@@ -2001,7 +2014,7 @@ function renderDownloads(jobs) {
     return `<div class="list-row dl-row">
       <div style="min-width:0"><div class="row-title">${esc(j.filename)}</div><div class="row-sub">${esc(fmt.bytes(j.file_size))}${j.created_at ? ` · started ${esc(fmt.ago(j.created_at))}` : ''}${j.error ? ` · ${esc(j.error.slice(-140))}` : ''}</div></div>
       <div>${j.status === 'downloading' ? `<div class="progress"><div style="width:${pct}%"></div></div><div class="row-sub" style="margin-top:4px">${pct}%</div>` : ''}</div>
-      <span class="status-text ${esc(j.status)}">${esc(j.status === 'downloading' ? 'Exporting' : j.status)}</span>
+      <span class="status-text ${esc(j.status)}">${esc({ downloading: 'Exporting', pending: 'Waiting' }[j.status] || j.status)}</span>
       <div>${j.status === 'completed' ? `<a class="btn btn-sm" href="/downloads/${encodeURIComponent(j.filename)}" download>${icon('download', 15)}Save</a>` : ''}</div>
     </div>`;
   }).join('')}</div>`;
@@ -2129,6 +2142,14 @@ PAGES.device = async (r, token) => {
           <span>Smooth motion (60 fps)</span>
         </label>
         <p class="dim" style="margin-top:6px;font-size:12.5px">Shows antenna TV at its full 60 motion steps a second, like on the TV. Best for sports. It works the graphics chip much harder; if playback hiccups, turn it off.</p>
+        <label class="switch-row" style="font-weight:400;cursor:default;margin-top:14px">
+          <span>MP4 exports</span>
+          <select class="select" data-change="export-format" style="height:32px">
+            ${[['smaller', 'Smaller (about a third smaller)'], ['original', 'Original (exact copy, larger)']]
+              .map(([v, label]) => `<option value="${v}" ${(settings.export_format || 'smaller') === v ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </label>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">Smaller exports are converted to H.264 (with your graphics chip when it can): about 2.2 GB per hour of HD instead of 3.2 GB, and they play on almost anything. Original keeps the broadcast video exactly as recorded.</p>
         <label class="switch-row" style="font-weight:400;cursor:default;margin-top:14px">
           <span>Buffer before playing</span>
           <select class="select" data-change="buffer" style="height:32px">
@@ -3085,6 +3106,7 @@ const ACTIONS = {
   },
   'delete-watched': () => deleteWatched(),
   'bulk-delete': () => bulkDelete(),
+  'bulk-export': () => bulkExport(),
   'bulk-clear': () => { state.selected.clear(); $$('.ep-row').forEach(r => r.classList.remove('selected')); $$('[data-change="ep-select"], [data-change="ep-select-all"]').forEach(c => { c.checked = false; }); updateBulkBar(); },
 
   'rec-menu': el => recMenu(el, el.dataset.path),
@@ -3284,6 +3306,12 @@ const CHANGES = {
       await api('/api/settings', { method: 'POST', body: JSON.stringify({ video_quality: el.value }) });
       toast('Video quality saved. It applies to the next thing you play.');
       route();
+    } catch (err) { toast(err.message, 'error'); }
+  },
+  'export-format': async el => {
+    try {
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ export_format: el.value }) });
+      toast(el.value === 'smaller' ? 'Exports will be converted to smaller files' : 'Exports will keep the original video');
     } catch (err) { toast(err.message, 'error'); }
   },
   'smooth-motion': async el => {

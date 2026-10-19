@@ -185,18 +185,37 @@ async def export_episode_mp4(episode_id: str):
     if not ep:
         raise HTTPException(status_code=404, detail="Episode not found")
 
-    airing_path = ep["path"]
-    watch_data = await tablo_manager.get_airing_watch_url(airing_path)
-    playlist_url = watch_data.get("playlist_url")
-    if not playlist_url:
-        raise HTTPException(status_code=502, detail="No playlist_url from Tablo")
-
-    job_id = await transcode_manager.start_mp4_export(ep, playlist_url)
+    job_id = await transcode_manager.start_mp4_export(ep, _playlist_getter(ep))
     return {
         "status": "started",
         "job_id": job_id,
         "message": "Export task started in background."
     }
+
+
+def _playlist_getter(ep):
+    """Starts the Tablo watch session when the export's turn in the queue comes."""
+    async def get():
+        url = (await tablo_manager.get_airing_watch_url(ep["path"])).get("playlist_url")
+        if not url:
+            raise RuntimeError("the Tablo didn't return a stream")
+        return url
+    return get
+
+
+class ExportBatchRequest(BaseModel):
+    episode_ids: List[str]
+
+
+@router.post("/export_batch")
+async def export_batch(req: ExportBatchRequest):
+    """Queue MP4 exports of several recordings (they run one after another)."""
+    jobs = []
+    for episode_id in req.episode_ids:
+        ep = get_episode_by_id(episode_id)
+        if ep:
+            jobs.append(await transcode_manager.start_mp4_export(ep, _playlist_getter(ep)))
+    return {"status": "started", "job_ids": jobs, "count": len(jobs)}
 
 
 @router.delete("/{episode_id}")

@@ -105,6 +105,8 @@ class TranscodeManager:
     def __init__(self):
         self.sessions: Dict[str, StreamSession] = {}
         self.export_tasks: Dict[str, asyncio.Task] = {}
+        # Exports run one at a time (created on first use, inside the event loop)
+        self._export_slot: Optional[asyncio.Semaphore] = None
         self._http = httpx.AsyncClient(timeout=30)
         self.cleanup_stale_transcodes()
 
@@ -407,8 +409,10 @@ class TranscodeManager:
         cleaned = re.sub(r'[\\/*?:"<>|]', "", name).strip()
         return cleaned or "Tablo_Recording"
 
-    async def start_mp4_export(self, episode: Dict[str, Any], playlist_url: str) -> str:
-        """Background task: Pulls HLS stream via FFmpeg and saves as MP4 in ./downloads."""
+    async def start_mp4_export(self, episode: Dict[str, Any], get_playlist_url) -> str:
+        """Queue an MP4 export to the downloads folder. Exports run one at a time (each pulls a stream
+        from the Tablo); get_playlist_url() is awaited when this one's turn comes, so the Tablo's
+        watch session is fresh."""
         job_id = uuid.uuid4().hex[:10]
 
         # Generate standard filename: ShowName - SxxExx - Title.mp4
@@ -440,7 +444,7 @@ class TranscodeManager:
             "title": f"{show_title} (S{season:02d}E{ep_num:02d})",
             "filename": dest_path.name,
             "filepath": str(dest_path),
-            "status": "downloading",
+            "status": "pending",
             "progress": 0.0,
             "file_size": 0,
             "error": None,
@@ -448,29 +452,69 @@ class TranscodeManager:
         }
         save_export_job(job_info)
 
-        # Launch async worker
-        task = asyncio.create_task(self._run_ffmpeg_export(job_id, playlist_url, dest_path, episode.get("duration", 0)))
+        task = asyncio.create_task(self._queued_export(job_id, get_playlist_url, dest_path, episode.get("duration", 0)))
         self.export_tasks[job_id] = task
 
         return job_id
 
-    async def _run_ffmpeg_export(self, job_id: str, playlist_url: str, output_path: Path, expected_duration: int):
-        cmd = [
+    async def _queued_export(self, job_id: str, get_playlist_url, output_path: Path, expected_duration: int):
+        if self._export_slot is None:
+            self._export_slot = asyncio.Semaphore(1)
+        async with self._export_slot:
+            try:
+                playlist_url = await get_playlist_url()
+            except Exception as e:
+                save_export_job({"job_id": job_id, "status": "failed", "error": f"Couldn't start it on the Tablo: {e}",
+                                 "completed_at": datetime.now(timezone.utc).isoformat()})
+                return
+            fmt = load_settings().get("export_format") or "smaller"
+            enc = encoders.for_export(encoders.choose("auto")) if fmt == "smaller" else None
+            ok = await self._run_ffmpeg_export(job_id, playlist_url, output_path, expected_duration, enc,
+                                               last_try=not (enc and enc["hardware"]))
+            if not ok and enc and enc["hardware"]:
+                # The graphics chip gave up on this one: do it on the CPU instead (slower)
+                encoders.mark_failed(enc["name"])
+                await self._run_ffmpeg_export(job_id, playlist_url, output_path, expected_duration,
+                                              encoders.for_export(encoders.cpu_fallback()), last_try=True)
+
+    @staticmethod
+    def export_cmd(playlist_url: str, output_path: Path, enc: Optional[Dict[str, Any]]) -> List[str]:
+        """enc None: copy the broadcast video as is (largest, exact). Otherwise convert to H.264
+        (deinterlaced, like playback), which is usually much smaller."""
+        video = (["-c:v", "copy"] if enc is None else
+                 ["-vf", "bwdif=mode=send_frame:deint=interlaced", *enc["args"], "-pix_fmt", enc["pix_fmt"]])
+        return [
             FFMPEG_PATH,
             "-y",
             "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+            "-fflags", "+discardcorrupt",
             # Cap reads at 2x real time: unthrottled exports pull ~6.5x and starve
             # live TV / playback streams sharing the Tablo
             "-readrate", "2",
             "-i", playlist_url,
-            # Copy video stream directly for zero loss & max speed, convert audio to aac for standard MP4 playback
-            "-c:v", "copy",
-            "-c:a", "aac", "-b:a", "192k",
+            *video,
+            "-af", "aresample=async=1:ochl=stereo:clev=1.0:slev=0.6",
+            "-c:a", "aac", "-b:a", "192k", "-ac", "2",
             "-movflags", "+faststart",
             str(output_path)
         ]
 
-        print(f"[ExportWorker] Starting export {job_id} -> {output_path.name}")
+    @staticmethod
+    def export_progress(log_tail: str, expected_duration: int) -> Optional[float]:
+        """Percent done from the last "time=HH:MM:SS.xx" FFmpeg wrote, or None if unknown."""
+        found = re.findall(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)", log_tail)
+        if not found or not expected_duration:
+            return None
+        h, m, sec = found[-1]
+        done = int(h) * 3600 + int(m) * 60 + float(sec)
+        return round(min(99.0, done / expected_duration * 100), 1)
+
+    async def _run_ffmpeg_export(self, job_id: str, playlist_url: str, output_path: Path, expected_duration: int,
+                                 enc: Optional[Dict[str, Any]] = None, last_try: bool = True) -> bool:
+        cmd = self.export_cmd(playlist_url, output_path, enc)
+        print(f"[ExportWorker] Starting export {job_id} -> {output_path.name} "
+              f"({enc['label'] if enc else 'original video'})")
+        save_export_job({"job_id": job_id, "status": "downloading", "progress": 0.0, "error": None})
         # Send FFmpeg's chatty stderr to a log file instead of an unread pipe,
         # which would fill up and stall long exports
         log_path = TRANSCODE_DIR / f"export_{job_id}.log"
@@ -483,9 +527,17 @@ class TranscodeManager:
             while proc.poll() is None:
                 await asyncio.sleep(2)
                 size = output_path.stat().st_size if output_path.exists() else 0
-                # Estimate progress if expected duration is known (approx 2GB per hour)
-                est_bytes = max(expected_duration * 500_000, 10_000_000) if expected_duration else 500_000_000
-                progress = min(round((size / est_bytes) * 90, 1), 95.0)
+                try:
+                    with open(log_path, "rb") as f:
+                        f.seek(max(0, log_path.stat().st_size - 4096))
+                        tail = f.read().decode("utf-8", errors="replace")
+                except OSError:
+                    tail = ""
+                progress = self.export_progress(tail, expected_duration)
+                if progress is None:
+                    # Unknown length: a rough guess from the size (about 2 GB per hour)
+                    est_bytes = max(expected_duration * 500_000, 10_000_000) if expected_duration else 500_000_000
+                    progress = min(round((size / est_bytes) * 90, 1), 95.0)
 
                 save_export_job({
                     "job_id": job_id,
@@ -508,15 +560,18 @@ class TranscodeManager:
                     "file_size": size,
                     "completed_at": datetime.now(timezone.utc).isoformat()
                 })
-            else:
-                err_msg = stderr[-400:] if stderr else f"FFmpeg exited with code {proc.returncode}"
-                print(f"[ExportWorker] Export {job_id} failed: {err_msg}")
-                save_export_job({
-                    "job_id": job_id,
-                    "status": "failed",
-                    "error": err_msg,
-                    "completed_at": datetime.now(timezone.utc).isoformat()
-                })
+                return True
+            err_msg = stderr[-400:] if stderr else f"FFmpeg exited with code {proc.returncode}"
+            print(f"[ExportWorker] Export {job_id} failed: {err_msg}")
+            if not last_try:
+                output_path.unlink(missing_ok=True)
+                return False
+            save_export_job({
+                "job_id": job_id,
+                "status": "failed",
+                "error": err_msg,
+                "completed_at": datetime.now(timezone.utc).isoformat()
+            })
         except Exception as e:
             print(f"[ExportWorker] Export exception: {e}")
             save_export_job({
