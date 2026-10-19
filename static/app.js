@@ -2449,6 +2449,7 @@ const player = {
     try {
       const res = await api(`/api/episodes/${encodeURIComponent(id)}/watch?transcode=true&start=${start}`, { method: 'POST' });
       state.stream.sessionId = res.session_id;
+      if (!sameEpisode || !(state.stream.previewTimes || []).length) this.loadPreviews(id);
       this.start(res.stream_url, start && (resuming || typeof mode === 'number') ? `Resumed at ${fmtClock(start)}` : 'Recording');
       state.stream.progressTimer = setInterval(() => this.saveProgress(), 30000);
     } catch (err) {
@@ -2635,6 +2636,33 @@ const player = {
     if (v.seekable && v.seekable.length) end = v.seekable.end(v.seekable.length - 1);
     if (v.buffered && v.buffered.length) end = Math.max(end, v.buffered.end(v.buffered.length - 1));
     return (state.stream.offset || 0) + (isFinite(end) ? end : 0);
+  },
+
+  // Timeline previews from the Tablo's own trick-play file (fetched in the background as playback starts)
+  async loadPreviews(id) {
+    if (state.stream.previewsFor !== id) state.stream.previewTimes = [];
+    state.stream.previewsFor = id;
+    for (let i = 0; i < 6; i++) {
+      await new Promise(r => setTimeout(r, i ? 1500 : 500));
+      if (state.stream.episodeId !== id) return;
+      try {
+        const res = await api(`/api/episodes/${encodeURIComponent(id)}/previews`);
+        if (res.times && res.times.length) { state.stream.previewTimes = res.times; return; }
+      } catch { /* try again */ }
+    }
+  },
+
+  // The preview image for a time in the recording: the Tablo's (whole recording) or, without those,
+  // the frames FFmpeg saves as it converts (only what's converted so far)
+  previewUrl(t) {
+    const s = state.stream;
+    const times = s.previewTimes || [];
+    if (times.length && s.previewsFor === s.episodeId) {
+      let n = 0;
+      while (n + 1 < times.length && times[n + 1] <= t) n++;
+      return `/api/episodes/${encodeURIComponent(s.episodeId)}/previews/${n}`;
+    }
+    return s.sessionId ? `/api/transcoded/${s.sessionId}/p${String(Math.floor(t / 5)).padStart(5, '0')}.jpg` : '';
   },
 
   // --- Commercial breaks (found in the background for shows with "Skip commercials" on) ---
@@ -3710,8 +3738,7 @@ function wireEvents() {
     const w = state.stream.channelId && player.liveWindow();
     const label = w ? `−${fmtClock((1 - fractionAt(e)) * (w.end - w.start))}` : fmtClock(timeAt(e));
     // Recordings: a preview frame, once that part has been converted (frames every 5 s, named by position)
-    const sid = !w && state.stream.sessionId;
-    const frame = sid ? `/api/transcoded/${sid}/p${String(Math.floor(timeAt(e) / 5)).padStart(5, '0')}.jpg` : '';
+    const frame = w ? '' : player.previewUrl(timeAt(e));
     let img = hover.querySelector('img');
     if (frame) {
       if (!img) {

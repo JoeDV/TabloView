@@ -1,5 +1,6 @@
 """Episode actions: playback, transcoding, VLC m3u, MP4 export, and deletion."""
 
+import asyncio
 import json
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -18,6 +19,7 @@ from ..database import (
 )
 from ..tablo_client import tablo_manager
 from ..transcode import transcode_manager
+from .. import previews
 
 router = APIRouter(prefix="/api/episodes", tags=["episodes"])
 
@@ -72,6 +74,20 @@ async def set_watched(episode_id: str, req: WatchedRequest):
         set_episode_progress(ep["id"], position=0)
     set_episode_progress(ep["id"], watched=req.watched)
     return {"success": True, "watched": req.watched, "show": get_show_by_id(ep["show_id"])}
+
+
+@router.get("/{episode_id}/previews")
+async def preview_times(episode_id: str):
+    """Times (seconds) of the timeline preview frames, once fetched (empty until then)."""
+    return {"times": previews.times(episode_id) or []}
+
+
+@router.get("/{episode_id}/previews/{n}")
+async def preview_frame(episode_id: str, n: int):
+    data = previews.frame(episode_id, n)
+    if data is None:
+        raise HTTPException(status_code=404, detail="No such preview frame")
+    return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
 
 
 @router.get("/{episode_id}/commercials")
@@ -144,6 +160,9 @@ async def watch_episode(
         raise HTTPException(status_code=502, detail="No playlist_url received from Tablo")
 
     sess = transcode_manager.create_session(playlist_url)
+    # The whole recording's timeline previews, from the Tablo (one small file, cached per episode)
+    if watch_data.get("bif_url_hd"):
+        asyncio.create_task(previews.fetch(ep["id"], watch_data["bif_url_hd"], ep.get("recording_state") == "finished"))
 
     if transcode:
         try:
