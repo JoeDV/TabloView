@@ -125,6 +125,18 @@ def init_db():
             )
         """)
 
+        # Commercial breaks found in recordings (app/commercials.py), by episode id.
+        # status: done (breaks_json set), unreliable (show and ads couldn't be told apart), failed
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS commercials (
+                episode_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                breaks_json TEXT,
+                error TEXT,
+                analyzed_at TEXT
+            )
+        """)
+
         # Columns added after the first release (CREATE TABLE IF NOT EXISTS won't add them)
         ga_cols = {r[1] for r in cursor.execute("PRAGMA table_info(guide_airings)").fetchall()}
         if "schedule_state" not in ga_cols:
@@ -386,6 +398,30 @@ def show_keep(show: Optional[Dict[str, Any]]) -> Optional[int]:
 
 def set_show_keep(show_id: str, keep: Dict[str, Any]) -> None:
     _patch_raw("shows", show_id, lambda raw: raw.update(keep=keep))
+
+
+def save_commercials(episode_id: str, status: str, breaks: Optional[List[Dict[str, float]]] = None,
+                     error: Optional[str] = None) -> None:
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT INTO commercials (episode_id, status, breaks_json, error, analyzed_at) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(episode_id) DO UPDATE SET status = excluded.status, breaks_json = excluded.breaks_json,
+                error = excluded.error, analyzed_at = excluded.analyzed_at
+        """, (episode_id, status, json.dumps(breaks) if breaks is not None else None, error,
+              datetime.now(timezone.utc).isoformat()))
+        conn.commit()
+
+
+def get_commercials(episode_ids: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
+    """episode_id -> {'status', 'breaks', 'error'}."""
+    with get_connection() as conn:
+        if episode_ids is None:
+            rows = conn.execute("SELECT * FROM commercials").fetchall()
+        else:
+            marks = ",".join("?" * len(episode_ids)) or "''"
+            rows = conn.execute(f"SELECT * FROM commercials WHERE episode_id IN ({marks})", episode_ids).fetchall()
+    return {r["episode_id"]: {"status": r["status"], "breaks": json.loads(r["breaks_json"]) if r["breaks_json"] else [],
+                              "error": r["error"]} for r in rows}
 
 
 def get_watched_episodes() -> List[Dict[str, Any]]:

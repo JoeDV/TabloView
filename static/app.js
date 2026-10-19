@@ -953,6 +953,10 @@ function showRules(s, eps) {
     </label>` : '';
   return `
     <div class="hero-rules">
+      <label class="rule-field" title="TabloView finds the commercial breaks in this show’s recordings in the background (on this PC), so you can skip them">
+        <input type="checkbox" class="switch" data-change="show-commercials" ${s.find_commercials ? 'checked' : ''}>
+        <span>Skip commercials</span>
+      </label>
       ${keep}
       <label class="rule-field" title="TabloView deletes watched recordings of this show this long after you watch them, while it’s running (also in the tray). Protected recordings are kept.">
         <span>Delete watched</span>
@@ -1053,10 +1057,22 @@ async function setProtected(id, value) {
 }
 
 function episodeStatus(ep) {
-  const tag = episodeStatusTag(ep);
+  const tag = episodeStatusTag(ep) + commercialTag(ep);
   return ep.incomplete
     ? `${tag}<button class="link-btn" data-action="rerecord" data-id="${esc(ep.id)}" title="Find another airing of this episode to record">Record again</button>`
     : tag;
+}
+
+// What the background commercial finder has done with this recording (shows with Skip commercials on)
+function commercialTag(ep) {
+  if (ep.commercials === 'done') {
+    return ep.commercial_breaks
+      ? `<span class="ad-tag" title="${plural(ep.commercial_breaks, 'commercial break')} marked; skip them in the player">${icon('next', 11)}${ep.commercial_breaks}</span>`
+      : '<span class="ad-tag dim" title="No commercial breaks found">0</span>';
+  }
+  if (ep.commercials === 'analyzing') return '<span class="ad-tag" title="Finding the commercial breaks…"><span class="spinner" style="width:10px;height:10px"></span></span>';
+  if (ep.commercials === 'unreliable') return '<span class="ad-tag dim" title="The show and its ads look too much alike to mark the breaks safely">–</span>';
+  return '';
 }
 
 function episodeStatusTag(ep) {
@@ -2192,6 +2208,11 @@ PAGES.device = async (r, token) => {
           </select>
         </label>
         <label class="switch-row" style="margin-top:16px">
+          <input type="checkbox" class="switch" data-change="skip-commercials" ${settings.skip_commercials ? 'checked' : ''}>
+          <span>Skip commercial breaks automatically</span>
+        </label>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">For shows with “Skip commercials” turned on (on the show’s page). Off: a Skip break button appears instead (or press S).</p>
+        <label class="switch-row" style="margin-top:16px">
           <input type="checkbox" class="switch" data-change="autoplay" ${state.autoplay ? 'checked' : ''}>
           <span>Play the next episode automatically</span>
         </label>
@@ -2328,12 +2349,15 @@ const player = {
     const se = ep ? fmt.se(ep.season_number, ep.episode_number) : '';
     const title = ep ? [showTitle, se, episodeTitle(ep)].filter(Boolean).join(' · ') : 'Recording';
 
+    const sameEpisode = state.stream.episodeId === id;
     this.finishEpisode();
     this.stopStream();
     this.hideUpNext();
     this.clearMessage();
     Object.assign(state.stream, {
       recoveries: 0, stallSince: 0, stallShown: false,
+      // Commercial breaks skipped so far stay skipped when the same recording restarts (seek, stall)
+      breaks: sameEpisode ? state.stream.breaks : [], skippedBreaks: sameEpisode ? state.stream.skippedBreaks : new Set(),
       episodeId: id, channelId: null, offset: start,
       duration: ep ? ep.actual_duration || ep.duration || 0 : 0,
       lastSaved: start, markedWatched: false,
@@ -2342,6 +2366,7 @@ const player = {
       nextEp: null, upNextOffered: false,
     });
     if (ep) this.findNext(ep).then(next => { if (state.stream.episodeId === id) state.stream.nextEp = next; });
+    if (!sameEpisode) this.loadBreaks(id);
     this.showTimeline(true);
     this.open(title);
     this.setStatus(`<span class="wait">${resuming ? `Resuming at ${fmtClock(start)}…` : 'Starting stream…'}</span>`);
@@ -2362,6 +2387,7 @@ const player = {
     $('#pbLive').classList.toggle('hidden', !live);
     $('#pbSpeed').disabled = live;  // live TV can't run faster than it's broadcast
     $('#pbChannels').classList.toggle('hidden', !live);
+    if (live || !on) { $('#tlBreaks').innerHTML = ''; $('#skipBreak').classList.add('hidden'); }
     if (!live) this.toggleChannels(false);
     clearInterval(state.stream.timelineTimer);
     state.stream.timelineTimer = on ? setInterval(() => this.updateTimeline(), 500) : null;
@@ -2470,7 +2496,7 @@ const player = {
     const keys = [['Space or K', 'Play / pause'], ['← or J', 'Back 10 seconds'], ['→ or L', 'Ahead 30 seconds'],
       ['↑ ↓', 'Volume'], ['M', 'Mute'], ['F', 'Full screen'], ['P', 'Picture in picture'],
       ['&lt; &gt;', 'Slower / faster (recordings)'], ['Home', 'Back to live (live TV)'],
-      ['Page Up / Down', 'Previous / next channel (live TV)'], ['C', 'Channel list (live TV)'], ['Esc', 'Close the player']];
+      ['Page Up / Down', 'Previous / next channel (live TV)'], ['S', 'Skip a commercial break'], ['C', 'Channel list (live TV)'], ['Esc', 'Close the player']];
     openModal(`<div class="dialog-body"><div class="dialog-title">Keyboard shortcuts</div>
       <div class="kbd-list">${keys.map(([k, d]) => `<kbd>${k}</kbd><span>${d}</span>`).join('')}</div></div>
       <div class="dialog-foot"><button class="btn btn-primary" data-action="modal-ok" data-autofocus>Got it</button></div>`);
@@ -2535,6 +2561,48 @@ const player = {
     return (state.stream.offset || 0) + (isFinite(end) ? end : 0);
   },
 
+  // --- Commercial breaks (found in the background for shows with "Skip commercials" on) ---
+  async loadBreaks(id) {
+    let res;
+    try { res = await api(`/api/episodes/${encodeURIComponent(id)}/commercials`); } catch { return; }
+    if (state.stream.episodeId !== id) return;
+    state.stream.breaks = res.breaks || [];
+    state.stream.autoSkip = !!res.auto_skip;
+    this.drawBreaks();
+  },
+
+  drawBreaks() {
+    const s = state.stream, dur = s.duration;
+    const box = $('#tlBreaks');
+    box.innerHTML = dur && s.episodeId ? (s.breaks || []).map(b =>
+      `<span style="left:${(b.start / dur) * 100}%;width:${((b.end - b.start) / dur) * 100}%" title="Commercial break"></span>`).join('') : '';
+  },
+
+  // In a break: skip it (automatically if that's on, once per break) or offer a button
+  checkBreak(pos) {
+    const s = state.stream;
+    const i = (s.breaks || []).findIndex(b => pos >= b.start && pos < b.end - 2);
+    const btn = $('#skipBreak');
+    if (i < 0) { btn.classList.add('hidden'); return; }
+    const b = s.breaks[i];
+    if (s.autoSkip && !s.skippedBreaks.has(i)) {
+      s.skippedBreaks.add(i);
+      btn.classList.add('hidden');
+      toast(`Skipped a ${fmt.dur(b.end - b.start) || 'short'} commercial break`);
+      this.seekTo(b.end);
+      return;
+    }
+    btn.dataset.end = b.end;
+    btn.innerHTML = `Skip break ${icon('next', 16)}<span>${fmtClock(b.end - pos)}</span>`;
+    btn.classList.remove('hidden');
+  },
+
+  skipBreak() {
+    const end = parseFloat($('#skipBreak').dataset.end);
+    $('#skipBreak').classList.add('hidden');
+    if (end) this.seekTo(end);
+  },
+
   updateTimeline() {
     const s = state.stream, dur = s.duration;
     if (s.channelId) return this.updateLiveTimeline();
@@ -2548,6 +2616,7 @@ const player = {
     avail.style.left = pct(s.offset || 0);
     avail.style.width = `calc(${pct(this.availableEnd())} - ${pct(s.offset || 0)})`;
     if (s.programEnd && pos >= s.programEnd) this.offerUpNext();
+    this.checkBreak(pos);
   },
 
   // --- Up next: when a show ends, count down to the next unwatched episode of the same show ---
@@ -3225,6 +3294,7 @@ const ACTIONS = {
   'pb-pip': () => player.togglePip(),
   'pb-live': () => player.goLive(),
   'pb-help': () => player.showHelp(),
+  'skip-break': () => player.skipBreak(),
   'rerecord': el => rerecordDialog(el.dataset.id),
   'rerecord-pick': async el => {
     el.disabled = true;
@@ -3336,6 +3406,16 @@ const CHANGES = {
     }
   },
   'show-keep': el => setKeep(el),
+  'show-commercials': async el => {
+    const s = state.show;
+    try {
+      const res = await api(`/api/shows/commercials?show_id=${encodeURIComponent(s.id)}`, { method: 'POST', body: JSON.stringify({ on: el.checked }) });
+      if (res.show) mergeShow(res.show);
+      toast(el.checked
+        ? `TabloView will find the commercials in ${s.title}${res.waiting ? ` (${plural(res.waiting, 'recording')} to go; about 8 minutes per half hour, while nothing is playing)` : ''}`
+        : `Commercials in ${s.title} won’t be looked for any more`, 'success');
+    } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
+  },
   'show-cleanup': el => setCleanup(el),
   'buffer': el => { state.bufferTarget = parseInt(el.value, 10) || 8; save('tablo_buffer_target', state.bufferTarget); toast(`Buffer set to ${state.bufferTarget} seconds`); },
   'autoplay': el => { state.autoplay = el.checked; save('tablo_autoplay', el.checked ? '1' : '0'); },
@@ -3359,6 +3439,12 @@ const CHANGES = {
     try {
       await api('/api/settings', { method: 'POST', body: JSON.stringify({ rerecord_failed: el.checked }) });
       toast(el.checked ? 'Failed recordings will be recorded again when they rerun' : 'Failed recordings won’t be recorded again automatically');
+    } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
+  },
+  'skip-commercials': async el => {
+    try {
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ skip_commercials: el.checked }) });
+      toast(el.checked ? 'Commercial breaks will be skipped automatically' : 'A Skip break button will appear instead');
     } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
   },
   'export-format': async el => {
@@ -3482,6 +3568,7 @@ function wireEvents() {
       Home: () => { if (state.stream.channelId) player.goLive(); },
       PageUp: () => player.surf(-1), PageDown: () => player.surf(1),
       c: () => { if (state.stream.channelId) player.toggleChannels(); },
+      s: () => { if (!$('#skipBreak').classList.contains('hidden')) player.skipBreak(); },
       '?': () => player.showHelp(),
     };
     const fn = keys[e.key] || keys[e.key.toLowerCase()];

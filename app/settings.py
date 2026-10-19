@@ -14,6 +14,8 @@ DEFAULTS: Dict[str, Any] = {
     "smooth_motion": False,
     "export_format": "smaller",  # MP4 exports: "smaller" (H.264, graphics chip if available) or "original" (exact copy)  # 60 fps from 1080i (opt-in: harder on graphics-chip encoders)
     "rerecord_failed": True,  # schedule a rerun of a recording that failed or came out short (app/rerecord.py)
+    "commercial_shows": [],  # show ids whose recordings get commercial breaks found (app/commercials.py)
+    "skip_commercials": False,  # skip breaks automatically in the player (otherwise a Skip button)
     "cleanup_days": {},  # show_id -> delete watched recordings this many days after watching (app/cleanup.py)
     "last_seen_version": None,  # newest version whose "What's new" card was shown (app/whatsnew.py)
 }

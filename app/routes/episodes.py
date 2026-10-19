@@ -74,6 +74,18 @@ async def set_watched(episode_id: str, req: WatchedRequest):
     return {"success": True, "watched": req.watched, "show": get_show_by_id(ep["show_id"])}
 
 
+@router.get("/{episode_id}/commercials")
+async def episode_commercials(episode_id: str):
+    """Commercial breaks found in this recording ([] while not analyzed), and the skip setting."""
+    from .. import commercials
+    from ..database import get_commercials
+    from ..settings import load_settings
+    found = get_commercials([episode_id]).get(episode_id)
+    return {"status": found["status"] if found else ("analyzing" if commercials.status["current"] == episode_id else None),
+            "breaks": found["breaks"] if found else [],
+            "auto_skip": bool(load_settings().get("skip_commercials"))}
+
+
 @router.get("/{episode_id}/rerecord")
 async def rerecord_options(episode_id: str):
     """Upcoming airings of the same episode as this (failed or partial) recording."""

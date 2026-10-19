@@ -27,6 +27,7 @@ class SettingsUpdate(BaseModel):
     smooth_motion: Optional[bool] = None
     export_format: Optional[Literal["smaller", "original"]] = None
     rerecord_failed: Optional[bool] = None
+    skip_commercials: Optional[bool] = None
 
 
 class StartupUpdate(BaseModel):

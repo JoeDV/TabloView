@@ -290,6 +290,27 @@ export const SUITES = {
     t.check('Device page has the Record failed recordings again switch', true);
   },
 
+  async commercials(b, t) {
+    const shows = (await api('/api/shows')).shows;
+    if (!shows.length) return t.skip('Skip commercials', 'no recordings');
+    await b.open(`#/show/${encodeURIComponent(shows[0].id)}`);
+    await b.waitFor(`document.querySelector('[data-change="show-commercials"]')`);
+    await b.ev(`(() => { const x = document.querySelector('[data-change="show-commercials"]'); x.checked = !x.checked; x.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await sleep(500);
+    t.check('Skip commercials switch saves for the show (intercepted)', await b.ev(`window.__writes.some(w => w[1].startsWith('/api/shows/commercials'))`));
+    // The player with a 30-minute recording and one break at 5:00-7:00 (nothing is played)
+    await b.ev(`window.__seek = null; player.__realPlay = player.playEpisode; player.playEpisode = (id, mode) => { window.__seek = mode; return Promise.resolve(); };
+      Object.assign(state.stream, { episodeId: 'test', duration: 1800, offset: 0, breaks: [{ start: 300, end: 420 }], skippedBreaks: new Set(), autoSkip: false });
+      player.open('Test'); player.showTimeline(true); player.drawBreaks(); player.checkBreak(310)`);
+    t.check('The break is marked on the timeline', (await b.ev(`document.querySelectorAll('#tlBreaks span').length`)) === 1);
+    t.check('In a break, a Skip break button shows', await b.ev(`!document.getElementById('skipBreak').classList.contains('hidden')`));
+    await b.ev(`document.getElementById('skipBreak').click()`); await sleep(300);
+    t.check('Skip break jumps to the end of the break', (await b.ev('window.__seek')) === 420);
+    await b.ev(`state.stream.autoSkip = true; player.checkBreak(305)`); await sleep(300);
+    t.check('With auto-skip on it jumps by itself', (await b.ev('window.__seek')) === 420 && /Skipped/.test(await b.ev(`document.getElementById('toasts').textContent`)));
+    await b.ev(`player.playEpisode = player.__realPlay; state.stream.episodeId = null; player.close()`);
+  },
+
   async whatsnew(b, t) {
     await b.open('#/');
     await b.ev(`window.__fake['/api/system/whatsnew'] = { show: true, version: '9.9.9', notes: ['First thing', 'Second thing'] }; void showWhatsNew()`);

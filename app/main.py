@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, Response, JSONResponse
 from .config import (
     APP_NAME, APP_VERSION, STATIC_DIR, TRANSCODE_DIR, DOWNLOADS_DIR, IMAGE_CACHE_DIR, HOST, PORT,
 )
-from . import encoders, whatsnew
+from . import commercials, encoders, whatsnew
 from .database import init_db
 from .tablo_client import tablo_manager
 from .sync_service import sync_service, auto_sync_loop
@@ -42,10 +42,12 @@ async def lifespan(app: FastAPI):
         print("[Startup] No authenticated Tablo device yet. Ready for login via web UI.")
 
     auto_sync = asyncio.create_task(auto_sync_loop(sync_service))
+    ad_finder = asyncio.create_task(commercials.worker_loop())
 
     yield
 
     auto_sync.cancel()
+    ad_finder.cancel()
     # Shutdown: clean up transcode sessions
     print("[Shutdown] Cleaning up stream sessions...")
     for sid in list(transcode_manager.sessions.keys()):

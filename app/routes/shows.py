@@ -12,17 +12,22 @@ from ..database import (
     delete_episode,
     recalculate_show_stats,
     set_episode_progress,
+    get_commercials,
     show_keep,
     set_show_keep,
 )
 from ..tablo_client import tablo_manager
-from .. import cleanup
+from .. import cleanup, commercials
 
 router = APIRouter(prefix="/api/shows", tags=["shows"])
 
 
 class KeepRequest(BaseModel):
     count: Optional[int] = Field(default=None, ge=1, le=50)  # None = keep everything
+
+
+class CommercialsRequest(BaseModel):
+    on: bool
 
 
 class CleanupRequest(BaseModel):
@@ -32,7 +37,8 @@ class CleanupRequest(BaseModel):
 def _with_rules(show: Optional[dict]) -> Optional[dict]:
     """Add the show's keep rule (on the Tablo) and cleanup rule (in TabloView)."""
     if show:
-        show = {**show, "keep": show_keep(show), "cleanup_days": cleanup.rules().get(show["id"])}
+        show = {**show, "keep": show_keep(show), "cleanup_days": cleanup.rules().get(show["id"]),
+                "find_commercials": show["id"] in commercials.enabled_shows()}
     return show
 
 
@@ -55,7 +61,7 @@ async def get_show_episodes_query(show_id: str = Query(...)):
     show = get_show_by_id(show_id)
     if not show:
         raise HTTPException(status_code=404, detail="Show not found")
-    episodes = get_episodes_by_show(show_id)
+    episodes = _with_commercials(get_episodes_by_show(show_id))
     return {
         "show": _with_rules(show),
         "show_id": show_id,
@@ -144,6 +150,25 @@ async def set_keep(req: KeepRequest, show_id: str = Query(...)):
         raise HTTPException(status_code=502, detail="The Tablo didn't accept the change")
     set_show_keep(show_id, echoed or keep)
     return {"success": True, "show": _with_rules(get_show_by_id(show_id))}
+
+
+def _with_commercials(episodes: List[dict]) -> List[dict]:
+    """Add each recording's commercial-finding status: done (with breaks), unreliable, failed,
+    analyzing, or None (not looked at)."""
+    found = get_commercials([e["id"] for e in episodes])
+    current = commercials.status["current"]
+    return [{**e, "commercials": (found[e["id"]]["status"] if e["id"] in found else "analyzing" if e["id"] == current else None),
+             "commercial_breaks": len(found[e["id"]]["breaks"]) if e["id"] in found else 0} for e in episodes]
+
+
+@router.post("/commercials")
+async def set_commercials(req: CommercialsRequest, show_id: str = Query(...)):
+    """Find commercial breaks in this show's recordings (in the background, on this PC)."""
+    if not get_show_by_id(show_id):
+        raise HTTPException(status_code=404, detail="Show not found")
+    commercials.set_show(show_id, req.on)
+    return {"success": True, "show": _with_rules(get_show_by_id(show_id)),
+            "waiting": len(commercials.pending()) if req.on else 0}
 
 
 @router.post("/cleanup")
