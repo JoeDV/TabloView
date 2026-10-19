@@ -3500,7 +3500,7 @@ const ACTIONS = {
         <li><b>Outlook:</b> open the file, or File → Open &amp; Export → Import.</li>
         <li><b>iPhone / Mac:</b> open the file and choose a calendar.</li>
       </ol>
-      <div class="dialog-text" style="margin-top:12px">It doesn’t update itself: download and import a new file after you change what’s recording. Importing again won’t create duplicates.</div>
+      <div class="dialog-text" style="margin-top:12px">It doesn’t update itself: import a new file to add recordings you’ve set up since. Importing again doesn’t duplicate anything, but recordings already in the calendar stay as they were, so if times change or you skip some, delete the TabloView calendar and import a fresh file.</div>
     </div>
     <div class="dialog-foot">
       <button class="btn" data-action="modal-cancel">Close</button>
