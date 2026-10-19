@@ -13,6 +13,12 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.1.7": [
+        "Watch two channels at once: add a live channel next to live TV or a recording (the button with two rectangles, or press 2). Side by side, big and small, or full screen; Tab switches the sound, and the silent one shows captions and flashes when something big happens.",
+        "Back for a new season: shows you've recorded before that are returning, on the Home page and as a notification.",
+        "Add your upcoming recordings to Google Calendar, Outlook or Apple Calendar (Scheduled → Upcoming recordings).",
+        "Check for updates from the tray icon; the Microsoft Store version now tells you when an update is waiting.",
+    ],
     "1.1.6": [
         "Much faster loading from your Tablo: a new computer's first load takes under a minute instead of 5–10, and \"Tablo isn't responding\" during loading is gone.",
         "A banner shows progress while the TV guide loads for the first time.",
