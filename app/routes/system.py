@@ -26,6 +26,7 @@ class SettingsUpdate(BaseModel):
     video_quality: Optional[Literal["auto", "best", "fastest"]] = None
     smooth_motion: Optional[bool] = None
     export_format: Optional[Literal["smaller", "original"]] = None
+    rerecord_failed: Optional[bool] = None
 
 
 class StartupUpdate(BaseModel):

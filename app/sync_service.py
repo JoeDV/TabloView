@@ -15,7 +15,7 @@ import httpx
 
 from .tablo_client import tablo_manager
 from .notifications import check_all
-from . import cleanup
+from . import cleanup, rerecord
 from .database import (
     upsert_show,
     upsert_episode,
@@ -318,6 +318,7 @@ class LibrarySyncService:
                 asyncio.create_task(self.sync_guide())
             await check_all(conflicts=not include_guide)
             await cleanup.run()
+            await rerecord.run()
 
             print("[LibrarySync] Library sync finished successfully!")
             return {
@@ -350,6 +351,7 @@ class LibrarySyncService:
             self.is_guide_syncing = False
             self.guide_progress = None
         await check_all(recordings=False)
+        await rerecord.run()
         return result
 
     async def _sync_guide(self) -> Dict[str, Any]:

@@ -74,6 +74,16 @@ async def set_watched(episode_id: str, req: WatchedRequest):
     return {"success": True, "watched": req.watched, "show": get_show_by_id(ep["show_id"])}
 
 
+@router.get("/{episode_id}/rerecord")
+async def rerecord_options(episode_id: str):
+    """Upcoming airings of the same episode as this (failed or partial) recording."""
+    from .. import rerecord
+    found = rerecord.alternatives(episode_id)
+    if not found:
+        raise HTTPException(status_code=404, detail="Episode not found")
+    return {"airings": found["airings"]}
+
+
 @router.post("/{episode_id}/protected")
 async def set_protected(episode_id: str, req: ProtectRequest):
     """Protect a recording on the Tablo (it's then never deleted to make room or by cleanup), or unprotect it."""

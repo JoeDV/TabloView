@@ -272,6 +272,24 @@ export const SUITES = {
     t.check('Device page has the export format setting', (await b.ev(`document.querySelector('[data-change="export-format"]').options.length`)) === 2);
   },
 
+  async rerecord(b, t) {
+    const shows = (await api('/api/shows')).shows;
+    const show = shows.find(s => s.incomplete_count > 0);
+    if (!show) return t.skip('Record again', 'no failed or partial recordings');
+    await b.open(`#/show/${encodeURIComponent(show.id)}`);
+    await b.waitFor(`document.querySelector('[data-action="rerecord"]')`);
+    const soon = new Date(Date.now() + 86400000).toISOString();
+    await b.ev(`window.__fake['/api/episodes/'] = { airings: [{ path: '/guide/series/episodes/123', air_datetime: '${soon}', channel_network: 'NBC', channel_call_sign: 'WTHR', schedule_state: 'none' }] };
+      document.querySelector('[data-action="rerecord"]').click()`);
+    await sleep(800);
+    t.check('Record again lists the rerun', /Record this one/.test(await b.ev(`(document.querySelector('.overlay') || {}).textContent || ''`)));
+    await b.ev(`document.querySelector('[data-action="rerecord-pick"]').click()`); await sleep(600);
+    t.check('Choosing it schedules that airing (intercepted)', await b.ev(`window.__writes.some(w => w[1] === '/api/guide/episodes/schedule' && w[2].includes('episodes/123'))`));
+    await b.ev(`closeModal(false)`);
+    await b.go('#/device', `document.querySelector('[data-change="rerecord-failed"]')`);
+    t.check('Device page has the Record failed recordings again switch', true);
+  },
+
   async whatsnew(b, t) {
     await b.open('#/');
     await b.ev(`window.__fake['/api/system/whatsnew'] = { show: true, version: '9.9.9', notes: ['First thing', 'Second thing'] }; void showWhatsNew()`);

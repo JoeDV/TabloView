@@ -1017,6 +1017,29 @@ async function setCleanup(el) {
   }
 }
 
+// A recording that failed or came out short: pick another airing of the same episode to record
+async function rerecordDialog(id) {
+  const ep = findEpisode(id) || {};
+  let airings;
+  try { airings = (await api(`/api/episodes/${encodeURIComponent(id)}/rerecord`)).airings; } catch (err) { toast(err.message, 'error'); return; }
+  const name = [fmt.se(ep.season_number, ep.episode_number), episodeTitle(ep)].filter(Boolean).join(' · ');
+  await openModal(`
+    <div class="dialog-body">
+      <div class="dialog-title">Record ${esc(name || 'this episode')} again</div>
+      ${airings.length ? `<div class="dialog-text">It airs again ${airings.length === 1 ? 'once' : `${airings.length} times`} in the next two weeks:</div>
+        <div class="list" style="margin-top:12px">${airings.map(a => `
+          <div class="list-row rerecord-row">
+            <div><div class="row-title">${esc(fmt.dayLabel(a.air_datetime))} · ${esc(fmt.time(a.air_datetime))}</div>
+              <div class="row-sub">${esc([a.channel_network, a.channel_call_sign].filter(Boolean).join(' · '))}</div></div>
+            ${a.schedule_state === 'scheduled'
+              ? '<span class="tag tag-accent">Set to record</span>'
+              : `<button class="btn btn-sm btn-primary" data-action="rerecord-pick" data-path="${esc(a.path)}">${icon('plus', 14)}Record this one</button>`}
+          </div>`).join('')}</div>`
+        : `<div class="dialog-text">It doesn’t air again in the next two weeks of the guide. With “Record failed recordings again” on (Device page), TabloView keeps checking and records it if it comes up.</div>`}
+    </div>
+    <div class="dialog-foot"><button class="btn" data-action="modal-ok" data-autofocus>Close</button></div>`);
+}
+
 async function setProtected(id, value) {
   try {
     await api(`/api/episodes/${encodeURIComponent(id)}/protected`, { method: 'POST', body: JSON.stringify({ protected: value }) });
@@ -1030,6 +1053,13 @@ async function setProtected(id, value) {
 }
 
 function episodeStatus(ep) {
+  const tag = episodeStatusTag(ep);
+  return ep.incomplete
+    ? `${tag}<button class="link-btn" data-action="rerecord" data-id="${esc(ep.id)}" title="Find another airing of this episode to record">Record again</button>`
+    : tag;
+}
+
+function episodeStatusTag(ep) {
   if (ep.recording_state === 'recording') return '<span class="tag tag-live">Recording</span>';
   if (ep.recording_state === 'failed') {
     const mins = Math.round((ep.actual_duration || 0) / 60);
@@ -2113,6 +2143,11 @@ PAGES.device = async (r, token) => {
           </select>
         </label>
         <p class="dim" style="font-size:12.5px;margin-top:8px">When on, the guide also refreshes every 6 hours. Changes you make in TabloView show up immediately either way.</p>
+        <label class="switch-row" style="margin-top:14px">
+          <input type="checkbox" class="switch" data-change="rerecord-failed" ${settings.rerecord_failed !== false ? 'checked' : ''}>
+          <span>Record failed recordings again</span>
+        </label>
+        <p class="dim" style="font-size:12.5px;margin-top:6px">When a recording fails or comes out short, TabloView sets a rerun of the same episode to record (one that doesn’t clash with other recordings), if the guide has one in the next two weeks.</p>
         <div class="panel-actions">
           <button class="btn btn-sm" data-action="refresh-library">${icon('refresh', 15)}Sync recordings</button>
           <button class="btn btn-sm" data-action="sync-guide">${icon('guide', 15)}Refresh guide</button>
@@ -3099,6 +3134,7 @@ const ACTIONS = {
         : { label: 'Mark as watched', icon: 'check', run: () => setWatched(id, true) },
       { label: 'Open in VLC', icon: 'external', run: () => openVlc(`/api/episodes/${encodeURIComponent(id)}/playlist.m3u`) },
       { label: 'Export MP4', icon: 'download', run: () => exportEpisode(id) },
+      ...(ep.incomplete ? [{ label: 'Record again…', icon: 'refresh', run: () => rerecordDialog(id) }] : []),
       ep.protected
         ? { label: 'Unprotect', icon: 'lock', run: () => setProtected(id, false) }
         : { label: 'Protect from deletion', icon: 'lock', run: () => setProtected(id, true) },
@@ -3189,6 +3225,15 @@ const ACTIONS = {
   'pb-pip': () => player.togglePip(),
   'pb-live': () => player.goLive(),
   'pb-help': () => player.showHelp(),
+  'rerecord': el => rerecordDialog(el.dataset.id),
+  'rerecord-pick': async el => {
+    el.disabled = true;
+    try {
+      await api('/api/guide/episodes/schedule', { method: 'POST', body: JSON.stringify({ path: el.dataset.path, scheduled: true }) });
+      el.outerHTML = '<span class="tag tag-accent">Set to record</span>';
+      toast('It will be recorded again', 'success');
+    } catch (err) { el.disabled = false; toast(`Couldn't schedule it: ${err.message}`, 'error'); }
+  },
   'pb-sleep': el => player.sleepMenu(el),
   'version-history': () => showVersionHistory(),
   'pb-channels': () => player.toggleChannels(),
@@ -3309,6 +3354,12 @@ const CHANGES = {
       toast('Video quality saved. It applies to the next thing you play.');
       route();
     } catch (err) { toast(err.message, 'error'); }
+  },
+  'rerecord-failed': async el => {
+    try {
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ rerecord_failed: el.checked }) });
+      toast(el.checked ? 'Failed recordings will be recorded again when they rerun' : 'Failed recordings won’t be recorded again automatically');
+    } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
   },
   'export-format': async el => {
     try {
