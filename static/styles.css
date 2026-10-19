@@ -273,6 +273,19 @@ img { display: block; }
 .card-row::-webkit-scrollbar { display: none; }
 .card-row > * { scroll-snap-align: start; }
 
+.onnow-row { grid-auto-columns: minmax(200px, calc((100% - 5 * 16px) / 6)); }
+.onnow-card {
+  display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; text-align: left; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font: inherit;
+}
+.onnow-card:hover { background: var(--surface-2); border-color: var(--border-strong); }
+.onnow-ch { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); min-width: 0; }
+.onnow-ch img { width: 36px; height: 22px; object-fit: contain; flex-shrink: 0; }
+.onnow-ch span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.onnow-ch b { color: var(--text); }
+.onnow-title { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.onnow-sub { font-size: 12px; color: var(--text-3); }
+
 .card-grid {
   display: grid; gap: 22px 18px;
   grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));

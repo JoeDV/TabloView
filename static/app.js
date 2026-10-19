@@ -695,6 +695,7 @@ PAGES.home = async (r, token) => {
     api('/api/guide/shows?highlight=primetime_new&sort=soonest&limit=30').then(r => cacheGuide(r.shows)),
     api('/api/episodes/in_progress').then(r => r.episodes || []),
     loadUpcoming(),
+    player.ensureEpg(),
   ]);
   if (stale(token)) return;
   state.inProgress = progress.value || [];
@@ -714,6 +715,17 @@ PAGES.home = async (r, token) => {
       title: 'Continue watching',
       rowId: state.inProgress.length > 5 ? 'rowContinue' : '',
       body: `<div class="card-row" id="rowContinue">${state.inProgress.map(continueCard).join('')}</div>`,
+    }));
+  }
+
+  const onNow = onNowCards();
+  if (onNow) {
+    parts.push(section({
+      title: 'On now',
+      sub: hasFavorites() ? 'Your favorite channels' : 'Antenna channels',
+      link: '#/live',
+      rowId: 'rowOnNow',
+      body: `<div class="card-row onnow-row" id="rowOnNow">${onNow}</div>`,
     }));
   }
 
@@ -1710,6 +1722,27 @@ PAGES.live = async (r, token) => {
 };
 
 // Favorites come from the Tablo (set in its TV apps); the filter only appears when there are some
+// Home: what's airing now on your favorite channels (or antenna channels), one click to watch
+function onNowCards() {
+  if (!state.epg) return '';
+  const fav = hasFavorites();
+  const now = Date.now();
+  const list = state.epg.channels.filter(c => (fav ? c.favorite : c.kind === 'ota') && nowNext(c, now).now).slice(0, 16);
+  return list.map(c => {
+    const { num, name } = channelName(c);
+    const on = nowNext(c, now).now;
+    const start = new Date(on.air_datetime).getTime();
+    const end = start + (on.duration || 0) * 1000;
+    const pct = on.duration ? Math.min(100, Math.round(((now - start) / (end - start)) * 100)) : 0;
+    return `<button class="onnow-card" data-action="watch-live" data-id="${esc(c.channel_id)}" data-name="${esc(name)}" data-kind="${esc(c.kind)}" title="Watch ${esc(name)} live">
+      <span class="onnow-ch">${c.logo_url ? `<img src="${esc(c.logo_url)}" alt="" loading="lazy">` : ''}<span>${num ? `<b>${esc(num)}</b> ` : ''}${esc(name)}</span></span>
+      <span class="onnow-title">${esc(on.title)}</span>
+      <span class="chan-bar"><span style="width:${pct}%"></span></span>
+      <span class="onnow-sub">Until ${esc(fmt.time(new Date(end).toISOString()))}</span>
+    </button>`;
+  }).join('');
+}
+
 function hasFavorites() {
   return !!(state.epg && state.epg.channels.some(c => c.favorite));
 }
