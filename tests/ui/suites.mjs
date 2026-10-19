@@ -227,6 +227,22 @@ export const SUITES = {
     await b.ev(`state.stream.channelId = null; player.close()`);
   },
 
+  async guideload(b, t) {
+    await b.open('#/guide');
+    await b.ev(`window.__fake['/api/library/status'] = real => ({ ...real, guide_progress: { first: true, step: 'airings', done: 1200, total: 4300, minutes_left: 7, waiting_seconds: null } }); pollStatus()`);
+    await sleep(800);
+    const text = await b.ev(`document.getElementById('guideBanner').textContent.replace(/\\s+/g, ' ')`);
+    t.check('First guide load shows a banner with progress and time left', await b.ev(`!document.getElementById('guideBanner').classList.contains('hidden')`)
+      && /first time/.test(text) && /1,200 of 4,300/.test(text) && /about 7 minutes left/.test(text), text.slice(0, 160));
+    await b.ev(`window.__fake['/api/library/status'] = real => ({ ...real, tablo_unreachable: true, guide_progress: { first: true, step: 'airings', done: 1300, total: 4300, minutes_left: 7, waiting_seconds: 70 } }); pollStatus()`);
+    await sleep(800);
+    t.check('While it waits out the Tablo’s break it says so, instead of the not-responding warning',
+      /short break/.test(await b.ev(`document.getElementById('guideBannerText').textContent`)) && await b.ev(`document.getElementById('reachBanner').classList.contains('hidden')`));
+    await b.ev(`window.__fake['/api/library/status'] = real => ({ ...real, guide_progress: null }); pollStatus()`);
+    await sleep(800);
+    t.check('The banner goes away when the guide is loaded', await b.ev(`document.getElementById('guideBanner').classList.contains('hidden')`));
+  },
+
   async whatsnew(b, t) {
     await b.open('#/');
     await b.ev(`window.__fake['/api/system/whatsnew'] = { show: true, version: '9.9.9', notes: ['First thing', 'Second thing'] }; void showWhatsNew()`);

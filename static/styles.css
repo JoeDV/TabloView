@@ -711,6 +711,7 @@ img { display: block; }
 }
 .auth-banner .dim { font-weight: 400; color: var(--text-2); }
 .auth-banner .btn { margin-left: auto; }
+.auth-banner.info { background: var(--accent-soft); border-bottom-color: rgba(91, 140, 255, 0.35); color: var(--accent); }
 .update-notice {
   display: flex; align-items: center; gap: 10px; margin: 6px 4px 0; padding: 9px 10px;
   border-radius: 8px; background: var(--accent-soft); color: var(--accent); font-weight: 600; font-size: 13px;

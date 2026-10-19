@@ -6,8 +6,11 @@ extracts rich metadata, resolves artwork, and updates the local SQLite cache.
 import asyncio
 import re
 import hashlib
+import time
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
+
+import httpx
 
 from .tablo_client import tablo_manager
 from .notifications import check_all
@@ -18,6 +21,7 @@ from .database import (
     upsert_guide_show,
     recalculate_show_stats,
     set_sync_meta,
+    get_sync_meta,
     prune_obsolete_shows_and_episodes,
     batch_upsert_guide_airings,
     guide_airings_to_fetch,
@@ -52,11 +56,23 @@ def extract_image_url(img_obj: Any) -> Optional[str]:
     return None
 
 
+# Guide airings: more than this to fetch counts as a long load (paced, with a progress banner)
+LARGE_AIRING_FETCH = 300
+AIRING_CHUNK = 100
+AIRING_RETRIES = 5
+# The Tablo refuses connections for about a minute after too many requests
+TABLO_BREAK_SECONDS = 75
+RETRY = object()
+
+
 class LibrarySyncService:
     def __init__(self):
         self.is_syncing = False
         self.is_guide_syncing = False
         self.last_error: Optional[str] = None
+        # While a long guide load runs (first one on a PC, or thousands of airings): shown as a banner.
+        # {"first", "step": "shows"|"airings", "done", "total", "started", "waiting_until"}
+        self.guide_progress: Optional[Dict[str, Any]] = None
 
     async def sync_library(self, include_guide: bool = True) -> Dict[str, Any]:
         """Full synchronization of Tablo DVR library into SQLite cache.
@@ -270,11 +286,16 @@ class LibrarySyncService:
             result = await self._sync_guide()
         finally:
             self.is_guide_syncing = False
+            self.guide_progress = None
         await check_all(recordings=False)
         return result
 
     async def _sync_guide(self) -> Dict[str, Any]:
         print("[GuideSync] Starting OTA Guide sync...")
+        first = not get_sync_meta("last_guide_sync")
+        if first:
+            self.guide_progress = {"first": True, "step": "shows", "done": 0, "total": 0,
+                                   "started": time.time(), "waiting_until": None}
         guide_endpoints = [
             ("GET", "/guide/series", "series"),
             ("GET", "/guide/movies", "movies"),
@@ -368,7 +389,10 @@ class LibrarySyncService:
                     airing_paths = guide_airings_to_fetch(airing_paths)
                     print(f"[GuideSync] {listed} upcoming airings; fetching {len(airing_paths)} new or record-status ones")
                     # A first sync (empty cache) fetches thousands: pace them so the Tablo keeps answering
-                    pace = len(airing_paths) > 300
+                    pace = len(airing_paths) > LARGE_AIRING_FETCH
+                    if pace:
+                        self.guide_progress = {"first": first, "step": "airings", "done": 0, "total": len(airing_paths),
+                                               "started": time.time(), "waiting_until": None}
                     sem_air = asyncio.Semaphore(2 if pace else 50)
                     async def fetch_guide_airing(p: str):
                         async with sem_air:
@@ -416,14 +440,34 @@ class LibrarySyncService:
                                         "is_premiere": is_premiere,
                                         "schedule_state": (d.get('schedule') or {}).get('state') or 'none',
                                     }
+                            except httpx.TransportError:
+                                return RETRY
                             except Exception:
                                 pass
                             return None
 
-                    airing_results = await asyncio.gather(*[fetch_guide_airing(p) for p in airing_paths])
-                    valid_airings = [a for a in airing_results if a]
-                    batch_upsert_guide_airings(valid_airings)
-                    print(f"[GuideSync] Saved {len(valid_airings)} upcoming airings with Primetime & Premiere tags.")
+                    # In chunks, saved as they come, so the Guide fills in during a long first load. When the
+                    # Tablo stops answering (it does after a burst of requests), wait it out and carry on.
+                    saved = 0
+                    for i in range(0, len(airing_paths), AIRING_CHUNK):
+                        chunk = airing_paths[i:i + AIRING_CHUNK]
+                        for attempt in range(AIRING_RETRIES + 1):
+                            results = await asyncio.gather(*[fetch_guide_airing(p) for p in chunk])
+                            good = [r for r in results if isinstance(r, dict)]
+                            batch_upsert_guide_airings(good)
+                            saved += len(good)
+                            chunk = [p for p, r in zip(chunk, results) if r is RETRY]
+                            if not chunk or attempt == AIRING_RETRIES:
+                                break
+                            print(f"[GuideSync] Tablo stopped answering; waiting {TABLO_BREAK_SECONDS} s before continuing")
+                            if self.guide_progress:
+                                self.guide_progress["waiting_until"] = time.time() + TABLO_BREAK_SECONDS
+                            await asyncio.sleep(TABLO_BREAK_SECONDS)
+                            if self.guide_progress:
+                                self.guide_progress["waiting_until"] = None
+                        if self.guide_progress:
+                            self.guide_progress["done"] = min(i + AIRING_CHUNK, len(airing_paths))
+                    print(f"[GuideSync] Saved {saved} upcoming airings with Primetime & Premiere tags.")
         except Exception as e:
             print(f"[GuideSync] Error syncing guide airings: {e}")
 

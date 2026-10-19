@@ -331,7 +331,10 @@ async function pollStatus() {
   try {
     const s = await api('/api/library/status');
     showAuthProblem(s.auth_problem);
-    $('#reachBanner').classList.toggle('hidden', !s.tablo_unreachable || !!s.auth_problem);
+    showGuideProgress(s.guide_progress);
+    // While a guide load waits out the Tablo's break, its banner already says so
+    const waiting = s.guide_progress && s.guide_progress.waiting_seconds !== null;
+    $('#reachBanner').classList.toggle('hidden', !s.tablo_unreachable || !!s.auth_problem || !!waiting);
     const wasSyncing = state.isSyncing;
     const prevSync = state.lastSync;
     setSyncState(s.is_syncing, s.last_sync);
@@ -372,6 +375,45 @@ function refreshCurrentPageQuietly() {
   if (busy || !['home', 'library', 'scheduled', 'show'].includes(name)) return;
   const scroll = view().scrollTop;
   Promise.resolve(route()).then(() => { view().scrollTop = scroll; });
+}
+
+// A long guide load (the first on this PC takes several minutes): say what's happening and how far along
+// it is, and refresh the pages built from the guide as it fills in
+function showGuideProgress(p) {
+  const banner = $('#guideBanner');
+  const was = state.guideProgress;
+  state.guideProgress = p;
+  banner.classList.toggle('hidden', !p);
+  if (!p) {
+    if (was) { toast('The TV guide has finished loading', 'success'); refreshGuidePages(); }
+    return;
+  }
+  $('#guideBannerTitle').textContent = p.first ? 'Loading the TV guide from your Tablo for the first time…' : 'Updating the TV guide from your Tablo…';
+  let detail;
+  if (p.waiting_seconds !== null) {
+    detail = `Your Tablo needs a short break after this many requests. Continuing in about ${Math.max(1, Math.ceil(p.waiting_seconds / 60))} minute${p.waiting_seconds > 60 ? 's' : ''}.`;
+  } else if (p.step === 'airings' && p.total) {
+    detail = `${p.done.toLocaleString()} of ${p.total.toLocaleString()} upcoming airings` +
+      (p.minutes_left ? `, about ${p.minutes_left} minute${p.minutes_left === 1 ? '' : 's'} left.` : '.');
+  } else {
+    detail = 'Getting the list of shows.';
+  }
+  if (p.first) detail += ' First time only. Recordings and Live TV work now; the Guide, Scheduled and Recording soon fill in as it loads.';
+  $('#guideBannerText').textContent = detail;
+  // Show what's loaded so far every few hundred airings
+  if (p.step === 'airings' && (!was || p.done - (state.guideRefreshedAt || 0) >= 500)) {
+    state.guideRefreshedAt = p.done;
+    refreshGuidePages();
+  }
+}
+
+function refreshGuidePages() {
+  const name = parseRoute().name;
+  const busy = openMenuEl || openOverlay || player.isOpen() || document.activeElement.matches('input, select');
+  if (!busy && ['home', 'guide', 'scheduled'].includes(name)) {
+    const scroll = view().scrollTop;
+    Promise.resolve(route()).then(() => { view().scrollTop = scroll; });
+  }
 }
 
 function showAuthProblem(message) {

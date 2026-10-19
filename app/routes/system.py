@@ -173,6 +173,22 @@ async def recheck_tablo() -> None:
         pass  # still not answering; request_local keeps it marked
 
 
+def guide_progress() -> Optional[dict]:
+    """A long guide load in progress, with a rough time left once there's enough to go on."""
+    p = sync_service.guide_progress
+    if not p:
+        return None
+    now = time.time()
+    out = {"first": p["first"], "step": p["step"], "done": p["done"], "total": p["total"],
+           "minutes_left": None, "waiting_seconds": None}
+    if p.get("waiting_until"):
+        out["waiting_seconds"] = max(0, round(p["waiting_until"] - now))
+    if p["step"] == "airings" and p["done"] >= 100 and p["total"] > p["done"]:
+        rate = p["done"] / max(1.0, now - p["started"])
+        out["minutes_left"] = max(1, round((p["total"] - p["done"]) / rate / 60))
+    return out
+
+
 @router.get("/library/status")
 async def get_library_status():
     """Check status of background library sync."""
@@ -187,6 +203,7 @@ async def get_library_status():
         "last_error": sync_service.last_error,
         "auth_problem": tablo_manager.auth_problem,
         "tablo_unreachable": tablo_manager.tablo_unreachable,
+        "guide_progress": guide_progress(),
         "total_shows": int(total_shows),
         "total_episodes": int(total_episodes)
     }
