@@ -18,6 +18,8 @@ NOTES: Dict[str, List[str]] = {
         "Back for a new season: shows you've recorded before that are returning, on the Home page and as a notification.",
         "Add your upcoming recordings to Google Calendar, Outlook or Apple Calendar (Scheduled → Upcoming recordings).",
         "Check for updates from the tray icon; the Microsoft Store version now tells you when an update is waiting.",
+        "Signal health (Device page): which channels' recordings fail, why, and when, with tips, and a notification when a channel keeps failing.",
+        "Closing live TV now frees the tuner on your Tablo right away instead of leaving it reserved.",
     ],
     "1.1.6": [
         "Much faster loading from your Tablo: a new computer's first load takes under a minute instead of 5–10, and \"Tablo isn't responding\" during loading is gone.",

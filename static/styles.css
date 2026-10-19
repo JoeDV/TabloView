@@ -695,6 +695,10 @@ img { display: block; }
 .pin-box p { color: var(--text-2); }
 .pin-input { width: 100%; text-align: center; font-size: 22px; letter-spacing: 0.4em; height: 48px; }
 .pin-error { color: var(--rec); font-size: 13px; min-height: 18px; }
+.signal-list { display: flex; flex-direction: column; margin-top: 6px; }
+.signal-row { display: grid; grid-template-columns: minmax(140px, 200px) minmax(180px, 1fr) minmax(160px, 1.2fr) 150px; gap: 16px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 13.5px; }
+.signal-row:last-child { border-bottom: 0; }
+.signal-row.frequent .signal-ch b { color: var(--warn); }
 .link-btn { background: none; border: 0; padding: 0 0 0 8px; color: var(--accent); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
 .link-btn:hover { text-decoration: underline; }
 .rerecord-row { grid-template-columns: 1fr auto; }

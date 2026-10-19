@@ -137,6 +137,22 @@ def init_db():
             )
         """)
 
+        # How each recording turned out, kept after the recording is deleted (app/signal_health.py)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS recording_history (
+                episode_id TEXT PRIMARY KEY,
+                show_title TEXT,
+                air_date TEXT,
+                channel TEXT,
+                call_sign TEXT,
+                network TEXT,
+                state TEXT,
+                problem INTEGER DEFAULT 0,
+                reason TEXT,
+                updated_at TEXT
+            )
+        """)
+
         # Columns added after the first release (CREATE TABLE IF NOT EXISTS won't add them)
         ga_cols = {r[1] for r in cursor.execute("PRAGMA table_info(guide_airings)").fetchall()}
         if "schedule_state" not in ga_cols:

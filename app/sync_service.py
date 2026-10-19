@@ -15,7 +15,7 @@ import httpx
 
 from .tablo_client import tablo_manager
 from .notifications import check_all
-from . import cleanup, rerecord, returning
+from . import cleanup, rerecord, returning, signal_health
 from .database import (
     upsert_show,
     upsert_episode,
@@ -319,6 +319,7 @@ class LibrarySyncService:
             await check_all(conflicts=not include_guide)
             await cleanup.run()
             await rerecord.run()
+            await asyncio.to_thread(signal_health.check)
 
             print("[LibrarySync] Library sync finished successfully!")
             return {

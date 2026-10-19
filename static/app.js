@@ -1121,6 +1121,26 @@ async function rerecordDialog(id) {
     <div class="dialog-foot"><button class="btn" data-action="modal-ok" data-autofocus>Close</button></div>`);
 }
 
+// Which channels' recordings fail, why and when (from the Tablo's own failure reasons, kept over time)
+function signalPanel(sig) {
+  const list = (sig && sig.channels) || [];
+  if (!list.length) return '';
+  const badge = { frequent: '<span class="tag tag-warn">Frequent problems</span>', some: '<span class="tag">Some problems</span>', ok: '<span class="dim">Fine</span>' };
+  const signalTrouble = list.some(c => c.status !== 'ok' && c.signal);
+  return `
+    <div class="panel" style="grid-column:1/-1">
+      <h3>Signal health</h3><div class="panel-sub">How recordings on each channel turned out over the last ${sig.days} days, and why the Tablo says any failed.</div>
+      <div class="signal-list">${list.map(c => `
+        <div class="signal-row ${c.status}">
+          <div class="signal-ch"><b>${esc(c.channel)}</b> ${esc(c.call_sign)}${c.network ? ` <span class="dim">${esc(c.network)}</span>` : ''}</div>
+          <div>${c.problems ? `${c.problems} of ${plural(c.recordings, 'recording')} had problems` : `${plural(c.recordings, 'recording')}, no problems`}</div>
+          <div class="dim">${esc([c.reason, c.when].filter(Boolean).join(', '))}${c.last_problem ? ` · last ${esc(fmt.day(c.last_problem))}` : ''}</div>
+          <div>${badge[c.status]}</div>
+        </div>`).join('')}</div>
+      ${signalTrouble ? `<p class="dim" style="margin-top:12px;font-size:12.5px">Weak or lost signal is almost always the antenna, not the Tablo. Check where the channel’s tower is (rabbitears.info or antennaweb.org) and aim the antenna toward it; try it higher up or at a different window, or add an amplifier for long cable runs. Then run a channel scan in the Tablo app, which also shows each channel’s signal strength. Storms and heavy rain can cause it too.</p>` : ''}
+    </div>`;
+}
+
 // Set or change the PIN (on the PC). Resolves true once it's saved.
 async function setPinDialog(title = 'PIN for other devices', text = 'Phones, tablets and other computers on your network sign in with it once. Changing it signs them all out.') {
   let saved = false;
@@ -2199,13 +2219,14 @@ function renderDownloads(jobs) {
 // Device
 // ---------------------------------------------------------------------------
 PAGES.device = async (r, token) => {
-  const [, , info, settings, space, boot, playback] = await Promise.all([
+  const [, , info, settings, space, boot, playback, signal] = await Promise.all([
     loadStatus(), loadStorage(),
     api('/api/system/info').catch(() => ({})),
     api('/api/settings').catch(() => ({})),
     api('/api/storage/shows').catch(() => null),
     api('/api/system/startup').catch(() => ({})),
     api('/api/system/playback').catch(() => ({})),
+    api('/api/system/signal').catch(() => null),
   ]);
   if (stale(token)) return;
   const st = state.status || {};
@@ -2312,6 +2333,7 @@ PAGES.device = async (r, token) => {
           </div>`).join('')}
       </div>
       ${spaceByShowPanel(space, storage.connected ? storage.used_gb : 0)}
+      ${signalPanel(signal)}
       <div class="panel">
         <h3>Playback</h3><div class="panel-sub">Picture quality and buffering for watching in the browser.</div>
         <label class="switch-row" style="font-weight:400;cursor:default">

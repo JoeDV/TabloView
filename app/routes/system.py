@@ -194,6 +194,14 @@ async def get_playback():
     }
 
 
+@router.get("/system/signal")
+async def signal_report():
+    """Per channel: how many recordings had problems, why, and when (Device → Signal health)."""
+    from .. import signal_health
+    await asyncio.to_thread(signal_health.update_history)
+    return {"channels": signal_health.report(), "days": signal_health.REPORT_DAYS}
+
+
 @router.get("/storage/shows")
 async def get_storage_shows():
     """Which shows use the most space, and how much of it is watched (deletable) recordings."""
