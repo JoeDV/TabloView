@@ -158,7 +158,7 @@ export const SUITES = {
       state.stream.hls.stopLoad(); (() => { const v = document.getElementById('video'); v.currentTime = v.buffered.end(v.buffered.length - 1) - 1; })()`);
     const restarted = await b.waitFor(`window.__restart !== null`, 40000);
     t.check('A stalled stream restarts from where it stopped', restarted && Math.abs((await b.ev('window.__restart')) - (await b.ev('player.position()'))) < 5,
-      restarted ? `restart at ${await b.ev('window.__restart')}s` : 'no restart');
+      restarted ? `restart at ${await b.ev('window.__restart')}s` : `no restart: ${await b.ev(`(() => { const v = $('#video'), s = state.stream; return JSON.stringify({ t: v.currentTime, paused: v.paused, seeking: v.seeking, ended: v.ended, stallSince: s.stallSince, msg: ($('#playerMsg') || {}).textContent, overlay: !!openOverlay }); })()`)}`);
     await b.ev(`player.playEpisode = player.__realPlay; player.close()`);
     await sleep(1500);
   },

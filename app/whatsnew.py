@@ -13,6 +13,15 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.1.6": [
+        "Much faster loading from your Tablo: a new computer's first load takes under a minute instead of 5–10, and \"Tablo isn't responding\" during loading is gone.",
+        "A banner shows progress while the TV guide loads for the first time.",
+        "Preview frames when you hover over a recording's timeline.",
+        "Sleep timer in the player: stop after 15–90 minutes or at the end of the show.",
+        "On now: what's airing on your channels, right on the Home page.",
+        "Smaller MP4 exports (about a third smaller), and export several episodes at once.",
+        "Playback recovers when the video converter crashes, instead of stopping as if the show had ended.",
+    ],
     "1.1.5": [
         "Sharper playback: your PC's graphics chip converts the video when it can. For sports, try Smooth motion (60 fps) in Device → Playback.",
         "Streaming channels play in their original quality and start faster.",

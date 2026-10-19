@@ -30,6 +30,9 @@ HLS_SEGMENT_SECONDS = 3
 MAX_STREAM_RESTARTS = 4
 # Live TV keeps this much behind the live point, for pause and rewind (about 1-1.5 GB on disk)
 LIVE_REWIND_MINUTES = 30
+# Recordings: a small preview frame every this many seconds, for the timeline. Named by position in
+# the recording (p01234.jpg = 1234 x PREVIEW_SECONDS), so a restart or a resume point fits in.
+PREVIEW_SECONDS = 5
 
 
 def run_at_full_speed(proc: subprocess.Popen) -> None:
@@ -255,7 +258,9 @@ class TranscodeManager:
             # recording transcodes several times faster than real time and starves a live stream
             # playing at the same time
             read_args = ["-readrate", "2", "-readrate_initial_burst", "30"]
-            hls_args = ["-hls_list_size", "0", "-hls_playlist_type", "event", "-hls_flags", "independent_segments"]
+            # No end marker from FFmpeg: it also writes one when it crashes, and a player that sees it
+            # stops for good. _supervise adds it when the recording has really been converted to the end.
+            hls_args = ["-hls_list_size", "0", "-hls_playlist_type", "event", "-hls_flags", "independent_segments+omit_endlist"]
         if resume:
             # Continuing after FFmpeg died: add to the same playlist (FFmpeg numbers on from its last
             # segment) with a discontinuity marker so the player handles the restarted timestamps
@@ -296,7 +301,16 @@ class TranscodeManager:
             *hls_args,
             "-hls_segment_filename", str(session_dir / "%05d.ts"),
             str(session_dir / "playlist.m3u8"),
+            *([] if live else self._preview_output(start, session_dir)),
         ]
+
+    @staticmethod
+    def _preview_output(start: int, session_dir: Path) -> List[str]:
+        """A second output: timeline preview frames from the video FFmpeg is decoding anyway (scaled
+        down, so interlacing doesn't show). Nothing extra is read from the Tablo."""
+        return ["-map", "0:v:0", "-vf", f"fps=1/{PREVIEW_SECONDS}:round=down,scale=256:-2", "-q:v", "6",
+                "-start_number", str(int(start or 0) // PREVIEW_SECONDS), "-f", "image2",
+                str(session_dir / "p%05d.jpg")]
 
     async def start_browser_transcode(self, session_id: str, input_url: str, start: int = 0, live: bool = True,
                                       passthrough: bool = False) -> str:
@@ -382,7 +396,11 @@ class TranscodeManager:
         while restarts < MAX_STREAM_RESTARTS:
             while sess.proc.poll() is None:
                 await asyncio.sleep(1)
-            if sess.stopped or sess.proc.returncode == 0 or self.sessions.get(sess.session_id) is not sess:
+            if sess.stopped or self.sessions.get(sess.session_id) is not sess:
+                return
+            if sess.proc.returncode == 0:
+                if not live:
+                    self._end_playlist(session_dir)
                 return
             restarts += 1
             enc = plan["encoder"]
@@ -403,6 +421,17 @@ class TranscodeManager:
             sess.encoder = "copy" if plan["encoder"] is None else plan["encoder"]["label"]
             # A restart that dies straight away counts against the limit too
             await asyncio.sleep(3)
+
+    @staticmethod
+    def _end_playlist(session_dir: Path) -> None:
+        """The recording is converted to the end: tell the player there's nothing more coming."""
+        playlist = session_dir / "playlist.m3u8"
+        try:
+            text = playlist.read_text(encoding="utf-8")
+            if "#EXT-X-ENDLIST" not in text:
+                playlist.write_text(text.rstrip("\n") + "\n#EXT-X-ENDLIST\n", encoding="utf-8")
+        except OSError as e:
+            print(f"[Transcode] Couldn't finish the playlist: {e}")
 
     def clean_filename(self, name: str) -> str:
         """Sanitize filename for Windows/macOS/Linux."""

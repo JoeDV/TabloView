@@ -2444,7 +2444,9 @@ const player = {
   // --- Stall watchdog: playing, but the picture hasn't moved ---
   watchdog() {
     const s = state.stream, v = this.video();
-    if (!s.sessionId || v.paused || v.seeking || v.ended) { s.stallSince = 0; s.lastTime = v.currentTime; return; }
+    // A recording that "ended" well before its end had its stream cut off: treat it as stalled
+    const endedEarly = v.ended && s.episodeId && s.duration && this.position() < s.duration - 90;
+    if (!s.sessionId || (!endedEarly && (v.paused || v.seeking || v.ended))) { s.stallSince = 0; s.lastTime = v.currentTime; return; }
     if (v.currentTime !== s.lastTime) {
       s.lastTime = v.currentTime;
       if (s.stallSince) this.clearMessage();
@@ -3455,9 +3457,28 @@ function wireEvents() {
   track.addEventListener('mousemove', e => {
     const hover = $('#tlHover');
     const w = state.stream.channelId && player.liveWindow();
-    hover.textContent = w ? `−${fmtClock((1 - fractionAt(e)) * (w.end - w.start))}` : fmtClock(timeAt(e));
-    hover.style.left = `${e.clientX - track.getBoundingClientRect().left}px`;
+    const label = w ? `−${fmtClock((1 - fractionAt(e)) * (w.end - w.start))}` : fmtClock(timeAt(e));
+    // Recordings: a preview frame, once that part has been converted (frames every 5 s, named by position)
+    const sid = !w && state.stream.sessionId;
+    const frame = sid ? `/api/transcoded/${sid}/p${String(Math.floor(timeAt(e) / 5)).padStart(5, '0')}.jpg` : '';
+    let img = hover.querySelector('img');
+    if (frame) {
+      if (!img) {
+        hover.innerHTML = '<img alt=""><span></span>';
+        img = hover.querySelector('img');
+        img.onerror = () => { img.style.display = 'none'; };
+        img.onload = () => { img.style.display = ''; };
+      }
+      if (img.getAttribute('src') !== frame) img.src = frame;
+      hover.querySelector('span').textContent = label;
+    } else {
+      hover.textContent = label;
+    }
     hover.classList.remove('hidden');
+    // Keep the bubble (with its preview frame) inside the player at either end of the timeline
+    const tr = track.getBoundingClientRect(), half = hover.offsetWidth / 2;
+    const x = e.clientX - tr.left;
+    hover.style.left = `${Math.max(half - tr.left + 8, Math.min(window.innerWidth - tr.left - half - 8, x))}px`;
   });
   track.addEventListener('mouseleave', () => $('#tlHover').classList.add('hidden'));
   $('#bufferSelect').addEventListener('change', e => { state.bufferTarget = parseInt(e.target.value, 10) || 8; save('tablo_buffer_target', state.bufferTarget); });

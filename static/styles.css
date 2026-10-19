@@ -691,7 +691,9 @@ img { display: block; }
 .tl-avail { position: absolute; top: 0; bottom: 0; border-radius: 8px; background: rgba(255, 255, 255, 0.28); }
 .tl-played { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 8px; background: var(--accent); }
 .tl-played::after { content: ''; position: absolute; right: -6px; top: -3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; }
-.tl-hover { position: absolute; bottom: 16px; transform: translateX(-50%); padding: 3px 7px; border-radius: 6px; background: #000; font-size: 12px; white-space: nowrap; pointer-events: none; }
+.tl-hover { position: absolute; bottom: 16px; transform: translateX(-50%); padding: 3px 7px; border-radius: 6px; background: #000; font-size: 12px; white-space: nowrap; pointer-events: none;
+  display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.tl-hover img { width: 192px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 4px; display: block; }
 
 .toasts { position: fixed; bottom: 24px; right: 24px; z-index: 200; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
 .toast {

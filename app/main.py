@@ -205,7 +205,7 @@ async def serve_transcoded_file(session_id: str, filename: str):
 
     return FileResponse(
         str(file_path),
-        media_type="video/mp2t" if filename.endswith(".ts") else "application/octet-stream",
+        media_type="video/mp2t" if filename.endswith(".ts") else "image/jpeg" if filename.endswith(".jpg") else "application/octet-stream",
         headers={"Access-Control-Allow-Origin": "*"}
     )
 
