@@ -255,6 +255,9 @@ export const SUITES = {
     await b.ev(`state.sleep.until = Date.now() + 1500`); await sleep(3000);
     t.check('When it runs out the player closes', await b.ev(`document.getElementById('player').classList.contains('hidden') && !state.sleep`));
     t.check('…and says why', /Sleep timer/.test(await b.ev(`document.getElementById('toasts').textContent`)));
+    await b.ev(`player.open('Test'); player.showTimeline(true); const was = state.captions; document.getElementById('pbCC').click(); window.__cc = [was, state.captions, document.getElementById('pbCC').classList.contains('on')]; player.toggleCaptions()`);
+    const [was, now, on] = await b.ev('window.__cc');
+    t.check('CC button turns captions on and off', now === !was && on === now);
     await b.ev(`state.stream.episodeId = null`);
   },
 

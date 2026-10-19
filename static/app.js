@@ -21,6 +21,7 @@ const ICONS = {
   back: '<path d="m15 18-6-6 6-6"/>',
   next: '<path d="m9 18 6-6-6-6"/>',
   moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+  cc: '<rect x="2" y="5" width="20" height="14" rx="3"/><path d="M10 10.2a2.5 2.5 0 1 0 0 3.6M17 10.2a2.5 2.5 0 1 0 0 3.6"/>',
   up: '<path d="m18 15-6-6-6 6"/>',
   down: '<path d="m6 9 6 6 6-6"/>',
   trash: '<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
@@ -196,6 +197,7 @@ const state = {
   isSyncing: false,
   activeExports: 0,
   bufferTarget: parseInt(store('tablo_buffer_target', '8'), 10) || 8,
+  captions: store('tablo_cc', '0') === '1',
   autoplay: store('tablo_autoplay', '1') !== '0',
   stream: { sessionId: null, hls: null, handler: null, timer: null, episodeId: null, channelId: null },
 };
@@ -2499,7 +2501,7 @@ const player = {
     const keys = [['Space or K', 'Play / pause'], ['← or J', 'Back 10 seconds'], ['→ or L', 'Ahead 30 seconds'],
       ['↑ ↓', 'Volume'], ['M', 'Mute'], ['F', 'Full screen'], ['P', 'Picture in picture'],
       ['&lt; &gt;', 'Slower / faster (recordings)'], ['Home', 'Back to live (live TV)'],
-      ['Page Up / Down', 'Previous / next channel (live TV)'], ['S', 'Skip a commercial break'], ['C', 'Channel list (live TV)'], ['Esc', 'Close the player']];
+      ['Page Up / Down', 'Previous / next channel (live TV)'], ['S', 'Skip a commercial break'], ['T', 'Captions on / off'], ['C', 'Channel list (live TV)'], ['Esc', 'Close the player']];
     openModal(`<div class="dialog-body"><div class="dialog-title">Keyboard shortcuts</div>
       <div class="kbd-list">${keys.map(([k, d]) => `<kbd>${k}</kbd><span>${d}</span>`).join('')}</div></div>
       <div class="dialog-foot"><button class="btn btn-primary" data-action="modal-ok" data-autofocus>Got it</button></div>`);
@@ -2821,6 +2823,33 @@ const player = {
     if (channelId === state.stream.channelId) return;
     await watchLiveChecked(channelId, name, kind);
     this.renderChannels();
+  },
+
+  // --- Closed captions: the broadcast's own captions travel inside the converted video (FFmpeg keeps
+  // them), and hls.js turns them into a text track; this only shows or hides it
+  applyCaptions() {
+    for (const t of this.video().textTracks) {
+      t.mode = state.captions ? 'showing' : 'hidden';
+      if (!t.__raised) {
+        // Broadcast captions sit on the bottom rows, under the player bar: lift them above it
+        t.__raised = true;
+        t.addEventListener('cuechange', () => {
+          for (const c of t.activeCues || []) if (c.line !== 78) { c.snapToLines = false; c.line = 78; }
+        });
+      }
+    }
+    const b = $('#pbCC');
+    b.classList.toggle('on', state.captions);
+    b.title = state.captions ? 'Turn captions off (T)' : 'Captions (T)';
+  },
+
+  toggleCaptions() {
+    state.captions = !state.captions;
+    save('tablo_cc', state.captions ? '1' : '0');
+    this.applyCaptions();
+    toast(state.captions
+      ? (this.video().textTracks.length ? 'Captions on' : 'Captions on: they appear as soon as the broadcast sends them')
+      : 'Captions off');
   },
 
   // --- Sleep timer: stop after some minutes, or when the current show ends. Survives auto-play to the
@@ -3299,6 +3328,7 @@ const ACTIONS = {
   'pb-pip': () => player.togglePip(),
   'pb-live': () => player.goLive(),
   'pb-help': () => player.showHelp(),
+  'pb-cc': () => player.toggleCaptions(),
   'skip-break': () => player.skipBreak(),
   'rerecord': el => rerecordDialog(el.dataset.id),
   'rerecord-pick': async el => {
@@ -3574,6 +3604,7 @@ function wireEvents() {
       PageUp: () => player.surf(-1), PageDown: () => player.surf(1),
       c: () => { if (state.stream.channelId) player.toggleChannels(); },
       s: () => { if (!$('#skipBreak').classList.contains('hidden')) player.skipBreak(); },
+      t: () => player.toggleCaptions(),
       '?': () => player.showHelp(),
     };
     const fn = keys[e.key] || keys[e.key.toLowerCase()];
@@ -3626,6 +3657,8 @@ function wireEvents() {
   track.addEventListener('mouseleave', () => $('#tlHover').classList.add('hidden'));
   $('#bufferSelect').addEventListener('change', e => { state.bufferTarget = parseInt(e.target.value, 10) || 8; save('tablo_buffer_target', state.bufferTarget); });
   const video = $('#video');
+  // A caption track appears once the stream's first captions arrive: show it if captions are on
+  video.textTracks.addEventListener('addtrack', () => player.applyCaptions());
   try { video.volume = Math.max(0, Math.min(1, parseFloat(store('tablo_volume', '1')))); } catch { /* default */ }
   ['play', 'pause', 'volumechange'].forEach(ev => video.addEventListener(ev, () => player.syncButtons()));
   video.addEventListener('click', () => player.togglePlay());
