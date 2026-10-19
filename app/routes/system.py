@@ -7,11 +7,12 @@ import time
 from pathlib import Path
 from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from ..config import APP_NAME, APP_VERSION, IS_PACKAGED, IS_STORE, FFMPEG_PATH, HOME_DIR, DOWNLOADS_DIR
 from ..settings import load_settings, save_settings
 from ..updates import check_for_update
-from .. import encoders, notifications, startup, whatsnew
+from .. import encoders, lanauth, notifications, startup, whatsnew
 from ..tablo_client import tablo_manager
 from ..sync_service import sync_service
 from ..database import get_sync_meta, get_export_jobs, delete_export_job, get_storage_by_show
@@ -28,6 +29,10 @@ class SettingsUpdate(BaseModel):
     export_format: Optional[Literal["smaller", "original"]] = None
     rerecord_failed: Optional[bool] = None
     skip_commercials: Optional[bool] = None
+
+
+class PinRequest(BaseModel):
+    pin: str = Field(min_length=4, max_length=6)
 
 
 class StartupUpdate(BaseModel):
@@ -60,9 +65,56 @@ async def system_info(request: Request):
         "ffmpeg_found": Path(FFMPEG_PATH).is_file() or shutil.which(FFMPEG_PATH) is not None,
         "listening_on_network": host not in ("127.0.0.1", "localhost") if host else None,
         "network_url": f"http://{lan_ip}:{port}" if lan_ip and port else None,
+        "lan_pin_set": lanauth.pin_set(),
         "data_dir": str(HOME_DIR),
         "downloads_dir": str(DOWNLOADS_DIR),
     }
+
+
+@router.get("/lan/status")
+async def lan_status(request: Request):
+    """Whether this device is the PC itself, whether a PIN is set, and whether this device is signed in."""
+    local = lanauth.is_local(request.client.host if request.client else None)
+    return {"local": local, "pin_set": lanauth.pin_set(),
+            "signed_in": local or lanauth.token_ok(request.cookies.get(lanauth.COOKIE))}
+
+
+@router.post("/lan/login")
+async def lan_login(req: PinRequest, request: Request):
+    """Another device signs in with the PIN and is remembered for a while."""
+    if not lanauth.pin_set():
+        raise HTTPException(status_code=401, detail="Set a PIN on the PC running TabloView first (Device page).")
+    ok, wait = lanauth.check_pin(req.pin, request.client.host if request.client else "?")
+    if not ok:
+        raise HTTPException(status_code=429 if wait else 401,
+                            detail=f"Too many wrong PINs. Try again in {wait} seconds." if wait else "That PIN isn't right.")
+    resp = JSONResponse({"success": True})
+    resp.set_cookie(lanauth.COOKIE, lanauth.make_token(), max_age=lanauth.REMEMBER_DAYS * 86400,
+                    httponly=True, samesite="strict")
+    return resp
+
+
+def _only_this_pc(request: Request) -> None:
+    if not lanauth.is_local(request.client.host if request.client else None):
+        raise HTTPException(status_code=403, detail="The PIN can only be changed on the PC running TabloView.")
+
+
+@router.post("/lan/pin")
+async def lan_set_pin(req: PinRequest, request: Request):
+    """Set or change the PIN (on this PC only). Other devices have to sign in again."""
+    _only_this_pc(request)
+    if not lanauth.valid_pin(req.pin):
+        raise HTTPException(status_code=400, detail="The PIN must be 4 to 6 digits.")
+    lanauth.set_pin(req.pin)
+    return {"success": True}
+
+
+@router.post("/lan/signout")
+async def lan_sign_out_all(request: Request):
+    """Every other device has to enter the PIN again."""
+    _only_this_pc(request)
+    lanauth.sign_out_all()
+    return {"success": True}
 
 
 @router.get("/system/update")

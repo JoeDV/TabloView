@@ -24,6 +24,7 @@ NOTES: Dict[str, List[str]] = {
         "Skip commercials for the shows you choose: TabloView finds the breaks in the background, marks them on the timeline and gives you a Skip button (or skips them for you).",
         "Recordings that fail or come out short are recorded again from a rerun when there is one.",
         "Partly watched episodes can be marked unwatched again.",
+        "Using TabloView from phones or other computers? They now sign in with a PIN (this PC never asks). Set it on the Device page under Network access.",
         "Steadier playback on PCs with Intel graphics: the graphics chip's video encoder no longer drops out every so often.",
         "If the video converter does stop, playback picks up again instead of ending as if the show were over.",
     ],

@@ -314,6 +314,19 @@ export const SUITES = {
     await b.ev(`player.playEpisode = player.__realPlay; state.stream.episodeId = null; player.close()`);
   },
 
+  async pin(b, t) {
+    await b.open('#/device');
+    // Set PIN dialog (on the PC): rejects a 3-digit PIN, saves a 4-digit one (intercepted)
+    await b.ev(`void ACTIONS['set-pin']()`); await sleep(400);
+    await b.ev(`document.getElementById('newPin').value = '123'; document.getElementById('savePin').click()`); await sleep(300);
+    t.check('Set PIN rejects fewer than 4 digits', /4 to 6 digits/.test(await b.ev(`document.getElementById('newPinError').textContent`)));
+    await b.ev(`document.getElementById('newPin').value = '2468'; document.getElementById('savePin').click()`); await sleep(500);
+    t.check('Set PIN saves it (intercepted)', await b.ev(`window.__writes.some(w => w[1] === '/api/lan/pin' && w[2].includes('2468'))`));
+    // What another device sees
+    await b.ev(`askForPin('pin_required')`); await sleep(300);
+    t.check('Another device gets a PIN screen', await b.ev(`!!document.getElementById('pinInput') && /Enter the PIN/.test(document.querySelector('.pin-box').textContent)`));
+  },
+
   async whatsnew(b, t) {
     await b.open('#/');
     await b.ev(`window.__fake['/api/system/whatsnew'] = { show: true, version: '9.9.9', notes: ['First thing', 'Second thing'] }; void showWhatsNew()`);

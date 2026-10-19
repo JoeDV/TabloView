@@ -657,6 +657,12 @@ img { display: block; }
 .changelog-version { font-size: 15px; margin-top: 18px; display: flex; gap: 8px; align-items: center; }
 .ad-tag { display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; padding: 1px 6px; border-radius: 6px; background: rgba(242, 184, 75, 0.16); color: var(--warn); font-size: 11.5px; font-weight: 600; vertical-align: middle; }
 .ad-tag.dim { background: var(--surface-2); color: var(--text-3); }
+/* PIN sign-in on other devices */
+.pin-screen { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; background: var(--bg); padding: 16px; }
+.pin-box { width: 100%; max-width: 340px; display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; }
+.pin-box p { color: var(--text-2); }
+.pin-input { width: 100%; text-align: center; font-size: 22px; letter-spacing: 0.4em; height: 48px; }
+.pin-error { color: var(--rec); font-size: 13px; min-height: 18px; }
 .link-btn { background: none; border: 0; padding: 0 0 0 8px; color: var(--accent); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
 .link-btn:hover { text-decoration: underline; }
 .rerecord-row { grid-template-columns: 1fr auto; }

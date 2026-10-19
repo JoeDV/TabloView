@@ -19,7 +19,8 @@ HDR = {"X-TabloView": "1"}
 class ApiGuardTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.client = TestClient(app, base_url="http://127.0.0.1:7070")
+        # As this PC itself (other devices on the network need the PIN; see test_lanauth)
+        cls.client = TestClient(app, base_url="http://127.0.0.1:7070", client=("127.0.0.1", 50000))
         cls.client.__enter__()
 
     @classmethod

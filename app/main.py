@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, Response, JSONResponse
 from .config import (
     APP_NAME, APP_VERSION, STATIC_DIR, TRANSCODE_DIR, DOWNLOADS_DIR, IMAGE_CACHE_DIR, HOST, PORT,
 )
-from . import commercials, encoders, whatsnew
+from . import commercials, encoders, lanauth, whatsnew
 from .database import init_db
 from .tablo_client import tablo_manager
 from .sync_service import sync_service, auto_sync_loop
@@ -99,6 +99,13 @@ async def request_guard(request: Request, call_next):
     # without a CORS preflight, which this server never approves.
     if request.method in _UNSAFE_METHODS and request.headers.get("x-tabloview") != "1":
         return JSONResponse({"detail": "Missing X-TabloView header"}, status_code=403)
+    # Other devices on the network need the PIN (this PC never does)
+    why = lanauth.blocked(request.url.path, request.client.host if request.client else None,
+                          request.cookies.get(lanauth.COOKIE))
+    if why:
+        message = ("Enter the PIN to use TabloView on this device." if why == "pin_required" else
+                   "Set a PIN on the PC running TabloView (Device page) to use it from other devices.")
+        return JSONResponse({"detail": message, "code": why}, status_code=401)
     return await call_next(request)
 
 

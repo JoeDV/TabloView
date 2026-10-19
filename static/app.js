@@ -84,9 +84,42 @@ async function api(url, options = {}) {
   const res = await fetch(url, { headers: API_HEADERS, ...options });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
+    if (res.status === 401 && (data.code === 'pin_required' || data.code === 'pin_not_set')) askForPin(data.code);
     throw new Error(data.detail || `${res.status} ${res.statusText}`);
   }
   return res.json();
+}
+
+// Other devices on the network sign in with the PIN set on the PC (once; remembered for 90 days)
+let pinScreen = null;
+function askForPin(code) {
+  if (pinScreen) return;
+  pinScreen = document.createElement('div');
+  pinScreen.className = 'pin-screen';
+  pinScreen.innerHTML = code === 'pin_not_set'
+    ? `<div class="pin-box"><div class="brand-mark" data-icon="tv"></div><h2>TabloView</h2>
+        <p>To use TabloView on this device, first set a PIN on the PC running TabloView: <b>Device → Network access</b>.</p>
+        <button class="btn btn-primary" onclick="location.reload()">Try again</button></div>`
+    : `<form class="pin-box" id="pinForm"><div class="brand-mark" data-icon="tv"></div><h2>TabloView</h2>
+        <p>Enter the PIN to use TabloView on this device.</p>
+        <input class="input pin-input" id="pinInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="current-password" autofocus>
+        <div class="pin-error" id="pinError"></div>
+        <button class="btn btn-primary" type="submit">Sign in</button></form>`;
+  document.body.appendChild(pinScreen);
+  hydrateIcons(pinScreen);
+  const form = $('#pinForm');
+  if (!form) return;
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const err = $('#pinError');
+    err.textContent = '';
+    const res = await fetch('/api/lan/login', { method: 'POST', headers: API_HEADERS, body: JSON.stringify({ pin: $('#pinInput').value }) });
+    if (res.ok) { location.reload(); return; }
+    const data = await res.json().catch(() => ({}));
+    err.textContent = (data.detail && typeof data.detail === 'string') ? data.detail : 'The PIN must be 4 to 6 digits.';
+    $('#pinInput').select();
+  });
+  setTimeout(() => $('#pinInput') && $('#pinInput').focus(), 50);
 }
 
 const debounce = (fn, ms) => {
@@ -1044,6 +1077,39 @@ async function rerecordDialog(id) {
         : `<div class="dialog-text">It doesn’t air again in the next two weeks of the guide. With “Record failed recordings again” on (Device page), TabloView keeps checking and records it if it comes up.</div>`}
     </div>
     <div class="dialog-foot"><button class="btn" data-action="modal-ok" data-autofocus>Close</button></div>`);
+}
+
+// Set or change the PIN (on the PC). Resolves true once it's saved.
+async function setPinDialog(title = 'PIN for other devices', text = 'Phones, tablets and other computers on your network sign in with it once. Changing it signs them all out.') {
+  let saved = false;
+  await openModal(`
+    <form class="dialog-body" id="setPinForm">
+      <div class="dialog-title">${esc(title)}</div>
+      <div class="dialog-text">${esc(text)}</div>
+      <input class="input pin-input" id="newPin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="4 to 6 digits" autocomplete="new-password" data-autofocus style="margin-top:14px">
+      <div class="pin-error" id="newPinError"></div>
+    </form>
+    <div class="dialog-foot">
+      <button class="btn" data-action="modal-cancel">Cancel</button>
+      <button class="btn btn-primary" id="savePin">Save PIN</button>
+    </div>`, {
+    onReady: el => {
+      const save = async e => {
+        e && e.preventDefault();
+        const pin = el.querySelector('#newPin').value.trim();
+        if (!/^[0-9]{4,6}$/.test(pin)) { el.querySelector('#newPinError').textContent = 'Use 4 to 6 digits.'; return; }
+        try {
+          await api('/api/lan/pin', { method: 'POST', body: JSON.stringify({ pin }) });
+          saved = true;
+          toast('PIN saved', 'success');
+          closeModal(true);
+        } catch (err) { el.querySelector('#newPinError').textContent = err.message; }
+      };
+      el.querySelector('#setPinForm').addEventListener('submit', save);
+      el.querySelector('#savePin').addEventListener('click', save);
+    },
+  });
+  return saved;
 }
 
 async function setProtected(id, value) {
@@ -2093,7 +2159,12 @@ PAGES.device = async (r, token) => {
           <input type="checkbox" class="switch" data-change="allow-lan" ${settings.allow_lan ? 'checked' : ''}>
           <span>Allow other devices on my network</span>
         </label>
-        <p class="dim" style="margin-top:10px;font-size:12.5px">Anyone on your Wi-Fi could then watch, schedule and delete recordings. Leave this off on shared or public networks.</p>`
+        <p class="dim" style="margin-top:10px;font-size:12.5px">Other devices sign in with a PIN; this PC never asks for it. Leave this off on shared or public networks.</p>
+        ${settings.allow_lan && !info.lan_pin_set ? '<p style="margin-top:10px;color:var(--warn);font-size:13px;font-weight:600">Set a PIN: other devices can’t use TabloView until you do.</p>' : ''}
+        <div class="panel-actions">
+          <button class="btn btn-sm" data-action="set-pin">${info.lan_pin_set ? 'Change PIN' : 'Set PIN'}</button>
+          ${info.lan_pin_set ? '<button class="btn btn-sm btn-ghost" data-action="pin-signout">Sign out other devices</button>' : ''}
+        </div>`
       : '<p class="dim" style="font-size:13px">Running from source: network access follows the <code>--host</code> option in the start command.</p>'}
       ${info.listening_on_network && info.network_url ? `<p style="margin-top:12px">On other devices, open <b>${esc(info.network_url)}</b></p>` : ''}
     </div>`;
@@ -3328,6 +3399,11 @@ const ACTIONS = {
   'pb-pip': () => player.togglePip(),
   'pb-live': () => player.goLive(),
   'pb-help': () => player.showHelp(),
+  'set-pin': async () => { if (await setPinDialog()) route(); },
+  'pin-signout': async () => {
+    if (!await confirmDialog({ title: 'Sign out other devices?', text: 'Every phone, tablet and other computer will have to enter the PIN again.', confirm: 'Sign out' })) return;
+    try { await api('/api/lan/signout', { method: 'POST' }); toast('Other devices will have to enter the PIN again', 'success'); } catch (err) { toast(err.message, 'error'); }
+  },
   'pb-cc': () => player.toggleCaptions(),
   'skip-break': () => player.skipBreak(),
   'rerecord': el => rerecordDialog(el.dataset.id),
@@ -3412,12 +3488,13 @@ const CHANGES = {
   'allow-lan': async el => {
     const enable = el.checked;
     if (enable) {
-      const ok = await confirmDialog({
-        title: 'Allow other devices on your network?',
-        text: 'Anyone on your Wi-Fi will be able to open TabloView and control your Tablo. If Windows asks, allow TabloView on Private networks only.',
-        confirm: 'Allow', danger: false,
-      });
-      if (!ok) { el.checked = false; return; }
+      // A PIN first, so nothing on the network can use TabloView without it
+      let st = {};
+      try { st = await api('/api/lan/status'); } catch { /* ask anyway */ }
+      if (!st.pin_set && !(await setPinDialog('Choose a PIN for other devices', 'Phones, tablets and other computers will ask for it once; this PC never does. If Windows asks, allow TabloView on Private networks only.'))) {
+        el.checked = false;
+        return;
+      }
     }
     el.disabled = true;
     try {
