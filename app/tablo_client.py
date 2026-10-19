@@ -14,6 +14,12 @@ from tablo_api import TabloAuth, TabloClient
 from tablo_api.models import TabloDevice
 from .config import CONFIG_FILE, TABLO_EMAIL, TABLO_PASSWORD
 
+# Requests in flight to the Tablo at once. Its small web server stops accepting connections for a
+# minute or more when a sync fires dozens in parallel, so everything shares this limit.
+LOCAL_CONCURRENCY = 4
+# Of those, at most this many for syncs (request_bulk), so what the user clicks never waits long
+BULK_CONCURRENCY = 2
+
 
 class TabloManager:
     def __init__(self):
@@ -27,6 +33,8 @@ class TabloManager:
         self.auth_problems: Dict[str, str] = {}
         # When requests to the Tablo started failing to connect (None while it answers)
         self.unreachable_since: Optional[float] = None
+        self._local_slots = asyncio.Semaphore(LOCAL_CONCURRENCY)
+        self._bulk_slots = asyncio.Semaphore(BULK_CONCURRENCY)
         self.load_cached_config()
 
     UNREACHABLE_MESSAGE = "Your Tablo isn't responding right now. This usually clears up on its own: wait a minute and try again."
@@ -123,32 +131,39 @@ class TabloManager:
     def is_authenticated(self) -> bool:
         return self.device is not None
 
+    async def request_bulk(self, method: str, path: str, body: str = "") -> httpx.Response:
+        """request_local for syncs: they queue among themselves first, so an interactive request
+        waits behind at most BULK_CONCURRENCY of them rather than the whole sync."""
+        async with self._bulk_slots:
+            return await self.request_local(method, path, body)
+
     async def request_local(self, method: str, path: str, body: str = "") -> httpx.Response:
         """Send an HMAC-MD5 authenticated request to the active local Tablo device."""
         if not self.device:
             raise RuntimeError("Tablo device not configured or authenticated")
 
-        # The Tablo signs only the bare path: a query string (e.g. ?state=scheduled) must be
-        # left out of the signature or the device answers 401.
-        auth_header, date_header = TabloAuth.make_device_auth(method, path.split("?", 1)[0], body)
         url = self.device.local_url.rstrip("/") + path
-        headers = {
-            "Authorization": auth_header,
-            "Date": date_header,
-            "User-Agent": "Tablo-FAST/1.7.0 (Mobile; iPhone; iOS 18.4)",
-            "Accept": "*/*",
-            "Connection": "keep-alive",
-        }
-        if body:
-            headers["Content-Type"] = "application/json"
-
         try:
-            resp = await self._http.request(
-                method=method,
-                url=url,
-                content=body.encode() if body else None,
-                headers=headers
-            )
+            async with self._local_slots:
+                # Signed once a slot is free, so the signature's date isn't stale after waiting.
+                # The Tablo signs only the bare path: a query string (e.g. ?state=scheduled) must be
+                # left out of the signature or the device answers 401.
+                auth_header, date_header = TabloAuth.make_device_auth(method, path.split("?", 1)[0], body)
+                headers = {
+                    "Authorization": auth_header,
+                    "Date": date_header,
+                    "User-Agent": "Tablo-FAST/1.7.0 (Mobile; iPhone; iOS 18.4)",
+                    "Accept": "*/*",
+                    "Connection": "keep-alive",
+                }
+                if body:
+                    headers["Content-Type"] = "application/json"
+                resp = await self._http.request(
+                    method=method,
+                    url=url,
+                    content=body.encode() if body else None,
+                    headers=headers
+                )
         except httpx.TransportError:
             # Connection refused or timed out: the Tablo sometimes stops answering for a minute or so
             if self.unreachable_since is None:

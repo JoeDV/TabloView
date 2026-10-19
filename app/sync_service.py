@@ -20,6 +20,7 @@ from .database import (
     set_sync_meta,
     prune_obsolete_shows_and_episodes,
     batch_upsert_guide_airings,
+    guide_airings_to_fetch,
     clear_stale_schedule_rules,
 )
 
@@ -75,7 +76,7 @@ class LibrarySyncService:
             # 1. Fetch series definitions first
             series_map: Dict[str, Dict[str, Any]] = {}
             try:
-                series_resp = await tablo_manager.request_local("GET", "/recordings/series")
+                series_resp = await tablo_manager.request_bulk("GET", "/recordings/series")
                 if series_resp.status_code == 200:
                     series_paths = series_resp.json()
                     if isinstance(series_paths, list):
@@ -84,7 +85,7 @@ class LibrarySyncService:
                         async def fetch_series(sp: str):
                             async with sem_series:
                                 try:
-                                    s_res = await tablo_manager.request_local("GET", sp)
+                                    s_res = await tablo_manager.request_bulk("GET", sp)
                                     if s_res.status_code == 200:
                                         s_data = s_res.json()
                                         s_info = s_data.get("series", {})
@@ -109,7 +110,7 @@ class LibrarySyncService:
                 print(f"[LibrarySync] Error fetching series paths: {e}")
 
             # 2. Fetch all recorded airings
-            airings_resp = await tablo_manager.request_local("GET", "/recordings/airings")
+            airings_resp = await tablo_manager.request_bulk("GET", "/recordings/airings")
             if airings_resp.status_code != 200:
                 raise RuntimeError(f"Failed to fetch airings: HTTP {airings_resp.status_code}")
 
@@ -126,7 +127,7 @@ class LibrarySyncService:
             async def fetch_airing(path: str):
                 async with sem:
                     try:
-                        res = await tablo_manager.request_local("GET", path)
+                        res = await tablo_manager.request_bulk("GET", path)
                         if res.status_code == 200:
                             data = res.json()
                             data["_path"] = path
@@ -285,7 +286,7 @@ class LibrarySyncService:
 
         for method, endpoint, cat in guide_endpoints:
             try:
-                resp = await tablo_manager.request_local(method, endpoint)
+                resp = await tablo_manager.request_bulk(method, endpoint)
                 if resp.status_code != 200:
                     continue
                 paths = resp.json()
@@ -296,7 +297,7 @@ class LibrarySyncService:
                 # recording rule but no current airings (e.g. between seasons) come from this filter.
                 scheduled_paths = None
                 try:
-                    sched_resp = await tablo_manager.request_local(method, f"{endpoint}?state=scheduled")
+                    sched_resp = await tablo_manager.request_bulk(method, f"{endpoint}?state=scheduled")
                     if sched_resp.status_code == 200 and isinstance(sched_resp.json(), list):
                         scheduled_paths = sched_resp.json()
                         extra = [p for p in scheduled_paths if p not in set(paths)]
@@ -309,7 +310,7 @@ class LibrarySyncService:
                 async def fetch_item(p: str):
                     async with sem:
                         try:
-                            r = await tablo_manager.request_local("GET", p)
+                            r = await tablo_manager.request_bulk("GET", p)
                             if r.status_code == 200:
                                 d = r.json()
                                 info = d.get(cat) or d.get("series") or d.get("movie") or d.get("sport") or {}
@@ -359,15 +360,18 @@ class LibrarySyncService:
         # Also sync all upcoming guide airings to detect Primetime New and Season Premieres
         try:
             print("[GuideSync] Syncing upcoming broadcast airings for Primetime & Premiere detection...")
-            airings_resp = await tablo_manager.request_local("GET", "/guide/airings")
+            airings_resp = await tablo_manager.request_bulk("GET", "/guide/airings")
             if airings_resp.status_code == 200:
                 airing_paths = airings_resp.json()
                 if isinstance(airing_paths, list):
+                    listed = len(airing_paths)
+                    airing_paths = guide_airings_to_fetch(airing_paths)
+                    print(f"[GuideSync] {listed} upcoming airings; fetching {len(airing_paths)} new or record-status ones")
                     sem_air = asyncio.Semaphore(50)
                     async def fetch_guide_airing(p: str):
                         async with sem_air:
                             try:
-                                r = await tablo_manager.request_local("GET", p)
+                                r = await tablo_manager.request_bulk("GET", p)
                                 if r.status_code == 200:
                                     d = r.json()
                                     ep = d.get('episode', {})
