@@ -2366,8 +2366,11 @@ const player = {
       nextEp: null, upNextOffered: false,
     });
     if (ep) this.findNext(ep).then(next => { if (state.stream.episodeId === id) state.stream.nextEp = next; });
-    if (!sameEpisode) this.loadBreaks(id);
     this.showTimeline(true);
+    // A restart of the same recording (a jump past what's converted, a stall) keeps its breaks;
+    // showTimeline(false) in finishEpisode cleared the marks, so draw them again
+    if (sameEpisode) this.drawBreaks();
+    else this.loadBreaks(id);
     this.open(title);
     this.setStatus(`<span class="wait">${resuming ? `Resuming at ${fmtClock(start)}…` : 'Starting stream…'}</span>`);
     try {
