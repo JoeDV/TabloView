@@ -5,6 +5,7 @@ Runs the local web server, opens TabloView in the default browser, and keeps a s
 can still run `python -m uvicorn app.main:app` directly.
 """
 
+import asyncio
 import os
 import sys
 import json
@@ -32,9 +33,9 @@ def _setup_logging():
 if sys.stdout is None or getattr(sys, "frozen", False):
     _setup_logging()
 
-from app.config import APP_NAME, APP_VERSION, DOWNLOADS_DIR, LOG_DIR  # noqa: E402
+from app.config import APP_NAME, APP_VERSION, DOWNLOADS_DIR, IS_STORE, LOG_DIR, STORE_LINK  # noqa: E402
 from app.settings import load_settings  # noqa: E402
-from app import notifications, startup  # noqa: E402
+from app import notifications, startup, updates  # noqa: E402
 
 
 def running_tabloview(port: int) -> bool:
@@ -175,9 +176,28 @@ def main():
         runner.stop()
         icon.stop()
 
+    def on_check_updates(icon, _item):
+        """Store copy: open TabloView's page in the Store (an update shows there as an Update button).
+        Installer copy: check now, and open the download if there's a newer version."""
+        if IS_STORE:
+            os.startfile(STORE_LINK)
+            return
+
+        def check():
+            u = asyncio.run(updates.check_for_update(force=True))
+            if u.get("update_available") and u.get("download_url"):
+                icon.notify(f"Version {u['latest']} is available. Opening the download.", APP_NAME)
+                webbrowser.open(u["download_url"])
+            elif u.get("error"):
+                icon.notify("Couldn't check for updates right now. Try again later.", APP_NAME)
+            else:
+                icon.notify(f"You have the latest version ({APP_VERSION}).", APP_NAME)
+        threading.Thread(target=check, name="update-check", daemon=True).start()
+
     menu = pystray.Menu(
         pystray.MenuItem("Open TabloView", lambda: webbrowser.open(runner.url), default=True),
         pystray.MenuItem("Open downloads folder", lambda: open_folder(DOWNLOADS_DIR)),
+        pystray.MenuItem("Check for updates", on_check_updates),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(f"{APP_NAME} {APP_VERSION}", None, enabled=False),
         pystray.MenuItem("Quit TabloView", on_quit),

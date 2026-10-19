@@ -337,6 +337,19 @@ export const SUITES = {
     t.check('Another device gets a PIN screen', await b.ev(`!!document.getElementById('pinInput') && /Enter the PIN/.test(document.querySelector('.pin-box').textContent)`));
   },
 
+  async storeupdate(b, t) {
+    await b.open('#/');
+    await sleep(2000);  // let the page's own update check finish first
+    await b.ev(`window.__fake['/api/system/update'] = { current: '1.1.6', latest: '1.1.7', update_available: true, store: true, enabled: true, download_url: 'ms-windows-store://pdp/?productid=9NCWVSC7KX2N', notes: null, error: null }; checkForUpdate(true)`);
+    await sleep(600);
+    t.check('Store copy shows Update available, linking to the Store',
+      await b.ev(`!$('#updateNotice').classList.contains('hidden') && $('#updateNotice').href.startsWith('ms-windows-store:') && /1\\.1\\.7/.test($('#updateNoticeText').textContent)`));
+    await b.ev(`window.__fake['/api/system/update'] = { current: '1.1.7', latest: null, update_available: false, store: true, enabled: true, download_url: 'ms-windows-store://pdp/?productid=9NCWVSC7KX2N', error: null }; void checkForUpdate(true)`);
+    await sleep(800);
+    await b.go('#/device', `document.querySelector('[data-action="check-update"]')`);
+    t.check('Device → About offers Check now and Open in the Store', /Open in the Store/.test(await b.ev(`document.getElementById('view').textContent`)));
+  },
+
   async whatsnew(b, t) {
     await b.open('#/');
     await b.ev(`window.__fake['/api/system/whatsnew'] = { show: true, version: '9.9.9', notes: ['First thing', 'Second thing'] }; void showWhatsNew()`);

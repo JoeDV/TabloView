@@ -1,4 +1,6 @@
-"""Checks a published version.json and reports whether a newer TabloView is available."""
+"""Reports whether a newer TabloView is available: from the published version.json for installer copies,
+and from the Microsoft Store itself for Store copies (the Store installs the update; this only tells
+the user it's there)."""
 
 import os
 import re
@@ -9,7 +11,7 @@ from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 import httpx
 
-from .config import APP_VERSION, UPDATE_INFO_URL, IS_STORE
+from .config import APP_VERSION, UPDATE_INFO_URL, IS_STORE, STORE_LINK
 
 CHECK_EVERY_SECONDS = 6 * 3600
 _cache: Dict[str, Any] = {"checked": 0.0, "result": None}
@@ -37,20 +39,40 @@ def direct_download_url(url: str) -> str:
     return url
 
 
+async def store_update_version() -> Optional[str]:
+    """The newer version of this app the Microsoft Store has for this PC, or None."""
+    from winrt.windows.services.store import StoreContext
+    found = await StoreContext.get_default().get_app_and_optional_store_package_updates_async()
+    for update in found:
+        v = update.package.id.version
+        return f"{v.major}.{v.minor}.{v.build}"
+    return None
+
+
 async def check_for_update(force: bool = False) -> Dict[str, Any]:
-    """Return {'current', 'latest', 'update_available', 'download_url', 'notes', 'error'}.
+    """Return {'current', 'latest', 'update_available', 'download_url', 'notes', 'error', 'store'}.
     Results are cached for CHECK_EVERY_SECONDS; failures never raise."""
-    # The Store updates its own installs, and the published download is a Windows installer
+    # The published download is a Windows installer; Store copies ask the Store instead
     url = "" if IS_STORE or sys.platform != "win32" else update_url()
     base: Dict[str, Any] = {"current": APP_VERSION, "latest": None, "update_available": False,
-                            "download_url": None, "notes": None, "error": None, "enabled": bool(url),
-                            "store": IS_STORE}
-    if not url:
+                            "download_url": STORE_LINK if IS_STORE else None, "notes": None, "error": None,
+                            "enabled": bool(url) or IS_STORE, "store": IS_STORE}
+    if not base["enabled"]:
         return base
     if not force and _cache["result"] and time.time() - _cache["checked"] < CHECK_EVERY_SECONDS:
         return _cache["result"]
 
     result = dict(base)
+    if IS_STORE:
+        try:
+            latest = await store_update_version()
+            result.update(latest=latest, update_available=bool(latest) and _version_tuple(latest) > _version_tuple(APP_VERSION))
+        except Exception as e:
+            result["error"] = f"Couldn't check the Microsoft Store: {e}"
+            print(f"[Updates] {result['error']}")
+        _cache.update(checked=time.time(), result=result)
+        return result
+
     try:
         async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
             resp = await client.get(url, headers={"Cache-Control": "no-cache"})

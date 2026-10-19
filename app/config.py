@@ -48,6 +48,8 @@ def _package_family_name() -> str:
 STORE_PACKAGE = _package_family_name()
 IS_STORE = bool(STORE_PACKAGE)
 STORE_URL = "https://apps.microsoft.com/detail/9NCWVSC7KX2N"
+# Opens TabloView's page in the Microsoft Store app (where an update shows an Update button)
+STORE_LINK = "ms-windows-store://pdp/?productid=9NCWVSC7KX2N"
 
 # Read-only resources (static UI, bundled ffmpeg)
 BASE_DIR = Path(__file__).resolve().parent.parent

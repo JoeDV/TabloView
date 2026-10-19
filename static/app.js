@@ -494,7 +494,8 @@ async function checkForUpdate(force = false) {
     if (u.update_available) {
       $('#updateNoticeText').textContent = `Update available: ${u.latest}`;
       notice.href = u.download_url || '#';
-      notice.title = u.notes ? `What's new: ${u.notes}` : 'Download the new version';
+      notice.title = u.store ? 'Get it from the Microsoft Store' : u.notes ? `What's new: ${u.notes}` : 'Download the new version';
+      notice.target = u.store ? '_self' : '_blank';
     }
     return u;
   } catch {
@@ -2394,7 +2395,10 @@ async function deleteWatchedForShow(el) {
 
 function updateStatusHtml() {
   const u = state.update;
-  if (u && u.store) return 'Kept up to date by the Microsoft Store';
+  if (u && u.store) {
+    if (u.update_available) return `<a href="${esc(u.download_url)}" style="color:var(--accent);font-weight:600">Version ${esc(u.latest)} is available in the Microsoft Store, open it</a>`;
+    return `Kept up to date by the Microsoft Store <button class="btn btn-sm btn-ghost" data-action="check-update">Check now</button> <a class="btn btn-sm btn-ghost" href="${esc(u.download_url)}">Open in the Store</a>`;
+  }
   if (!u || !u.enabled) return '<span class="dim">Update checks aren’t set up for this copy</span>';
   const btn = ' <button class="btn btn-sm btn-ghost" data-action="check-update">Check now</button>';
   if (u.update_available) {
