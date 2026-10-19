@@ -4,11 +4,12 @@ extracts rich metadata, resolves artwork, and updates the local SQLite cache.
 """
 
 import asyncio
+import json
 import re
 import hashlib
 import time
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any, List
+from typing import Callable, Optional, Dict, Any, List
 
 import httpx
 
@@ -24,7 +25,7 @@ from .database import (
     get_sync_meta,
     prune_obsolete_shows_and_episodes,
     batch_upsert_guide_airings,
-    guide_airings_to_fetch,
+    prune_guide_airings,
     clear_stale_schedule_rules,
 )
 
@@ -56,13 +57,100 @@ def extract_image_url(img_obj: Any) -> Optional[str]:
     return None
 
 
-# Guide airings: more than this to fetch counts as a long load (paced, with a progress banner)
-LARGE_AIRING_FETCH = 300
-AIRING_CHUNK = 100
-AIRING_RETRIES = 5
+# Objects per POST /batch. The Tablo closes the connection after every request, and a burst of
+# thousands of connections makes it refuse new ones for about a minute; batches avoid that.
+BATCH_SIZE = 50
+BATCH_PAUSE = 0.2
+BATCH_RETRIES = 5
 # The Tablo refuses connections for about a minute after too many requests
 TABLO_BREAK_SECONDS = 75
-RETRY = object()
+
+
+async def fetch_objects(paths: List[str], on_chunk: Optional[Callable[[Dict[str, Any]], None]] = None,
+                        progress: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Fetch Tablo objects by path, BATCH_SIZE per request. If the Tablo stops answering, wait it out
+    and carry on; if it rejects a batch, use smaller ones (down to single GETs). on_chunk gets each
+    chunk's results as they arrive; progress (the banner's dict) gets "done" and "waiting_until"."""
+    results: Dict[str, Any] = {}
+    size = BATCH_SIZE
+    i = 0
+    retries = 0
+    while i < len(paths):
+        chunk = paths[i:i + size]
+        try:
+            if size > 1:
+                r = await tablo_manager.request_bulk("POST", "/batch", json.dumps(chunk))
+                got = r.json() if r.status_code == 200 else None
+                if not isinstance(got, dict):
+                    size = max(1, size // 5)
+                    print(f"[Sync] The Tablo rejected a batch (HTTP {r.status_code}); using batches of {size}")
+                    continue
+            else:
+                r = await tablo_manager.request_bulk("GET", chunk[0])
+                got = {chunk[0]: r.json()} if r.status_code == 200 else {}
+        except httpx.TransportError:
+            if retries >= BATCH_RETRIES:
+                print("[Sync] The Tablo still isn't answering; stopping here")
+                break
+            retries += 1
+            print(f"[Sync] Tablo stopped answering; waiting {TABLO_BREAK_SECONDS} s before continuing")
+            if progress is not None:
+                progress["waiting_until"] = time.time() + TABLO_BREAK_SECONDS
+            await asyncio.sleep(TABLO_BREAK_SECONDS)
+            if progress is not None:
+                progress["waiting_until"] = None
+            continue
+        except ValueError:
+            got = {}
+        retries = 0
+        found = {p: d for p, d in got.items() if p in chunk and isinstance(d, dict)}
+        results.update(found)
+        if on_chunk:
+            on_chunk(found)
+        i += len(chunk)
+        if progress is not None:
+            progress["done"] = i
+        if i < len(paths):
+            await asyncio.sleep(BATCH_PAUSE)
+    return results
+
+
+def guide_airing_row(p: str, d: Dict[str, Any]) -> Dict[str, Any]:
+    """A /guide/... airing object as a guide_airings row (with New / Primetime / Premiere flags)."""
+    ep = d.get('episode', {})
+    ad = d.get('airing_details', {})
+    ch = ad.get('channel', {}).get('channel', {})
+    qual = [q.lower() for q in d.get('qualifiers', [])]
+    ep_num = ep.get('number') or ep.get('episode_number') or 0
+    season_num = ep.get('season_number') or 0
+    is_new = 1 if 'new' in qual else 0
+    is_premiere = 1 if (
+        'season_premiere' in qual or
+        'series_premiere' in qual or
+        ('premiere' in qual and is_new) or
+        (is_new and ep_num == 1 and season_num > 0)
+    ) else 0
+    ep_title = ep.get('title')
+    if not ep_title:
+        ep_title = f"Episode {ep_num}" if ep_num else (ad.get('show_title') or "Episode")
+    return {
+        "path": p,
+        "series_path": d.get('series_path') or '',
+        "show_title": ad.get('show_title') or 'Unknown',
+        "episode_title": ep_title,
+        "season_number": season_num,
+        "episode_number": ep_num,
+        "air_datetime": ad.get('datetime') or '',
+        "duration": ad.get('duration') or 0,
+        "channel_call_sign": ch.get('call_sign') or ch.get('name') or '',
+        "channel_identifier": ch.get('channel_identifier'),
+        "channel_network": ch.get('network') or '',
+        "qualifiers": qual,
+        "is_new": is_new,
+        "is_primetime": 1 if 'primetime' in qual else 0,
+        "is_premiere": is_premiere,
+        "schedule_state": (d.get('schedule') or {}).get('state') or 'none',
+    }
 
 
 class LibrarySyncService:
@@ -70,7 +158,7 @@ class LibrarySyncService:
         self.is_syncing = False
         self.is_guide_syncing = False
         self.last_error: Optional[str] = None
-        # While a long guide load runs (first one on a PC, or thousands of airings): shown as a banner.
+        # While the first guide load on this PC runs: shown as a banner.
         # {"first", "step": "shows"|"airings", "done", "total", "started", "waiting_until"}
         self.guide_progress: Optional[Dict[str, Any]] = None
 
@@ -96,32 +184,20 @@ class LibrarySyncService:
                 if series_resp.status_code == 200:
                     series_paths = series_resp.json()
                     if isinstance(series_paths, list):
-                        sem_series = asyncio.Semaphore(15)
-
-                        async def fetch_series(sp: str):
-                            async with sem_series:
-                                try:
-                                    s_res = await tablo_manager.request_bulk("GET", sp)
-                                    if s_res.status_code == 200:
-                                        s_data = s_res.json()
-                                        s_info = s_data.get("series", {})
-                                        title = s_info.get("title")
-                                        cover = extract_image_url(s_info.get("cover_image"))
-                                        thumb = extract_image_url(s_info.get("thumbnail_image"))
-                                        backdrop = extract_image_url(s_info.get("background_image"))
-                                        series_map[sp] = {
-                                            "path": sp,
-                                            "title": title,
-                                            "description": s_info.get("description", ""),
-                                            "genres": s_info.get("genres", []),
-                                            "cover_url": cover or thumb,
-                                            "backdrop_url": backdrop,
-                                            "raw": s_data
-                                        }
-                                except Exception as e:
-                                    print(f"Error fetching series {sp}: {e}")
-
-                        await asyncio.gather(*[fetch_series(sp) for sp in series_paths])
+                        for sp, s_data in (await fetch_objects(series_paths)).items():
+                            s_info = s_data.get("series", {})
+                            cover = extract_image_url(s_info.get("cover_image"))
+                            thumb = extract_image_url(s_info.get("thumbnail_image"))
+                            backdrop = extract_image_url(s_info.get("background_image"))
+                            series_map[sp] = {
+                                "path": sp,
+                                "title": s_info.get("title"),
+                                "description": s_info.get("description", ""),
+                                "genres": s_info.get("genres", []),
+                                "cover_url": cover or thumb,
+                                "backdrop_url": backdrop,
+                                "raw": s_data
+                            }
             except Exception as e:
                 print(f"[LibrarySync] Error fetching series paths: {e}")
 
@@ -136,25 +212,11 @@ class LibrarySyncService:
 
             print(f"[LibrarySync] Found {len(airing_paths)} recorded airing paths. Fetching details...")
 
-            # 3. Concurrently fetch individual airing objects
+            # 3. Fetch the airing objects, in batches
             airings_data: List[Dict[str, Any]] = []
-            sem = asyncio.Semaphore(20)
-
-            async def fetch_airing(path: str):
-                async with sem:
-                    try:
-                        res = await tablo_manager.request_bulk("GET", path)
-                        if res.status_code == 200:
-                            data = res.json()
-                            data["_path"] = path
-                            return data
-                    except Exception as e:
-                        print(f"Failed to fetch airing {path}: {e}")
-                    return None
-
-            tasks = [fetch_airing(p) for p in airing_paths]
-            results = await asyncio.gather(*tasks)
-            airings_data = [r for r in results if r]
+            for path, data in (await fetch_objects(airing_paths)).items():
+                data["_path"] = path
+                airings_data.append(data)
 
             print(f"[LibrarySync] Successfully fetched {len(airings_data)} airing records.")
 
@@ -303,7 +365,6 @@ class LibrarySyncService:
         ]
 
         total_synced = 0
-        sem = asyncio.Semaphore(25)
 
         for method, endpoint, cat in guide_endpoints:
             try:
@@ -328,44 +389,26 @@ class LibrarySyncService:
                 except Exception as e:
                     print(f"[GuideSync] Couldn't list scheduled {cat}: {e}")
 
-                async def fetch_item(p: str):
-                    async with sem:
-                        try:
-                            r = await tablo_manager.request_bulk("GET", p)
-                            if r.status_code == 200:
-                                d = r.json()
-                                info = d.get(cat) or d.get("series") or d.get("movie") or d.get("sport") or {}
-                                title = info.get("title") or d.get("title") or "Unknown"
-                                desc = info.get("description") or d.get("description") or ""
-                                genres = info.get("genres") or []
-                                cover = extract_image_url(info.get("cover_image") or info.get("thumbnail_image"))
-                                backdrop = extract_image_url(info.get("background_image"))
-                                counts = d.get("show_counts") or {}
-                                rule = d.get("schedule_rule") or (d.get("schedule") or {}).get("rule") or "none"
-
-                                upsert_guide_show({
-                                    "path": p,
-                                    "object_id": d.get("object_id"),
-                                    "title": title,
-                                    "category": cat,
-                                    "description": desc,
-                                    "cover_url": cover,
-                                    "backdrop_url": backdrop,
-                                    "genres": genres,
-                                    "schedule_rule": rule,
-                                    "airing_count": counts.get("airing_count", 0),
-                                    "scheduled_count": counts.get("scheduled_count", 0),
-                                    "orig_air_date": info.get("orig_air_date", ""),
-                                    "recordings_path": d.get("recordings_path", ""),
-                                    "raw_json": d
-                                })
-                                return 1
-                        except Exception:
-                            pass
-                        return 0
-
-                results = await asyncio.gather(*[fetch_item(p) for p in paths])
-                total_synced += sum(results)
+                for p, d in (await fetch_objects(paths, progress=self.guide_progress)).items():
+                    info = d.get(cat) or d.get("series") or d.get("movie") or d.get("sport") or {}
+                    counts = d.get("show_counts") or {}
+                    upsert_guide_show({
+                        "path": p,
+                        "object_id": d.get("object_id"),
+                        "title": info.get("title") or d.get("title") or "Unknown",
+                        "category": cat,
+                        "description": info.get("description") or d.get("description") or "",
+                        "cover_url": extract_image_url(info.get("cover_image") or info.get("thumbnail_image")),
+                        "backdrop_url": extract_image_url(info.get("background_image")),
+                        "genres": info.get("genres") or [],
+                        "schedule_rule": d.get("schedule_rule") or (d.get("schedule") or {}).get("rule") or "none",
+                        "airing_count": counts.get("airing_count", 0),
+                        "scheduled_count": counts.get("scheduled_count", 0),
+                        "orig_air_date": info.get("orig_air_date", ""),
+                        "recordings_path": d.get("recordings_path", ""),
+                        "raw_json": d
+                    })
+                    total_synced += 1
                 if scheduled_paths is not None:
                     cleared = clear_stale_schedule_rules(cat, scheduled_paths)
                     if cleared:
@@ -385,88 +428,21 @@ class LibrarySyncService:
             if airings_resp.status_code == 200:
                 airing_paths = airings_resp.json()
                 if isinstance(airing_paths, list):
-                    listed = len(airing_paths)
-                    airing_paths = guide_airings_to_fetch(airing_paths)
-                    print(f"[GuideSync] {listed} upcoming airings; fetching {len(airing_paths)} new or record-status ones")
-                    # A first sync (empty cache) fetches thousands: pace them so the Tablo keeps answering
-                    pace = len(airing_paths) > LARGE_AIRING_FETCH
-                    if pace:
+                    prune_guide_airings(airing_paths)
+                    print(f"[GuideSync] Fetching {len(airing_paths)} upcoming airings")
+                    if first:
                         self.guide_progress = {"first": first, "step": "airings", "done": 0, "total": len(airing_paths),
                                                "started": time.time(), "waiting_until": None}
-                    sem_air = asyncio.Semaphore(2 if pace else 50)
-                    async def fetch_guide_airing(p: str):
-                        async with sem_air:
-                            try:
-                                r = await tablo_manager.request_bulk("GET", p)
-                                if pace:
-                                    await asyncio.sleep(0.1)
-                                if r.status_code == 200:
-                                    d = r.json()
-                                    ep = d.get('episode', {})
-                                    ad = d.get('airing_details', {})
-                                    ch = ad.get('channel', {}).get('channel', {})
-                                    qual = [q.lower() for q in d.get('qualifiers', [])]
-                                    ep_num = ep.get('number') or ep.get('episode_number') or 0
-                                    season_num = ep.get('season_number') or 0
-                                    
-                                    is_new = 1 if 'new' in qual else 0
-                                    is_primetime = 1 if 'primetime' in qual else 0
-                                    is_premiere = 1 if (
-                                        'season_premiere' in qual or 
-                                        'series_premiere' in qual or 
-                                        ('premiere' in qual and is_new) or 
-                                        (is_new and ep_num == 1 and season_num > 0)
-                                    ) else 0
-
-                                    ep_title = ep.get('title')
-                                    if not ep_title:
-                                        ep_title = f"Episode {ep_num}" if ep_num else (ad.get('show_title') or "Episode")
-
-                                    return {
-                                        "path": p,
-                                        "series_path": d.get('series_path') or '',
-                                        "show_title": ad.get('show_title') or 'Unknown',
-                                        "episode_title": ep_title,
-                                        "season_number": season_num,
-                                        "episode_number": ep_num,
-                                        "air_datetime": ad.get('datetime') or '',
-                                        "duration": ad.get('duration') or 0,
-                                        "channel_call_sign": ch.get('call_sign') or ch.get('name') or '',
-                                        "channel_identifier": ch.get('channel_identifier'),
-                                        "channel_network": ch.get('network') or '',
-                                        "qualifiers": qual,
-                                        "is_new": is_new,
-                                        "is_primetime": is_primetime,
-                                        "is_premiere": is_premiere,
-                                        "schedule_state": (d.get('schedule') or {}).get('state') or 'none',
-                                    }
-                            except httpx.TransportError:
-                                return RETRY
-                            except Exception:
-                                pass
-                            return None
-
-                    # In chunks, saved as they come, so the Guide fills in during a long first load. When the
-                    # Tablo stops answering (it does after a burst of requests), wait it out and carry on.
+                    # Saved as each batch arrives, so the Guide fills in during a first load
                     saved = 0
-                    for i in range(0, len(airing_paths), AIRING_CHUNK):
-                        chunk = airing_paths[i:i + AIRING_CHUNK]
-                        for attempt in range(AIRING_RETRIES + 1):
-                            results = await asyncio.gather(*[fetch_guide_airing(p) for p in chunk])
-                            good = [r for r in results if isinstance(r, dict)]
-                            batch_upsert_guide_airings(good)
-                            saved += len(good)
-                            chunk = [p for p, r in zip(chunk, results) if r is RETRY]
-                            if not chunk or attempt == AIRING_RETRIES:
-                                break
-                            print(f"[GuideSync] Tablo stopped answering; waiting {TABLO_BREAK_SECONDS} s before continuing")
-                            if self.guide_progress:
-                                self.guide_progress["waiting_until"] = time.time() + TABLO_BREAK_SECONDS
-                            await asyncio.sleep(TABLO_BREAK_SECONDS)
-                            if self.guide_progress:
-                                self.guide_progress["waiting_until"] = None
-                        if self.guide_progress:
-                            self.guide_progress["done"] = min(i + AIRING_CHUNK, len(airing_paths))
+
+                    def save(chunk: Dict[str, Any]) -> None:
+                        nonlocal saved
+                        rows = [guide_airing_row(p, d) for p, d in chunk.items()]
+                        batch_upsert_guide_airings(rows)
+                        saved += len(rows)
+
+                    await fetch_objects(airing_paths, on_chunk=save, progress=self.guide_progress)
                     print(f"[GuideSync] Saved {saved} upcoming airings with Primetime & Premiere tags.")
         except Exception as e:
             print(f"[GuideSync] Error syncing guide airings: {e}")

@@ -669,23 +669,15 @@ def batch_upsert_guide_airings(airings: List[Dict[str, Any]]):
         conn.commit()
 
 
-def guide_airings_to_fetch(paths: List[str]) -> List[str]:
-    """Of the Tablo's current airing paths, the ones whose details need fetching: airings not cached
-    yet, and cached ones whose record status can change (already marked, or the series has a rule).
-    The rest never change, and fetching thousands of them one by one makes the Tablo stop answering.
-    Cached airings no longer listed are removed."""
+def prune_guide_airings(paths: List[str]) -> int:
+    """Remove cached airings the Tablo no longer lists (e.g. dropped from the guide). Returns how many."""
+    current = set(paths)
     with get_connection() as conn:
-        rows = conn.execute("""
-            SELECT a.path, a.schedule_state, COALESCE(s.schedule_rule, 'none') AS rule
-            FROM guide_airings a LEFT JOIN guide_shows s ON s.path = a.series_path
-        """).fetchall()
-        current = set(paths)
-        gone = [r["path"] for r in rows if r["path"] not in current]
+        gone = [r["path"] for r in conn.execute("SELECT path FROM guide_airings") if r["path"] not in current]
         if gone:
             conn.executemany("DELETE FROM guide_airings WHERE path = ?", [(p,) for p in gone])
             conn.commit()
-    settled = {r["path"] for r in rows if (r["schedule_state"] or "none") == "none" and r["rule"] == "none"}
-    return [p for p in paths if p not in settled]
+    return len(gone)
 
 
 def update_airing_schedule_states(states: Dict[str, str]):
