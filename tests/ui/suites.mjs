@@ -235,6 +235,13 @@ export const SUITES = {
       && (await b.ev(`document.querySelectorAll('.whatsnew-list li').length`)) === 2);
     await b.ev(`document.querySelector('[data-action="modal-ok"]').click()`); await sleep(500);
     t.check('Closing it records it as seen (intercepted)', await b.ev(`window.__writes.some(w => w[1] === '/api/system/whatsnew/seen')`));
+    await b.go('#/device', `document.querySelector('[data-action="version-history"]')`);
+    await b.ev(`document.querySelector('[data-action="version-history"]').click()`); await sleep(800);
+    t.check('Device → Version history lists every version, newest first', await b.ev(`(() => {
+      const v = [...document.querySelectorAll('.changelog-version')].map(h => h.textContent);
+      return v.length > 3 && v[v.length - 1].startsWith('1.0.0') && /You have this/.test(v[0]);
+    })()`));
+    await b.ev(`closeModal(false)`);
   },
 
   async resume(b, t) {

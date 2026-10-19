@@ -1513,9 +1513,29 @@ async function showWhatsNew() {
         <div class="dialog-title">What’s new in TabloView ${esc(w.version)}</div>
         <ul class="whatsnew-list">${w.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>
       </div>
-      <div class="dialog-foot"><button class="btn btn-primary" data-action="modal-ok" data-autofocus>Got it</button></div>`);
+      <div class="dialog-foot">
+        <button class="btn btn-ghost" data-action="version-history">Earlier versions</button>
+        <button class="btn btn-primary" data-action="modal-ok" data-autofocus>Got it</button>
+      </div>`);
     api('/api/system/whatsnew/seen', { method: 'POST' }).catch(() => {});
   } catch { /* not important */ }
+}
+
+async function showVersionHistory() {
+  try {
+    const c = await api('/api/system/changelog');
+    closeModal(false);
+    await openModal(`
+      <div class="dialog-body scroll">
+        <div class="dialog-title">Version history</div>
+        ${c.versions.map(v => `
+          <h4 class="changelog-version">${esc(v.version)}${v.version === c.current ? ' <span class="tag tag-accent">You have this</span>' : ''}</h4>
+          <ul class="whatsnew-list">${v.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>`).join('')}
+      </div>
+      <div class="dialog-foot"><button class="btn btn-primary" data-action="modal-ok" data-autofocus>Close</button></div>`, { wide: true });
+  } catch (err) {
+    toast(`Couldn't load the version history: ${err.message}`, 'error');
+  }
 }
 
 function renderUpcomingList() {
@@ -1964,7 +1984,7 @@ PAGES.device = async (r, token) => {
 
   const about = `
     <div class="panel">
-      <h3>About</h3><div class="panel-sub">TabloView ${esc(info.version || '')}${info.packaged ? '' : ' (running from source)'}</div>
+      <h3>About</h3><div class="panel-sub">TabloView ${esc(info.version || '')}${info.packaged ? '' : ' (running from source)'} · <a href="#" data-action="version-history">Version history</a></div>
       <dl class="kv">
         <dt>Updates</dt><dd>${updateStatusHtml()}</dd>
         <dt>Playback engine</dt><dd>${info.ffmpeg_found ? 'FFmpeg ready' : '<span style="color:var(--warn)">FFmpeg not found: in-browser playback and MP4 export won’t work. VLC still works.</span>'}</dd>
@@ -3002,6 +3022,7 @@ const ACTIONS = {
   'pb-pip': () => player.togglePip(),
   'pb-live': () => player.goLive(),
   'pb-help': () => player.showHelp(),
+  'version-history': () => showVersionHistory(),
   'pb-channels': () => player.toggleChannels(),
   'pb-surf': el => player.surf(Number(el.dataset.dir)),
   'pb-tune': el => player.tune(el.dataset.id, el.dataset.name, el.dataset.kind),

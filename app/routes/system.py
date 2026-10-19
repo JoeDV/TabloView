@@ -114,6 +114,12 @@ async def get_whatsnew():
     return whatsnew.pending()
 
 
+@router.get("/system/changelog")
+async def get_changelog():
+    """What changed in each version, newest first."""
+    return {"current": APP_VERSION, "versions": whatsnew.changelog()}
+
+
 @router.post("/system/whatsnew/seen")
 async def whatsnew_seen():
     whatsnew.mark_seen()
