@@ -157,7 +157,9 @@ def _with_commercials(episodes: List[dict]) -> List[dict]:
     analyzing, or None (not looked at)."""
     found = get_commercials([e["id"] for e in episodes])
     current = commercials.status["current"]
-    return [{**e, "commercials": (found[e["id"]]["status"] if e["id"] in found else "analyzing" if e["id"] == current else None),
+    queued = set(commercials.queued_episodes())
+    return [{**e, "commercials": (found[e["id"]]["status"] if e["id"] in found else "analyzing" if e["id"] == current
+                                  else "queued" if e["id"] in queued else None),
              "commercial_breaks": len(found[e["id"]]["breaks"]) if e["id"] in found else 0} for e in episodes]
 
 

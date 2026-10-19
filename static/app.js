@@ -1112,6 +1112,19 @@ async function setPinDialog(title = 'PIN for other devices', text = 'Phones, tab
   return saved;
 }
 
+// Just this recording, whatever its show's Skip commercials setting
+async function findCommercials(id) {
+  try {
+    const res = await api(`/api/episodes/${encodeURIComponent(id)}/find_commercials`, { method: 'POST' });
+    const ep = findEpisode(id);
+    if (ep && res.queued) ep.commercials = 'queued';
+    toast(res.queued
+      ? `TabloView will find the commercials in this recording${res.ahead ? ` after ${plural(res.ahead, 'other')}` : ''} (about 8 minutes per half hour, while nothing is playing)`
+      : 'Its commercial breaks are already marked', 'success');
+    rerenderAfterProgress();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
 async function setProtected(id, value) {
   try {
     await api(`/api/episodes/${encodeURIComponent(id)}/protected`, { method: 'POST', body: JSON.stringify({ protected: value }) });
@@ -1138,6 +1151,7 @@ function commercialTag(ep) {
       ? `<span class="ad-tag" title="${plural(ep.commercial_breaks, 'commercial break')} marked; skip them in the player">${icon('next', 11)}${ep.commercial_breaks}</span>`
       : '<span class="ad-tag dim" title="No commercial breaks found">0</span>';
   }
+  if (ep.commercials === 'queued') return '<span class="ad-tag dim" title="Waiting to have its commercial breaks found (when nothing is playing)">…</span>';
   if (ep.commercials === 'analyzing') return '<span class="ad-tag" title="Finding the commercial breaks…"><span class="spinner" style="width:10px;height:10px"></span></span>';
   if (ep.commercials === 'unreliable') return '<span class="ad-tag dim" title="The show and its ads look too much alike to mark the breaks safely">–</span>';
   return '';
@@ -3337,6 +3351,8 @@ const ACTIONS = {
       { label: 'Open in VLC', icon: 'external', run: () => openVlc(`/api/episodes/${encodeURIComponent(id)}/playlist.m3u`) },
       { label: 'Export MP4', icon: 'download', run: () => exportEpisode(id) },
       ...(ep.incomplete ? [{ label: 'Record again…', icon: 'refresh', run: () => rerecordDialog(id) }] : []),
+      ...(ep.recording_state === 'finished' && !['done', 'analyzing', 'queued'].includes(ep.commercials)
+        ? [{ label: 'Find commercials', icon: 'next', run: () => findCommercials(id) }] : []),
       ep.protected
         ? { label: 'Unprotect', icon: 'lock', run: () => setProtected(id, false) }
         : { label: 'Protect from deletion', icon: 'lock', run: () => setProtected(id, true) },

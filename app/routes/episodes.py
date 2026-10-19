@@ -102,6 +102,23 @@ async def episode_commercials(episode_id: str):
             "auto_skip": bool(load_settings().get("skip_commercials"))}
 
 
+@router.post("/{episode_id}/find_commercials")
+async def find_commercials(episode_id: str):
+    """Find the commercial breaks in just this recording (in the background, when nothing is playing)."""
+    from .. import commercials
+    from ..database import get_commercials
+    ep = get_episode_by_id(episode_id)
+    if not ep:
+        raise HTTPException(status_code=404, detail="Episode not found")
+    if ep.get("recording_state") != "finished":
+        raise HTTPException(status_code=400, detail="This recording isn't finished yet")
+    if get_commercials([episode_id]).get(episode_id, {}).get("status") == "done":
+        return {"queued": False, "ahead": 0}
+    commercials.queue_episode(episode_id)
+    queue = commercials.pending()
+    return {"queued": True, "ahead": next((i for i, e in enumerate(queue) if e["id"] == episode_id), 0)}
+
+
 @router.get("/{episode_id}/rerecord")
 async def rerecord_options(episode_id: str):
     """Upcoming airings of the same episode as this (failed or partial) recording."""

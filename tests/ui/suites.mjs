@@ -301,6 +301,12 @@ export const SUITES = {
     await b.ev(`(() => { const x = document.querySelector('[data-change="show-commercials"]'); x.checked = !x.checked; x.dispatchEvent(new Event('change', { bubbles: true })); })()`);
     await sleep(500);
     t.check('Skip commercials switch saves for the show (intercepted)', await b.ev(`window.__writes.some(w => w[1].startsWith('/api/shows/commercials'))`));
+    const menuEp = await b.ev(`(() => { const e = state.episodes.find(e => e.recording_state === 'finished' && !['done', 'analyzing', 'queued'].includes(e.commercials)); return e && e.id; })()`);
+    if (menuEp) {
+      await b.ev(`document.querySelector('[data-action="ep-menu"][data-id="${menuEp}"]').click()`); await sleep(300);
+      await b.ev(`[...document.querySelectorAll('.menu-item')].find(x => /Find commercials/.test(x.textContent)).click()`); await sleep(500);
+      t.check('Find commercials queues just that recording (intercepted)', await b.ev(`window.__writes.some(w => w[1] === '/api/episodes/${menuEp}/find_commercials')`));
+    } else t.skip('Find commercials for one recording', 'every recording is already done or queued');
     // The player with a 30-minute recording and one break at 5:00-7:00 (nothing is played)
     await b.ev(`window.__seek = null; player.__realPlay = player.playEpisode; player.playEpisode = (id, mode) => { window.__seek = mode; return Promise.resolve(); };
       Object.assign(state.stream, { episodeId: 'test', duration: 1800, offset: 0, breaks: [{ start: 300, end: 420 }], skippedBreaks: new Set(), autoSkip: false });

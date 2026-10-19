@@ -157,21 +157,35 @@ def set_show(show_id: str, on: bool) -> List[str]:
     return shows
 
 
+def queued_episodes() -> List[str]:
+    """Single recordings asked for from the episode menu (whatever their show's setting)."""
+    return list(load_settings().get("commercial_episodes") or [])
+
+
+def queue_episode(episode_id: str) -> None:
+    save_settings({"commercial_episodes": [e for e in queued_episodes() if e != episode_id] + [episode_id]})
+
+
 def pending(shows: Optional[List[str]] = None) -> List[Dict[str, str]]:
-    """Unwatched, finished recordings of the enabled shows not analyzed yet, newest first."""
+    """Finished recordings not analyzed yet: single ones asked for first, then the unwatched ones of
+    the enabled shows, newest first."""
     shows = enabled_shows() if shows is None else shows
-    if not shows:
+    queued = queued_episodes()
+    if not shows and not queued:
         return []
-    marks = ",".join("?" * len(shows))
+    marks = ",".join("?" * len(shows)) or "''"
+    qmarks = ",".join("?" * len(queued)) or "''"
     with get_connection() as conn:
         rows = conn.execute(f"""
             SELECT e.id, e.path, e.show_id, e.show_title, e.raw_json FROM episodes e
             LEFT JOIN commercials c ON c.episode_id = e.id
-            WHERE e.show_id IN ({marks}) AND e.status != 'Watched' AND c.episode_id IS NULL
+            WHERE c.episode_id IS NULL
+              AND (e.id IN ({qmarks}) OR (e.show_id IN ({marks}) AND e.status != 'Watched'))
             ORDER BY e.air_date DESC
-        """, shows).fetchall()
-    return [{"id": r["id"], "path": r["path"], "show_id": r["show_id"], "show_title": r["show_title"]}
-            for r in rows if recording_details(r["raw_json"])["recording_state"] == "finished"]
+        """, [*queued, *shows]).fetchall()
+    found = [{"id": r["id"], "path": r["path"], "show_id": r["show_id"], "show_title": r["show_title"]}
+             for r in rows if recording_details(r["raw_json"])["recording_state"] == "finished"]
+    return sorted(found, key=lambda ep: ep["id"] not in queued)  # stable: keeps newest first within each
 
 
 def _busy() -> bool:
