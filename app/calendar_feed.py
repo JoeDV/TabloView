@@ -43,7 +43,8 @@ def build(recordings: List[Dict[str, Any]], now: datetime = None) -> str:
         se = f"S{s}E{e}" if s and e else ""
         episode = " · ".join(x for x in (se, a.get("episode_title") or "") if x)
         channel = " ".join(x for x in (a.get("channel_network") or "", a.get("channel_call_sign") or "") if x)
-        details = [f"Recording on your Tablo{f' from {channel}' if channel else ''}."]
+        # The show name alone as the title (calendar views cut long titles); the episode goes in the details
+        details = ([episode] if episode else []) + [f"Recording on your Tablo{f' from {channel}' if channel else ''}."]
         if a.get("is_new"):
             details.append("New episode.")
         lines += [
@@ -52,8 +53,8 @@ def build(recordings: List[Dict[str, Any]], now: datetime = None) -> str:
             f"DTSTAMP:{_stamp(now)}",
             f"DTSTART:{_stamp(start)}",
             f"DTEND:{_stamp(end)}",
-            f"SUMMARY:{_escape(a.get('show_title') or 'Recording')}{_escape(f' — {episode}') if episode else ''}",
-            f"DESCRIPTION:{_escape(' '.join(details))}",
+            f"SUMMARY:{_escape(a.get('show_title') or 'Recording')}",
+            f"DESCRIPTION:{_escape(chr(10).join(details))}",
             *([f"LOCATION:{_escape(channel)}"] if channel else []),
             "TRANSP:TRANSPARENT",  # doesn't make you look busy
             "END:VEVENT",
