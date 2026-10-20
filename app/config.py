@@ -21,7 +21,7 @@ APP_VERSION = "1.1.7"
 UPDATE_GIST = "https://gist.github.com/JoeDV/c20a68a2b91648ac12f3b106e08d37c4"
 UPDATE_INFO_URL = "https://gist.githubusercontent.com/JoeDV/c20a68a2b91648ac12f3b106e08d37c4/raw/version.json"
 # Where people download the installer (OneDrive folder holding every release)
-RELEASE_DOWNLOAD_URL = "https://1drv.ms/f/c/bdcf6c671b81d151/IgAyjZdVgC-bTIIGXc3_y0CkAa8bWh3fo1fVayUVR3-pcqM"
+RELEASE_DOWNLOAD_URL = "https://github.com/JoeDV/TabloView/releases/latest"
 
 IS_PACKAGED = getattr(sys, "frozen", False)
 

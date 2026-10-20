@@ -1,6 +1,5 @@
 # Publishes dist\version.json to the update gist, so installed copies see "Update available".
-# Run AFTER the new downloads are published (GitHub release, and the OneDrive folder while the update
-# notice still points there):
+# Run AFTER the GitHub release is published (packaging\publish-release.ps1):
 #   powershell -ExecutionPolicy Bypass -File packaging\publish-version.ps1
 # Uses your normal git credentials for github.com.
 $ErrorActionPreference = 'Stop'
