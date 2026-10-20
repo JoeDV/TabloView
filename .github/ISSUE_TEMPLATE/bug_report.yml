@@ -1,0 +1,56 @@
+name: Bug report
+description: Something in TabloView isn't working right
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. Please don't include your Tablo account email, password or PIN.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: TabloView version
+      description: Shown in the About panel on the Device page.
+      placeholder: "1.1.7"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed it
+      options:
+        - Microsoft Store
+        - Windows installer (.exe)
+        - Mac (from source)
+        - Linux (from source)
+        - Windows (from source)
+    validations:
+      required: true
+  - type: dropdown
+    id: tablo
+    attributes:
+      label: Tablo model
+      options:
+        - 4th Gen, 2 tuners
+        - 4th Gen, 4 tuners
+        - Older (legacy) Tablo
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: watching
+    attributes:
+      label: Where you were watching
+      description: The browser and device, e.g. Chrome on the same PC, or Safari on an iPad on the network.
+  - type: textarea
+    id: log
+    attributes:
+      label: Anything else
+      description: Screenshots, or error messages TabloView showed.

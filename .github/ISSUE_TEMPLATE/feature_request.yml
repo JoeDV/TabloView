@@ -1,0 +1,20 @@
+name: Feature idea
+description: Something you'd like TabloView to do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: What you want to do, and how you do it today (or why you can't).
+    validations:
+      required: true
+  - type: dropdown
+    id: tablo
+    attributes:
+      label: Tablo model
+      options:
+        - 4th Gen, 2 tuners
+        - 4th Gen, 4 tuners
+        - Older (legacy) Tablo
+        - Not sure
