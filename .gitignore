@@ -45,3 +45,6 @@ dist/
 
 # Leftover caches from removed scratch scripts
 scratch/
+
+# Notes kept by other AI coding tools (local only)
+.maestro.md
