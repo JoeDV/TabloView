@@ -21,7 +21,10 @@ $Version = (Get-Content $Json -Raw | ConvertFrom-Json).version
 git -C $Work add version.json
 git -C $Work diff --cached --quiet
 if ($LASTEXITCODE -eq 0) { Write-Host "Gist already at $Version" -ForegroundColor Yellow; exit 0 }
-git -C $Work commit --quiet -m "TabloView $Version"
+# Commit as this project's Git identity (GitHub's private no-reply address), not the global one,
+# so the gist's history doesn't show a personal email
+$Email = git config user.email
+git -C $Work -c "user.email=$Email" commit --quiet -m "TabloView $Version"
 git -C $Work push --quiet
 if ($LASTEXITCODE -ne 0) { throw 'Push to gist failed' }
 Write-Host "Published version.json for $Version (GitHub may take up to 5 minutes to serve it)" -ForegroundColor Green
