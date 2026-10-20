@@ -5,6 +5,8 @@
 # Needs the GitHub CLI, signed in once: winget install GitHub.cli, then gh auth login.
 param([string]$Commit = '')
 $ErrorActionPreference = 'Stop'
+# Read git's output as UTF-8 (Windows PowerShell otherwise garbles characters like an em dash)
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
@@ -12,7 +14,8 @@ $Gh = (Get-Command gh -ErrorAction SilentlyContinue).Source
 if (-not $Gh) { $Gh = "$env:ProgramFiles\GitHub CLI\gh.exe" }
 if (-not (Test-Path $Gh)) { throw 'GitHub CLI not found: winget install GitHub.cli, then gh auth login' }
 
-if (-not $Commit) { $Commit = git rev-parse HEAD }
+if (-not $Commit) { $Commit = 'HEAD' }
+$Commit = git rev-parse "$Commit^{commit}"  # GitHub needs the full commit ID
 $Version = ((git show "${Commit}:app/config.py") | Select-String 'APP_VERSION = "(.+)"').Matches[0].Groups[1].Value
 $Tag = "v$Version"
 $Setup = "dist\TabloView-Setup-$Version.exe"
@@ -34,7 +37,7 @@ $Body = @"
 $Notes
 
 **Downloads**
-- **Windows:** ``TabloView-Setup-$Version.exe``, or get it from the [Microsoft Store](https://apps.microsoft.com/detail/9NCWVSC7KX2N) (updates automatically). The installer isn't code-signed, so Windows may say "Windows protected your PC": click **More info → Run anyway**.
+- **Windows:** ``TabloView-Setup-$Version.exe``, or get it from the [Microsoft Store](https://apps.microsoft.com/detail/9NCWVSC7KX2N) (updates automatically). The installer isn't code-signed, so Windows may say "Windows protected your PC": click **More info**, then **Run anyway**.
 - **Mac:** ``TabloView-$Version-mac.zip``, see [MAC.md](https://github.com/JoeDV/TabloView/blob/main/MAC.md)
 - **Linux:** ``TabloView-$Version-linux.tar.gz``, see [LINUX.md](https://github.com/JoeDV/TabloView/blob/main/LINUX.md)
 "@
@@ -43,6 +46,9 @@ $exists = $false
 try { & $Gh release view $Tag 2>$null | Out-Null; $exists = ($LASTEXITCODE -eq 0) } catch { $exists = $false }
 if ($exists) { throw "Release $Tag already exists on GitHub" }
 
-& $Gh release create $Tag $Setup $Mac $Linux --target $Commit --title "TabloView $Version" --notes $Body
+# Notes go through a file: Windows PowerShell splits a quoted argument with quotes inside it
+$NotesFile = Join-Path $Root 'dist\release-notes.md'
+[IO.File]::WriteAllText($NotesFile, $Body, (New-Object Text.UTF8Encoding $false))
+& $Gh release create $Tag $Setup $Mac $Linux --target $Commit --title "TabloView $Version" --notes-file $NotesFile
 if ($LASTEXITCODE -ne 0) { throw 'Creating the release failed' }
 Write-Host "Released $Tag on GitHub: https://github.com/JoeDV/TabloView/releases/tag/$Tag" -ForegroundColor Green
