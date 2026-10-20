@@ -10,7 +10,7 @@ Older Tablos that have Tablo's update for the new Tablo app are reported to work
 
 ### Windows
 
-1. Get **TabloView for TabloTV** from the [Microsoft Store](https://apps.microsoft.com/detail/9NCWVSC7KX2N) (it updates automatically), or download **`TabloView-Setup-<version>.exe`** from the [downloads folder](https://1drv.ms/f/c/bdcf6c671b81d151/IgAyjZdVgC-bTIIGXc3_y0CkAa8bWh3fo1fVayUVR3-pcqM) and run it. No admin rights are needed; it installs just for your Windows account.
+1. Get **TabloView for TabloTV** from the [Microsoft Store](https://apps.microsoft.com/detail/9NCWVSC7KX2N) (it updates automatically), or download **`TabloView-Setup-<version>.exe`** from the [latest release](https://github.com/JoeDV/TabloView/releases/latest) and run it. No admin rights are needed; it installs just for your Windows account.
    - The installer isn't code-signed, so Windows may say *"Windows protected your PC"*. Click **More info → Run anyway**. (The Store version doesn't have this.)
 2. TabloView opens in your browser. **Sign in with your own Tablo account**; TabloView finds the Tablo on your home network.
 3. While it runs, TabloView has an icon in the system tray (bottom-right, near the clock). Right-click it to reopen the app, open your downloads folder, check for updates, or quit. To have it start quietly in the tray when you sign in to Windows, turn on **Device → Desktop app → Start TabloView when I sign in to Windows**.
@@ -21,7 +21,7 @@ To uninstall, use **Settings → Apps → Installed apps → TabloView**. The in
 
 ### Mac and Linux
 
-There's no Mac or Linux package yet, but TabloView runs from its source code with a start script that sets everything up. Download **`TabloView-<version>-mac.zip`** or **`TabloView-<version>-linux.tar.gz`** from the [downloads folder](https://1drv.ms/f/c/bdcf6c671b81d151/IgAyjZdVgC-bTIIGXc3_y0CkAa8bWh3fo1fVayUVR3-pcqM) (or clone this repository) and follow [MAC.md](MAC.md) or [LINUX.md](LINUX.md).
+There's no Mac or Linux package yet, but TabloView runs from its source code with a start script that sets everything up. Download **`TabloView-<version>-mac.zip`** or **`TabloView-<version>-linux.tar.gz`** from the [latest release](https://github.com/JoeDV/TabloView/releases/latest) (or clone this repository) and follow [MAC.md](MAC.md) or [LINUX.md](LINUX.md).
 
 ### Using it from a phone or another computer
 
