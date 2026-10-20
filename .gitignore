@@ -19,7 +19,8 @@ transcode/
 downloads/
 debug_data/
 
-# IDE and OS
+# IDE and OS (editor settings stay local)
+.vscode/
 .DS_Store
 Thumbs.db
 .idea/
