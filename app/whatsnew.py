@@ -13,6 +13,14 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.2.0": [
+        "Live signal meter: on antenna channels, a badge beside the channel name shows how much of the picture is reaching you, second by second. Click it for the last 5 minutes. Handy while aiming an antenna.",
+        "Sports in the Guide are grouped by sport and league (Football: NFL, College; Soccer: Premier League, Liga MX…), and each game is listed by matchup.",
+        "Choose where MP4 exports are saved: Device → Playback → Save exports to.",
+        "Live TV switches from Smooth motion to standard by itself if your PC can't keep up, instead of falling behind.",
+        "Changing channels is more reliable on 2-tuner Tablos, and when every tuner is busy TabloView says why, with Try again and Watch a recording.",
+        "Fixed: the Guide's Sports filter showed nothing, and league pages had no games.",
+    ],
     "1.1.7": [
         "Watch two channels at once: add a live channel next to live TV or a recording (the button with two rectangles, or press 2). Side by side, big and small, or full screen; Tab switches the sound, and the silent one shows captions and flashes when something big happens.",
         "Back for a new season: shows you've recorded before that are returning, on the Home page and as a notification.",
