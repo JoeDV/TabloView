@@ -16,6 +16,8 @@ from .config import (
     APP_NAME, APP_VERSION, STATIC_DIR, TRANSCODE_DIR, DOWNLOADS_DIR, IMAGE_CACHE_DIR, HOST, PORT,
 )
 from . import commercials, encoders, lanauth, whatsnew
+from .settings import exports_dir
+from .database import get_export_jobs
 from .database import init_db
 from .tablo_client import tablo_manager
 from .sync_service import sync_service, auto_sync_loop
@@ -221,8 +223,12 @@ async def serve_transcoded_file(session_id: str, filename: str):
 
 @app.get("/downloads/{filename:path}")
 async def serve_downloaded_mp4(filename: str):
-    """Serve completed MP4 exports for download or browser playback."""
-    file_path = safe_join(DOWNLOADS_DIR, filename)
+    """Serve completed MP4 exports for download or browser playback. Exports made before the export
+    folder was changed are found through their export job."""
+    file_path = safe_join(exports_dir(), filename)
+    if not file_path.is_file():
+        job = next((j for j in get_export_jobs() if j.get("filename") == filename and j.get("status") == "completed"), None)
+        file_path = Path(job["filepath"]) if job and job.get("filepath") else file_path
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(

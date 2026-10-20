@@ -18,9 +18,9 @@ from starlette.responses import Response, StreamingResponse
 from starlette.background import BackgroundTask
 
 from . import encoders
-from .config import TRANSCODE_DIR, DOWNLOADS_DIR, FFMPEG_PATH
+from .config import TRANSCODE_DIR, FFMPEG_PATH
 from .database import save_export_job
-from .settings import load_settings
+from .settings import load_settings, exports_dir
 
 # The packaged app has no console, so Windows would open a console window for each ffmpeg it starts
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
@@ -103,6 +103,8 @@ class StreamSession:
         self.stopped = False  # set when the player closes it, so the supervisor doesn't restart it
         self.tablo_token: Optional[str] = None  # the Tablo's watch session, ended when this stops
         self.supervisor: Optional[asyncio.Task] = None
+        self.reception = None  # live antenna channels: picture quality meter (app/reception.py)
+        self.reception_task: Optional[asyncio.Task] = None
 
 
 class TranscodeManager:
@@ -111,6 +113,12 @@ class TranscodeManager:
         self.export_tasks: Dict[str, asyncio.Task] = {}
         # Exports run one at a time (created on first use, inside the event loop)
         self._export_slot: Optional[asyncio.Semaphore] = None
+        # Watch sessions being ended on the Tablo; tuning waits for these so the old channel's
+        # tuner is given back before the new channel asks for one
+        self._ending: set = set()
+        # Smooth motion couldn't keep up with live TV on this PC: live channels use standard motion
+        # until TabloView restarts (recordings aren't affected: they don't have to keep pace)
+        self.smooth_live_too_slow = False
         self._http = httpx.AsyncClient(timeout=30)
         self.cleanup_stale_transcodes()
 
@@ -133,17 +141,38 @@ class TranscodeManager:
     def get_session(self, session_id: str) -> Optional[StreamSession]:
         return self.sessions.get(session_id)
 
+    def start_reception(self, sess: StreamSession) -> None:
+        """Follow a live antenna channel's FFmpeg log once a second for the picture quality meter."""
+        from .reception import Meter
+        sess.reception = Meter(TRANSCODE_DIR / sess.session_id / "ffmpeg.log")
+
+        async def follow():
+            while not sess.stopped:
+                sess.reception.sample()
+                await asyncio.sleep(1)
+
+        sess.reception_task = asyncio.create_task(follow())
+
+    async def wait_for_ended_sessions(self, timeout: float = 5.0) -> None:
+        """Wait (briefly) until the Tablo has been told about every watch session just stopped."""
+        if self._ending:
+            await asyncio.wait(list(self._ending), timeout=timeout)
+
     def stop_session(self, session_id: str):
         sess = self.sessions.pop(session_id, None)
         if sess:
             sess.stopped = True
             if sess.supervisor:
                 sess.supervisor.cancel()
+            if sess.reception_task:
+                sess.reception_task.cancel()
             if sess.tablo_token:
                 # Free the tuner on the Tablo now rather than when its session times out
                 from .tablo_client import tablo_manager
                 try:
-                    asyncio.get_running_loop().create_task(tablo_manager.end_watch_session(sess.tablo_token))
+                    task = asyncio.get_running_loop().create_task(tablo_manager.end_watch_session(sess.tablo_token))
+                    self._ending.add(task)
+                    task.add_done_callback(self._ending.discard)
                 except RuntimeError:
                     pass  # no event loop (shutting down)
         if sess and sess.proc:
@@ -338,6 +367,8 @@ class TranscodeManager:
         playlist_output = session_dir / "playlist.m3u8"
 
         plan = await asyncio.to_thread(self._video_plan, passthrough)
+        if live and plan["smooth"] and self.smooth_live_too_slow:
+            plan = {**plan, "smooth": False}  # this PC couldn't keep up with it earlier (see _supervise)
         for attempt in range(2):
             cmd = self._build_cmd(input_url, start, live, plan, session_dir)
             # The child process keeps its own inherited handle; close ours right away
@@ -404,6 +435,16 @@ class TranscodeManager:
         while restarts < MAX_STREAM_RESTARTS:
             while sess.proc.poll() is None:
                 await asyncio.sleep(1)
+                if live and plan["smooth"] and self._falling_behind(session_dir):
+                    # Live TV arrives in real time; converting slower than that means the picture falls
+                    # further and further behind (WTHR with Smooth motion: 0.5x, 29 of 60 frames a
+                    # second). Carry on in standard motion: restarted below, adding to the same playlist.
+                    print(f"[Transcode] Session {sess.session_id[:8]}: Smooth motion can't keep up with live TV "
+                          f"on this PC; using standard motion for live TV")
+                    self.smooth_live_too_slow = True
+                    plan = {**plan, "smooth": False}
+                    sess.proc.kill()
+                    sess.proc.wait(timeout=5)
             if sess.stopped or self.sessions.get(sess.session_id) is not sess:
                 return
             if sess.proc.returncode == 0:
@@ -429,6 +470,24 @@ class TranscodeManager:
             sess.encoder = "copy" if plan["encoder"] is None else plan["encoder"]["label"]
             # A restart that dies straight away counts against the limit too
             await asyncio.sleep(3)
+
+    @staticmethod
+    def _falling_behind(session_dir: Path) -> bool:
+        """FFmpeg's own progress report: after 30 s, converting at under 85% of real time on average.
+        (A live channel that keeps up reads 0.95-1.0x once the first few seconds are past.)"""
+        try:
+            with open(session_dir / "ffmpeg.log", "rb") as f:
+                f.seek(0, 2)
+                f.seek(max(0, f.tell() - 4096))
+                tail = f.read().decode("utf-8", errors="replace")
+        except OSError:
+            return False
+        m = re.findall(r"speed=\s*([\d.]+)x\s+elapsed=(\d+):(\d+):([\d.]+)", tail)
+        if not m:
+            return False
+        speed, h, mins, secs = m[-1]
+        elapsed = int(h) * 3600 + int(mins) * 60 + float(secs)
+        return elapsed >= 30 and float(speed) < 0.85
 
     @staticmethod
     def _end_playlist(session_dir: Path) -> None:
@@ -466,13 +525,14 @@ class TranscodeManager:
             prefix = show_title
 
         filename = f"{prefix} - {ep_title}.mp4" if ep_title and ep_title != show_title else f"{prefix}.mp4"
-        dest_path = DOWNLOADS_DIR / filename
+        folder = exports_dir()
+        dest_path = folder / filename
 
         # Ensure unique filename if already exists
         counter = 1
         base_stem = dest_path.stem
         while dest_path.exists():
-            dest_path = DOWNLOADS_DIR / f"{base_stem} ({counter}).mp4"
+            dest_path = folder / f"{base_stem} ({counter}).mp4"
             counter += 1
 
         job_info = {

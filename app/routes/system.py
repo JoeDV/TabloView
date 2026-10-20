@@ -2,6 +2,8 @@
 
 import asyncio
 import shutil
+import subprocess
+import sys
 import socket
 import time
 from pathlib import Path
@@ -10,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from ..config import APP_NAME, APP_VERSION, IS_PACKAGED, IS_STORE, FFMPEG_PATH, HOME_DIR, DOWNLOADS_DIR
-from ..settings import load_settings, save_settings
+from ..settings import load_settings, save_settings, exports_dir
 from ..updates import check_for_update
 from .. import commercials, encoders, lanauth, notifications, startup, whatsnew
 from ..tablo_client import tablo_manager
@@ -29,6 +31,10 @@ class SettingsUpdate(BaseModel):
     export_format: Optional[Literal["smaller", "original"]] = None
     rerecord_failed: Optional[bool] = None
     skip_commercials: Optional[bool] = None
+
+
+class ExportFolderRequest(BaseModel):
+    path: Optional[str] = None  # None = back to the default (Downloads\\TabloView)
 
 
 class PinRequest(BaseModel):
@@ -67,7 +73,8 @@ async def system_info(request: Request):
         "network_url": f"http://{lan_ip}:{port}" if lan_ip and port else None,
         "lan_pin_set": lanauth.pin_set(),
         "data_dir": str(HOME_DIR),
-        "downloads_dir": str(DOWNLOADS_DIR),
+        "downloads_dir": str(exports_dir()),
+        "default_downloads_dir": str(DOWNLOADS_DIR),
     }
 
 
@@ -115,6 +122,52 @@ async def lan_sign_out_all(request: Request):
     _only_this_pc(request)
     lanauth.sign_out_all()
     return {"success": True}
+
+
+@router.post("/system/export_folder")
+async def set_export_folder(req: ExportFolderRequest, request: Request):
+    """Choose where MP4 exports are saved (on this PC only). The folder is created if needed and must
+    be writable."""
+    _only_this_pc(request)
+    path = (req.path or "").strip().strip('"')
+    if path:
+        p = Path(path).expanduser()
+        if not p.is_absolute():
+            raise HTTPException(status_code=400, detail="Use a full folder path, like D:\\Videos\\Tablo")
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+            probe = p / ".tabloview-write-test"
+            probe.write_bytes(b"")
+            probe.unlink()
+        except OSError as e:
+            raise HTTPException(status_code=400, detail=f"TabloView can't save to that folder: {e.strerror or e}")
+        path = str(p)
+    save_settings({"export_folder": path or None})
+    return {"downloads_dir": str(exports_dir()), "custom": bool(path)}
+
+
+@router.post("/system/pick_folder")
+async def pick_folder(request: Request):
+    """Show the Windows folder picker on this PC and return the folder chosen (None if cancelled)."""
+    _only_this_pc(request)
+    if sys.platform != "win32":
+        raise HTTPException(status_code=400, detail="The folder picker is only available on Windows")
+    start = str(exports_dir()).replace("'", "''")
+    script = (
+        "[Console]::OutputEncoding = [Text.Encoding]::UTF8; Add-Type -AssemblyName System.Windows.Forms; "
+        "$d = New-Object System.Windows.Forms.FolderBrowserDialog; "
+        "$d.Description = 'Where should TabloView save MP4 exports?'; $d.ShowNewFolderButton = $true; "
+        f"$d.SelectedPath = '{start}'; "
+        "$owner = New-Object System.Windows.Forms.Form -Property @{TopMost = $true}; "
+        "if ($d.ShowDialog($owner) -eq 'OK') { $d.SelectedPath }"
+    )
+    try:
+        r = await asyncio.to_thread(subprocess.run, ["powershell", "-NoProfile", "-STA", "-Command", script],
+                                    capture_output=True, timeout=600, creationflags=subprocess.CREATE_NO_WINDOW)
+    except subprocess.TimeoutExpired:
+        return {"path": None}
+    chosen = r.stdout.decode("utf-8", errors="replace").strip()
+    return {"path": chosen or None}
 
 
 @router.get("/system/update")

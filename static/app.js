@@ -87,7 +87,7 @@ async function api(url, options = {}) {
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     if (res.status === 401 && (data.code === 'pin_required' || data.code === 'pin_not_set')) askForPin(data.code);
-    throw new Error(data.detail || `${res.status} ${res.statusText}`);
+    throw Object.assign(new Error(data.detail || `${res.status} ${res.statusText}`), { status: res.status });
   }
   return res.json();
 }
@@ -218,7 +218,7 @@ const state = {
   shows: null,
   guideCache: new Map(),
   library: { q: '', sort: store('tv_lib_sort', 'recent'), filter: 'all', layout: store('tv_lib_layout', 'wide') },
-  guide: { q: '', highlight: '', category: 'all', rule: '', sort: 'primetime', items: [], offset: 0, hasMore: false, highlights: {} },
+  guide: { q: '', highlight: '', category: 'all', sport: '', rule: '', sort: 'primetime', items: [], offset: 0, hasMore: false, highlights: {} },
   scheduled: { items: null, filter: 'all', q: '' },
   show: null,
   episodes: [],
@@ -1141,6 +1141,47 @@ function signalPanel(sig) {
     </div>`;
 }
 
+// Where MP4 exports go: the Windows folder picker on the PC, or a typed path where there isn't one
+async function chooseExportFolder(btn) {
+  let path = null;
+  btn.disabled = true;
+  try {
+    toast('Choose a folder in the window that opened (it may be behind the browser)');
+    path = (await api('/api/system/pick_folder', { method: 'POST' })).path;
+    if (!path) return;
+  } catch {
+    path = await promptExportFolder();
+    if (!path) return;
+  } finally {
+    btn.disabled = false;
+  }
+  try {
+    const res = await api('/api/system/export_folder', { method: 'POST', body: JSON.stringify({ path }) });
+    toast(`Exports will be saved to ${res.downloads_dir}`, 'success');
+    route();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+function promptExportFolder() {
+  let value = null;
+  return openModal(`
+    <form class="dialog-body" id="folderForm">
+      <div class="dialog-title">Save exports to</div>
+      <div class="dialog-text">Type the full path of a folder on this computer, for example <code>/home/you/Videos/Tablo</code>. It's created if it doesn't exist.</div>
+      <input class="input" id="folderInput" style="width:100%;margin-top:12px" data-autofocus>
+    </form>
+    <div class="dialog-foot">
+      <button class="btn" data-action="modal-cancel">Cancel</button>
+      <button class="btn btn-primary" id="folderSave">Save</button>
+    </div>`, {
+    onReady: el => {
+      const save = e => { e && e.preventDefault(); value = el.querySelector('#folderInput').value.trim(); closeModal(true); };
+      el.querySelector('#folderForm').addEventListener('submit', save);
+      el.querySelector('#folderSave').addEventListener('click', save);
+    },
+  }).then(() => value);
+}
+
 // Set or change the PIN (on the PC). Resolves true once it's saved.
 async function setPinDialog(title = 'PIN for other devices', text = 'Phones, tablets and other computers on your network sign in with it once. Changing it signs them all out.') {
   let saved = false;
@@ -1493,6 +1534,11 @@ function renderGuideGrid() {
   // Only the Recording view includes series with no upcoming airings; list those after a divider
   const airing = G.items.filter(g => g.next_airing);
   const waiting = G.items.filter(g => !g.next_airing);
+  if (G.category === 'sports' && airing.length) {
+    grid.innerHTML = sportsGrid(airing);
+    hydrateIcons(grid);
+    return;
+  }
   grid.innerHTML = `${airing.length ? `<div class="card-grid">${airing.map(guideCard).join('')}</div>` : ''}
     ${G.hasMore ? '<div style="text-align:center;margin-top:28px"><button class="btn" data-action="guide-more">Show more</button></div>' : ''}
     ${waiting.length ? `
@@ -1501,6 +1547,38 @@ function renderGuideGrid() {
         <span class="section-sub">${plural(waiting.length, 'series', 'series')} · the Tablo keeps these rules and records new episodes when they're in the guide</span>
       </div>
       <div class="card-grid">${waiting.map(guideCard).join('')}</div>` : ''}`;
+}
+
+// Sports: each Tablo sports entry is a league ("NFL Football", "Premier League Soccer") tagged with its
+// sport, so group the leagues under their sport instead of one long list, with buttons to pick a sport
+const SPORT_GENERIC = new Set(['sports', 'sports event', 'sports non-event', 'sports talk']);
+
+function sportOf(g) {
+  const genre = (g.genres || []).find(x => !SPORT_GENERIC.has(String(x).toLowerCase()));
+  return genre || 'Other sports';
+}
+
+function sportsGrid(items) {
+  const G = state.guide;
+  const groups = new Map();
+  for (const g of items) {
+    const s = sportOf(g);
+    if (!groups.has(s)) groups.set(s, []);
+    groups.get(s).push(g);
+  }
+  // Busiest sports first; 'Other sports' last
+  const sports = [...groups.keys()].sort((a, b) =>
+    (a === 'Other sports') - (b === 'Other sports') || groups.get(b).length - groups.get(a).length || a.localeCompare(b));
+  if (G.sport && !groups.has(G.sport)) G.sport = '';
+  const b = (value, label, count) => `<button data-action="guide-sport" data-value="${esc(value)}" class="${G.sport === value ? 'active' : ''}">${esc(label)}${count !== undefined ? ` <span class="count">${count}</span>` : ''}</button>`;
+  const picker = `<div class="segmented" style="margin-bottom:22px;flex-wrap:wrap">${b('', 'All sports')}${sports.map(s => b(s, s, groups.get(s).length)).join('')}</div>`;
+  const shown = G.sport ? [G.sport] : sports;
+  return picker + shown.map((s, i) => `
+    <div class="section-head" style="margin:${i ? '32px' : '0'} 0 14px">
+      <h2 class="section-title">${esc(s)}</h2>
+      <span class="section-sub">${plural(groups.get(s).length, 'league')}</span>
+    </div>
+    <div class="card-grid">${groups.get(s).map(guideCard).join('')}</div>`).join('');
 }
 
 const reloadGuide = debounce(() => loadGuide(routeToken), 220);
@@ -2348,7 +2426,7 @@ PAGES.device = async (r, token) => {
           <input type="checkbox" class="switch" data-change="smooth-motion" ${playback.smooth_motion ? 'checked' : ''} ${playback.quality === 'fastest' ? 'disabled' : ''}>
           <span>Smooth motion (60 fps)</span>
         </label>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">Shows antenna TV at its full 60 motion steps a second, like on the TV. Best for sports. It works the graphics chip much harder; if playback hiccups, turn it off.</p>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">Shows antenna TV at its full 60 motion steps a second, like on the TV. Best for sports. It works your PC much harder: if you see glitches or stutters, or live TV falls behind, turn it off. (If live TV can't keep up, TabloView switches that channel back to standard motion by itself.)</p>
         <label class="switch-row" style="font-weight:400;cursor:default;margin-top:14px">
           <span>MP4 exports</span>
           <select class="select" data-change="export-format" style="height:32px">
@@ -2357,6 +2435,13 @@ PAGES.device = async (r, token) => {
           </select>
         </label>
         <p class="dim" style="margin-top:6px;font-size:12.5px">Smaller exports are converted to H.264 (with your graphics chip when it can): about 2.2 GB per hour of HD instead of 3.2 GB, and they play on almost anything. Original keeps the broadcast video exactly as recorded.</p>
+        <div class="switch-row" style="font-weight:400;cursor:default;margin-top:14px;align-items:center">
+          <span style="flex-shrink:0">Save exports to</span>
+          <code class="path-box" title="${esc(info.downloads_dir || '')}">${esc(info.downloads_dir || '')}</code>
+          <button class="btn btn-sm" data-action="export-folder">Change…</button>
+          ${info.downloads_dir && info.default_downloads_dir && info.downloads_dir !== info.default_downloads_dir
+            ? '<button class="btn btn-sm btn-ghost" data-action="export-folder-reset">Reset</button>' : ''}
+        </div>
         <label class="switch-row" style="font-weight:400;cursor:default;margin-top:14px">
           <span>Buffer before playing</span>
           <select class="select" data-change="buffer" style="height:32px">
@@ -2906,7 +2991,7 @@ const player = {
 
   async watchLive(channelId, name, kind) {
     this.finishEpisode();
-    this.stopStream();
+    const stopping = this.stopStream();
     this.hideUpNext();
     this.clearMessage();
     Object.assign(state.stream, { channelId, channelName: name, channelKind: kind, episodeId: null,
@@ -2915,13 +3000,22 @@ const player = {
     this.open(`Live · ${name}`);
     this.setStatus(`<span class="wait">Tuning ${esc(name)}…</span>`);
     try {
+      await stopping;  // the old channel's tuner goes back to the Tablo before this one asks for one
       const res = await api('/api/live/tune', { method: 'POST', body: JSON.stringify({ channel_id: channelId, transcode: true, kind }) });
       state.stream.sessionId = res.session_id;
       checkTuners();
       this.start(res.stream_url, 'Live');
+      if (kind !== 'fast') reception.start(res.session_id);
       dual.render();
     } catch (err) {
-      this.setStatus(`<span style="color:var(--rec)">Couldn't tune this channel: ${esc(err.message)}</span>`);
+      if (err.status === 409) {
+        this.setStatus('');
+        this.message(`${esc(err.message)}
+          <button class="btn btn-sm btn-primary" data-action="pb-retune">Try again</button>
+          <button class="btn btn-sm" data-action="pb-recordings">Watch a recording</button>`);
+      } else {
+        this.setStatus(`<span style="color:var(--rec)">Couldn't tune this channel: ${esc(err.message)}</span>`);
+      }
       checkTuners();
     }
   },
@@ -3167,6 +3261,12 @@ const player = {
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = url;
       this.begin();
+    } else {
+      // e.g. Firefox on Fedora, which leaves out H.264 unless a codec package is added
+      this.setStatus('');
+      this.message(`This browser can't play TabloView's video (H.264). Try Chrome or Edge, or use
+        <b>Open in VLC</b>. On Fedora, Firefox plays it once the full codecs are installed
+        (<code>libavcodec-freeworld</code> from RPM Fusion; the Firefox Flatpak includes them).`);
     }
     state.stream.watchdogTimer = setInterval(() => this.watchdog(), 1000);
   },
@@ -3189,11 +3289,13 @@ const player = {
   },
 
   // Tell the backend to kill the FFmpeg transcode (and free the tuner for live TV)
+  // Resolves once the backend has the stop (callers that tune next wait for it)
   stopStream({ keepalive = false } = {}) {
+    reception.stop();
     const id = state.stream.sessionId;
-    if (!id) return;
+    if (!id) return Promise.resolve();
     state.stream.sessionId = null;
-    fetch('/api/live/stop', {
+    return fetch('/api/live/stop', {
       method: 'POST', headers: API_HEADERS,
       body: JSON.stringify({ session_id: id }), keepalive,
     }).catch(() => {});
@@ -3353,6 +3455,93 @@ async function tunerOk(kind, name) {
     }
   }
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Picture quality meter (live antenna channels). The Tablo doesn't report signal strength, so this
+// is the share of the picture arriving intact, worked out from what FFmpeg throws away
+// (app/reception.py): a badge with bars beside the channel name, and a 5-minute graph on click.
+// ---------------------------------------------------------------------------
+const reception = {
+  sessionId: null, timer: null, data: null,
+  LABELS: { clean: 'Clean', minor: 'Minor glitches', breaking: 'Breaking up', losing: 'Losing signal',
+            no_signal: 'No signal', starting: 'Measuring' },
+
+  start(sessionId) {
+    this.stop();
+    this.sessionId = sessionId;
+    this.render();
+    this.timer = setInterval(() => this.poll(), 2000);
+    this.poll();
+  },
+
+  stop() {
+    clearInterval(this.timer);
+    this.timer = null;
+    this.sessionId = null;
+    this.data = null;
+    $('#reception').classList.add('hidden');
+    $('#receptionPanel').classList.add('hidden');
+  },
+
+  async poll() {
+    const id = this.sessionId;
+    if (!id) return;
+    let d = null;
+    try { d = await api(`/api/live/reception/${id}`); } catch { return; }
+    if (id !== this.sessionId) return;  // changed channel meanwhile
+    if (!d.available) { this.stop(); return; }
+    this.data = d;
+    this.render();
+  },
+
+  bars(score) {
+    if (score == null) return 0;
+    return score >= 99 ? 5 : score >= 90 ? 4 : score >= 70 ? 3 : score >= 50 ? 2 : score > 0 ? 1 : 0;
+  },
+
+  render() {
+    const el = $('#reception');
+    const d = this.data || { state: 'starting', score: null };
+    const on = this.bars(d.score);
+    const text = d.state === 'no_signal' ? 'No signal' : d.score == null ? 'Signal …' : `Signal ${d.score}%`;
+    el.className = `reception q-${d.state}`;
+    el.title = `${this.LABELS[d.state]}: picture quality from your antenna (click for the last 5 minutes)`;
+    el.innerHTML = `<span class="bars">${[1, 2, 3, 4, 5].map(n => `<i class="${n <= on ? 'on' : ''}"></i>`).join('')}</span>${esc(text)}`;
+    if (!$('#receptionPanel').classList.contains('hidden')) this.renderPanel();
+  },
+
+  toggle() {
+    const panel = $('#receptionPanel');
+    panel.classList.toggle('hidden');
+    if (!panel.classList.contains('hidden')) this.renderPanel();
+  },
+
+  renderPanel() {
+    const d = this.data || { history: [], state: 'starting', score: null };
+    const W = 360, H = 96, SPAN = 300;
+    const x = ago => W * (1 + ago / SPAN), y = s => H - 4 - (H - 8) * s / 100;
+    const pts = d.history.map(([ago, s]) => `${x(ago).toFixed(1)},${y(s).toFixed(1)}`).join(' ');
+    const color = { clean: 'var(--ok)', minor: '#b5d334', breaking: 'var(--warn)', losing: 'var(--rec)', no_signal: 'var(--rec)' }[d.state] || 'var(--text-2)';
+    const worst = d.worst ? `Worst: ${d.worst.score}% ${fmtAgo(d.worst.seconds_ago)}` : 'No glitches in the last 5 minutes';
+    const drops = d.dropouts ? ` · ${plural(d.dropouts, 'dropout')}` : '';
+    $('#receptionPanel').innerHTML = `
+      <div class="rp-head"><span>Signal quality</span><span class="dim">${esc(state.stream.channelName || '')}</span>
+        <span style="color:${color}">${d.state === 'no_signal' ? 'No signal' : d.score == null ? '…' : `now ${d.score}%`}</span></div>
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+        <line x1="0" x2="${W}" y1="${y(100)}" y2="${y(100)}" stroke="rgba(255,255,255,0.12)"/>
+        <line x1="0" x2="${W}" y1="${y(50)}" y2="${y(50)}" stroke="rgba(255,255,255,0.08)" stroke-dasharray="3 4"/>
+        ${pts ? `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>` : ''}
+      </svg>
+      <div class="rp-axis"><span>5 min ago</span><span>now</span></div>
+      <div class="rp-foot">${d.history.length ? esc(worst + drops) : 'Measuring…'}</div>
+      <div class="rp-note">How much of the picture is arriving intact from your antenna, updated every second. Handy while aiming an antenna. (The Tablo doesn't report signal strength itself.)</div>`;
+  },
+};
+
+function fmtAgo(seconds) {
+  if (seconds < 60) return `${seconds} s ago`;
+  return `${Math.round(seconds / 60)} min ago`;
 }
 
 // ---------------------------------------------------------------------------
@@ -3711,6 +3900,7 @@ const ACTIONS = {
   'sync-guide': () => syncGuide(),
   'guide-highlight': el => { state.guide.highlight = el.dataset.value; state.guide.sort = el.dataset.value ? 'soonest' : 'primetime'; const s = $('[data-change="guide-sort"]'); if (s) s.value = state.guide.sort; loadGuide(routeToken); },
   'guide-more': el => { el.disabled = true; loadGuide(routeToken, true); },
+  'guide-sport': el => { state.guide.sport = el.dataset.value; renderGuideGrid(); },
   'guide-reload': () => loadGuide(routeToken),
   'scheduled-filter': el => { state.scheduled.filter = el.dataset.value; renderScheduledList(); },
 
@@ -3758,6 +3948,11 @@ const ACTIONS = {
   'pb-pip': () => player.togglePip(),
   'pb-live': () => player.goLive(),
   'pb-help': () => player.showHelp(),
+  'export-folder': el => chooseExportFolder(el),
+  'export-folder-reset': async () => {
+    try { await api('/api/system/export_folder', { method: 'POST', body: JSON.stringify({ path: null }) }); toast('Exports will be saved to Downloads\\TabloView again'); route(); }
+    catch (err) { toast(err.message, 'error'); }
+  },
   'dual-add': () => dual.add(),
   'dual-layout': () => dual.cycleLayout(),
   'dual-close': el => dual.close(el.dataset.pane),
@@ -3798,6 +3993,8 @@ const ACTIONS = {
   'pb-surf': el => player.surf(Number(el.dataset.dir)),
   'pb-tune': el => player.tune(el.dataset.id, el.dataset.name, el.dataset.kind),
   'pb-retune': () => { const s = state.stream; player.watchLive(s.channelId, s.channelName, s.channelKind); },
+  'pb-recordings': () => { player.close(); location.hash = '#/library'; },
+  'reception-panel': () => reception.toggle(),
   'upnext-play': () => player.playNext(),
   'upnext-cancel': () => player.hideUpNext(),
 
@@ -3945,7 +4142,9 @@ const CHANGES = {
   'smooth-motion': async el => {
     try {
       await api('/api/settings', { method: 'POST', body: JSON.stringify({ smooth_motion: el.checked }) });
-      toast(`Smooth motion ${el.checked ? 'on' : 'off'}. It applies to the next thing you play.`);
+      toast(el.checked
+        ? 'Smooth motion on for the next thing you play. If you see glitches or stutters, turn it back off.'
+        : 'Smooth motion off. It applies to the next thing you play.');
     } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
   },
   'notifications': async el => {

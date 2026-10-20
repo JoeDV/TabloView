@@ -35,10 +35,10 @@ The first time it spends a minute setting itself up, adds **TabloView** to your 
 
 ## Good to know
 
-- Your password goes only to Tablo's sign-in service and is never saved. TabloView keeps its sign-in and cache in a `data` folder inside the TabloView folder, and MP4 exports go to its `downloads` folder.
+- Your password goes only to Tablo's sign-in service and is never saved. TabloView keeps its sign-in and cache in a `data` folder inside the TabloView folder, and MP4 exports go to its `downloads` folder (choose another under **Device → Playback → Save exports to**).
 - Only this computer can open TabloView; other devices on your network can't.
 - Video is converted for the browser by the CPU, or by an NVIDIA graphics card if FFmpeg supports it. On older or low-power computers, set **Device → Playback → Video quality** to *Fastest*.
-- Windows-only for now: start with Windows / tray icon, desktop notifications, and update notices. Check the forum for new versions.
+- Windows-only for now: start with Windows / tray icon, desktop notifications, and update notices. New versions are on the [Releases page](https://github.com/JoeDV/TabloView/releases/latest).
 - **Open in VLC** downloads a small playlist file; open it with VLC.
 - **To update**, replace the TabloView folder with a new copy, keeping the `data` folder if you don't want to sign in again. Then run `bash start-linux.sh --install` once.
 - **To remove it**, delete the TabloView folder and `~/.local/share/applications/tabloview.desktop`.
@@ -48,5 +48,6 @@ The first time it spends a minute setting itself up, adds **TabloView** to your 
 - *"Python can't create TabloView's environment"*: run `sudo apt install python3-venv` and try again.
 - *"TabloView needs Python 3.12 or newer"*: install uv (step 2) and try again.
 - *Playback doesn't start*: check that `ffmpeg -version` works in a terminal.
+- *"This browser can't play TabloView's video"* (Firefox on Fedora, including Kinoite): Fedora's Firefox leaves out the H.264 video codec. Use Chrome or Chromium, use the Firefox Flatpak (it includes the codecs), or add them from RPM Fusion with `sudo dnf install libavcodec-freeworld`. **Open in VLC** works either way.
 - *Port already in use*: TabloView or something else is already using port 7070.
 - Anything else: copy the text from the terminal window and post it in the forum thread.

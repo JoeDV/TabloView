@@ -130,12 +130,14 @@ def guide_airing_row(p: str, d: Dict[str, Any]) -> Dict[str, Any]:
         ('premiere' in qual and is_new) or
         (is_new and ep_num == 1 and season_num > 0)
     ) else 0
-    ep_title = ep.get('title')
+    # A sports event names its league as sport_path and the game as event.title
+    # ("Philadelphia 76ers at New York Knicks" under NBA Basketball)
+    ep_title = ep.get('title') or (d.get('event') or {}).get('title')
     if not ep_title:
         ep_title = f"Episode {ep_num}" if ep_num else (ad.get('show_title') or "Episode")
     return {
         "path": p,
-        "series_path": d.get('series_path') or '',
+        "series_path": d.get('series_path') or d.get('sport_path') or '',
         "show_title": ad.get('show_title') or 'Unknown',
         "episode_title": ep_title,
         "season_number": season_num,

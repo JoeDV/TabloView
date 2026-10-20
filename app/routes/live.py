@@ -82,30 +82,18 @@ async def get_cached_cloud_grid(day_str: str) -> Dict[str, Any]:
 
 
 async def fetch_local_ota_map() -> Dict[str, Dict[str, Any]]:
-    """Fetch OTA channel details (logos, resolution) from the local device, in parallel."""
+    """Fetch OTA channel details (logos, resolution) from the local device, 50 channels per request
+    (tablo_manager.batch_get). If the Tablo rejects a batch, those channels show without their local
+    details rather than the page waiting."""
     local_ota_map: Dict[str, Dict[str, Any]] = {}
     try:
         resp = await tablo_manager.request_local("GET", "/guide/channels")
         if resp.status_code != 200:
             return local_ota_map
 
-        sem = asyncio.Semaphore(15)
-
-        async def fetch_channel(p: str) -> Optional[Dict[str, Any]]:
-            async with sem:
-                try:
-                    r_ch = await tablo_manager.request_local("GET", p)
-                    if r_ch.status_code == 200:
-                        return {"path": p, **r_ch.json()}
-                except Exception as e:
-                    print(f"[LiveTV] Notice fetching local channel {p}: {e}")
-                return None
-
-        for c_data in await asyncio.gather(*[fetch_channel(p) for p in resp.json()]):
-            if not c_data:
-                continue
+        for p, c_data in (await tablo_manager.batch_get(resp.json())).items():
             # Keep the device path (e.g. /guide/channels/17182): tuners report busy channels by path
-            c_info = {**c_data.get("channel", {}), "_path": c_data["path"]}
+            c_info = {**c_data.get("channel", {}), "_path": p}
             ident = c_info.get("channel_identifier") or str(c_data.get("object_id"))
             local_ota_map[ident] = c_info
     except Exception as e:
@@ -565,6 +553,9 @@ async def tune_live_channel(req: TuneRequest):
     client = TabloClient(dev)
 
     channel_id = req.channel_id
+    # Changing channels: let the Tablo hear that the old one ended before asking for a tuner,
+    # otherwise a 2-tuner Tablo can briefly count both and refuse the new one
+    await transcode_manager.wait_for_ended_sessions()
     try:
         # Tune via TabloClient (synchronous, so keep it off the event loop)
         stream = await asyncio.to_thread(client.watch, channel_id)
@@ -579,6 +570,8 @@ async def tune_live_channel(req: TuneRequest):
             sess.tablo_token = stream.token
             stream_url = await transcode_manager.start_browser_transcode(sess.session_id, stream.playlist_url,
                                                                          passthrough=passthrough)
+            if req.kind != "fast":
+                transcode_manager.start_reception(sess)  # streaming channels have no antenna signal
             return {
                 "session_id": sess.session_id,
                 "stream_url": stream_url,
@@ -603,7 +596,29 @@ async def tune_live_channel(req: TuneRequest):
             if tablo_manager.unreachable_since is None:
                 tablo_manager.unreachable_since = time.time()
             raise HTTPException(status_code=503, detail=tablo_manager.UNREACHABLE_MESSAGE)
+        busy = await all_tuners_busy_message() if req.kind != "fast" else None
+        if busy:
+            raise HTTPException(status_code=409, detail=busy)
         raise HTTPException(status_code=500, detail=f"Failed to tune live channel: {e}")
+
+
+async def all_tuners_busy_message() -> Optional[str]:
+    """After a refused tune: if every antenna tuner is busy, say why in plain words (None otherwise)."""
+    status = await get_tuner_status()
+    total = status.get("total") or 0
+    if not total or status.get("available", 1) > 0:
+        return None
+    held, recording = status.get("held") or 0, status.get("recording") or 0
+    reasons = []
+    if recording:
+        reasons.append(f"{recording} recording")
+    if held:
+        reasons.append(f"{held} still held by the Tablo from live TV you closed (it frees "
+                       f"{'that one' if held == 1 else 'those'} on its own, usually within 10–45 minutes)")
+    others = total - held - recording
+    if others > 0:
+        reasons.append(f"{others} watching live TV")
+    return f"All {total} antenna tuners are busy: {', '.join(reasons)}. Recordings still play."
 
 
 @router.get("/vlc/{channel_id}")
@@ -633,6 +648,16 @@ async def get_live_vlc_playlist(channel_id: str):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating VLC live stream: {e}")
+
+
+@router.get("/reception/{session_id}")
+async def reception_report(session_id: str):
+    """Live picture quality for an antenna channel being watched: the badge's score and state, and
+    the last 5 minutes for the graph. Read from FFmpeg's log; nothing is asked of the Tablo."""
+    sess = transcode_manager.get_session(session_id)
+    if not sess or not sess.reception:
+        return {"available": False}
+    return {"available": True, **sess.reception.report()}
 
 
 @router.post("/stop")

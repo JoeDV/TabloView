@@ -34,7 +34,7 @@ if sys.stdout is None or getattr(sys, "frozen", False):
     _setup_logging()
 
 from app.config import APP_NAME, APP_VERSION, DOWNLOADS_DIR, IS_STORE, LOG_DIR, STORE_LINK  # noqa: E402
-from app.settings import load_settings  # noqa: E402
+from app.settings import load_settings, exports_dir  # noqa: E402
 from app import notifications, startup, updates  # noqa: E402
 
 
@@ -196,7 +196,7 @@ def main():
 
     menu = pystray.Menu(
         pystray.MenuItem("Open TabloView", lambda: webbrowser.open(runner.url), default=True),
-        pystray.MenuItem("Open downloads folder", lambda: open_folder(DOWNLOADS_DIR)),
+        pystray.MenuItem("Open exports folder", lambda: open_folder(exports_dir())),
         pystray.MenuItem("Check for updates", on_check_updates),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(f"{APP_NAME} {APP_VERSION}", None, enabled=False),

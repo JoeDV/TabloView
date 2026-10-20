@@ -177,25 +177,22 @@ async def get_guide_series_details(path: str = Query(..., description="Guide ser
     return show
 
 
+def airings_list_path(path: str) -> str:
+    """The Tablo's list of upcoming airings for a guide entry: a sports league lists its games as
+    /events (/episodes is "not found" there); series list /episodes."""
+    return f"{path}/events" if path.startswith("/guide/sports/") else f"{path}/episodes"
+
+
 async def refresh_series_airing_states(series_path: str, delay: float = 2.0):
     """After a series rule change the Tablo re-plans its schedule; re-read the record status of
     that series' upcoming airings so the Live TV grid badges are right without a full guide sync."""
     await asyncio.sleep(delay)
     try:
-        resp = await tablo_manager.request_local("GET", f"{series_path}/episodes")
+        resp = await tablo_manager.request_local("GET", airings_list_path(series_path))
         if resp.status_code != 200 or not isinstance(resp.json(), list):
             return
-        sem = asyncio.Semaphore(15)
-
-        async def read_state(p: str):
-            async with sem:
-                r = await tablo_manager.request_local("GET", p)
-                if r.status_code == 200:
-                    return p, (r.json().get("schedule") or {}).get("state") or "none"
-            return None
-
-        results = await asyncio.gather(*[read_state(p) for p in resp.json()], return_exceptions=True)
-        update_airing_schedule_states(dict(x for x in results if isinstance(x, tuple)))
+        objects = await tablo_manager.batch_get(resp.json())
+        update_airing_schedule_states({p: (d.get("schedule") or {}).get("state") or "none" for p, d in objects.items()})
     except Exception as e:
         print(f"[Guide] Couldn't refresh record status for {series_path}: {e}")
 
@@ -253,10 +250,8 @@ async def get_series_upcoming_episodes(series_path: str = Query(...)):
     if not series_path.startswith("/"):
         series_path = "/" + series_path
 
-    episodes_endpoint = f"{series_path}/episodes"
-
     try:
-        resp = await tablo_manager.request_local("GET", episodes_endpoint)
+        resp = await tablo_manager.request_local("GET", airings_list_path(series_path))
         if resp.status_code == 404:
             return {"series_path": series_path, "count": 0, "episodes": []}
         if resp.status_code != 200:
@@ -266,61 +261,43 @@ async def get_series_upcoming_episodes(series_path: str = Query(...)):
         if not isinstance(ep_paths, list):
             return {"series_path": series_path, "count": 0, "episodes": []}
 
-        # Fetch detailed info for each upcoming episode
-        sem = asyncio.Semaphore(15)
+        def episode_row(p: str, d: Dict[str, Any]) -> Dict[str, Any]:
+            ad = d.get("airing_details", {})
+            ep = d.get("episode") or {}
+            event = d.get("event") or {}  # a sports game
+            ch_info = ad.get("channel", {}).get("channel", {})
+            sched = d.get("schedule", {})
+            season_num = ep.get("season_number") or 0
+            ep_num = ep.get("number") or ep.get("episode_number") or 0
+            ep_title = ep.get("title") or event.get("title")
+            if not ep_title:
+                ep_title = f"Episode {ep_num}" if ep_num else (ad.get("show_title") or "Episode")
+            return {
+                "path": p,
+                "object_id": d.get("object_id"),
+                "series_path": d.get("series_path") or d.get("sport_path"),
+                "title": ep_title,
+                "description": ep.get("description") or event.get("description") or "",
+                "season_number": season_num,
+                "episode_number": ep_num,
+                "orig_air_date": ep.get("orig_air_date", ""),
+                "air_datetime": ad.get("datetime", ""),
+                "duration": ad.get("duration", 0),
+                "channel": {
+                    "call_sign": ch_info.get("call_sign") or ch_info.get("name") or "",
+                    "major": ch_info.get("major"),
+                    "minor": ch_info.get("minor"),
+                    "network": ch_info.get("network") or "",
+                    "logo_url": pick_logo(ch_info.get("logos", [])),
+                },
+                "qualifiers": d.get("qualifiers", []),
+                "is_scheduled": sched.get("state") in ("scheduled", "set"),
+                "schedule_state": sched.get("state", "none"),
+                "schedule_qualifier": sched.get("qualifier", "none"),
+            }
 
-        async def fetch_ep(p: str):
-            async with sem:
-                try:
-                    r = await tablo_manager.request_local("GET", p)
-                    if r.status_code == 200:
-                        d = r.json()
-                        ad = d.get("airing_details", {})
-                        ep = d.get("episode", {})
-                        ch_info = ad.get("channel", {}).get("channel", {})
-                        sched = d.get("schedule", {})
-
-                        # Channel logo
-                        logo_url = pick_logo(ch_info.get("logos", []))
-
-                        season_num = ep.get("season_number") or 0
-                        ep_num = ep.get("number") or ep.get("episode_number") or 0
-                        ep_title = ep.get("title")
-                        if not ep_title:
-                            if ep_num:
-                                ep_title = f"Episode {ep_num}"
-                            else:
-                                ep_title = ad.get("show_title") or "Episode"
-
-                        return {
-                            "path": p,
-                            "object_id": d.get("object_id"),
-                            "series_path": d.get("series_path"),
-                            "title": ep_title,
-                            "description": ep.get("description") or "",
-                            "season_number": season_num,
-                            "episode_number": ep_num,
-                            "orig_air_date": ep.get("orig_air_date", ""),
-                            "air_datetime": ad.get("datetime", ""),
-                            "duration": ad.get("duration", 0),
-                            "channel": {
-                                "call_sign": ch_info.get("call_sign") or ch_info.get("name") or "",
-                                "major": ch_info.get("major"),
-                                "minor": ch_info.get("minor"),
-                                "network": ch_info.get("network") or "",
-                                "logo_url": logo_url
-                            },
-                            "qualifiers": d.get("qualifiers", []),
-                            "is_scheduled": sched.get("state") in ("scheduled", "set"),
-                            "schedule_state": sched.get("state", "none"),
-                            "schedule_qualifier": sched.get("qualifier", "none"),
-                        }
-                except Exception:
-                    pass
-                return None
-
-        episodes = await asyncio.gather(*[fetch_ep(p) for p in ep_paths])
-        valid_episodes = [e for e in episodes if e]
+        # Upcoming episodes in batches of 50 (one request each is a burst the Tablo refuses)
+        valid_episodes = [episode_row(p, d) for p, d in (await tablo_manager.batch_get(ep_paths)).items()]
 
         # Sort by air date
         valid_episodes.sort(key=lambda x: x.get("air_datetime") or "")

@@ -3,7 +3,9 @@
 import json
 from typing import Any, Dict
 
-from .config import SETTINGS_FILE
+from pathlib import Path
+
+from .config import SETTINGS_FILE, DOWNLOADS_DIR
 
 DEFAULTS: Dict[str, Any] = {
     "allow_lan": False,  # packaged app: listen on all interfaces instead of 127.0.0.1 only
@@ -14,8 +16,9 @@ DEFAULTS: Dict[str, Any] = {
     "auto_sync_minutes": 15,  # recordings sync interval; 0 = off (guide refreshes every GUIDE_SYNC_HOURS)
     "notifications": True,  # tray notifications for failed/short recordings and recording conflicts
     "video_quality": "auto",  # browser playback: auto (graphics chip if available), best, fastest
-    "smooth_motion": False,
-    "export_format": "smaller",  # MP4 exports: "smaller" (H.264, graphics chip if available) or "original" (exact copy)  # 60 fps from 1080i (opt-in: harder on graphics-chip encoders)
+    "smooth_motion": False,  # 60 fps from 1080i (opt-in: harder on graphics-chip encoders)
+    "export_format": "smaller",  # MP4 exports: "smaller" (H.264, graphics chip if available) or "original" (exact copy)
+    "export_folder": None,  # where MP4 exports go; None = DOWNLOADS_DIR (Downloads\TabloView)
     "rerecord_failed": True,  # schedule a rerun of a recording that failed or came out short (app/rerecord.py)
     "commercial_shows": [],  # show ids whose recordings get commercial breaks found (app/commercials.py)
     "commercial_episodes": [],  # single recordings asked for from the episode menu
@@ -35,6 +38,21 @@ def load_settings() -> Dict[str, Any]:
     except Exception as e:
         print(f"[Settings] Could not read settings, using defaults: {e}")
     return data
+
+
+def exports_dir() -> Path:
+    """Where MP4 exports are saved: the chosen folder, or Downloads\\TabloView. Falls back to the default
+    if the chosen folder can't be used any more (e.g. a removed USB drive)."""
+    custom = load_settings().get("export_folder")
+    if custom:
+        try:
+            p = Path(custom)
+            p.mkdir(parents=True, exist_ok=True)
+            return p
+        except OSError as e:
+            print(f"[Settings] Export folder {custom} isn't available ({e}); using {DOWNLOADS_DIR}")
+    DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    return DOWNLOADS_DIR
 
 
 def save_settings(updates: Dict[str, Any]) -> Dict[str, Any]:

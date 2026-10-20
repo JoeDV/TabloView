@@ -564,6 +564,29 @@ img { display: block; }
 .player-top { display: flex; align-items: center; gap: 14px; padding: 12px 18px; background: linear-gradient(180deg, rgba(0,0,0,0.85), rgba(0,0,0,0)); position: absolute; top: 0; left: 0; right: 0; z-index: 2; transition: opacity 0.3s; }
 .player.idle .player-top { opacity: 0; }
 .player-title { font-weight: 650; font-size: 16px; }
+.player-title-row { display: flex; align-items: center; gap: 12px; }
+/* Picture quality from the antenna (live antenna channels): bars + percentage, and a 5-minute graph */
+.reception { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); color: var(--text); cursor: pointer; }
+.reception:hover { background: rgba(255,255,255,0.16); }
+.reception .bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
+.reception .bars i { width: 3px; border-radius: 1px; background: rgba(255,255,255,0.22); }
+.reception .bars i:nth-child(1) { height: 4px; } .reception .bars i:nth-child(2) { height: 6px; } .reception .bars i:nth-child(3) { height: 8px; }
+.reception .bars i:nth-child(4) { height: 10px; } .reception .bars i:nth-child(5) { height: 12px; }
+.reception .bars i.on { background: currentColor; }
+.reception.q-clean, .reception.q-minor { color: var(--ok); }
+.reception.q-minor .bars i.on { background: #b5d334; }
+.reception.q-breaking { color: var(--warn); }
+.reception.q-losing, .reception.q-no_signal { color: var(--rec); }
+.reception.q-starting { color: var(--text-2); }
+.reception-panel { position: absolute; top: 64px; left: 18px; z-index: 4; width: 380px; max-width: calc(100% - 36px); padding: 14px 16px;
+  border-radius: 12px; background: rgba(20,22,30,0.94); border: 1px solid rgba(255,255,255,0.12); font-size: 13px; }
+.reception-panel .rp-head { display: flex; align-items: baseline; gap: 8px; font-weight: 650; }
+.reception-panel .rp-head span:last-of-type { margin-left: auto; }
+.reception-panel svg { display: block; width: 100%; height: 96px; margin: 10px 0 6px; }
+.reception-panel .rp-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-2); }
+.reception-panel .rp-foot { margin-top: 8px; color: var(--text-2); font-size: 12.5px; }
+.reception-panel .rp-note { margin-top: 8px; color: var(--text-2); font-size: 11.5px; line-height: 1.4; }
 .player-status { font-size: 12.5px; color: var(--text-2); margin-top: 2px; }
 .player-status .good { color: var(--ok); }
 .player-status .wait { color: var(--warn); }
@@ -699,6 +722,7 @@ img { display: block; }
 .signal-row { display: grid; grid-template-columns: minmax(140px, 200px) minmax(180px, 1fr) minmax(160px, 1.2fr) 150px; gap: 16px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 13.5px; }
 .signal-row:last-child { border-bottom: 0; }
 .signal-row.frequent .signal-ch b { color: var(--warn); }
+.path-box { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; padding: 6px 10px; border-radius: 8px; background: var(--surface-2); color: var(--text-2); }
 .link-btn { background: none; border: 0; padding: 0 0 0 8px; color: var(--accent); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
 .link-btn:hover { text-decoration: underline; }
 .rerecord-row { grid-template-columns: 1fr auto; }
