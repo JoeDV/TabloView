@@ -61,7 +61,12 @@ class LanPinTests(unittest.TestCase):
 
     def test_pin_is_stored_hashed(self):
         lanauth.set_pin("2468")
-        self.assertNotIn("2468", str(self.settings))
+        # Not as a value anywhere (a substring check failed now and then: the random salt, hash and
+        # secret are ~160 hex characters, which contain "2468" about once in 400 runs)
+        stored = self.settings["lan_pin"]
+        self.assertEqual(set(stored), {"salt", "hash"})
+        self.assertNotIn("2468", [v for v in stored.values()] + [str(v) for v in self.settings.values()])
+        self.assertEqual(len(stored["hash"]), 128)
 
     def test_requests_from_another_device_get_401(self):
         lanauth.set_pin("2468")

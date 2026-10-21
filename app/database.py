@@ -137,6 +137,16 @@ def init_db():
             )
         """)
 
+        # Signal dropouts found in recordings the Tablo flagged as not clean (app/dropouts.py)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS dropouts (
+                episode_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                spans_json TEXT,
+                analyzed_at TEXT
+            )
+        """)
+
         # How each recording turned out, kept after the recording is deleted (app/signal_health.py)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS recording_history (
@@ -607,6 +617,22 @@ def delete_export_job(job_id: str):
     with get_connection() as conn:
         conn.execute("DELETE FROM exports WHERE job_id = ?", (job_id,))
         conn.commit()
+
+
+def fail_interrupted_exports() -> List[Dict[str, Any]]:
+    """At start-up: exports that were running or waiting when TabloView last closed can't carry on
+    (nothing resumes them), so mark them interrupted. They used to sit at "Exporting 97%" or
+    "Waiting" for good, even after a reboot. Returns the jobs changed."""
+    with get_connection() as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM exports WHERE status IN ('pending', 'downloading')").fetchall()]
+        conn.execute("""
+            UPDATE exports SET status = 'failed', completed_at = ?,
+                error = 'Interrupted: TabloView was closed before it finished. Export it again.'
+            WHERE status IN ('pending', 'downloading')
+        """, (datetime.now(timezone.utc).isoformat(),))
+        conn.commit()
+    return rows
 
 
 def get_export_jobs() -> List[Dict[str, Any]]:

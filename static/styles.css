@@ -678,6 +678,10 @@ img { display: block; }
 .pb-main { width: 46px; height: 46px; }
 .pb-sleep { width: auto; min-width: 38px; padding: 0 9px; border-radius: 19px; gap: 5px; display: inline-flex; align-items: center; justify-content: center; font-size: 12.5px; font-weight: 600; }
 .pb-sleep.on, .pb-cc.on { background: rgba(91,140,255,0.28); }
+.pb-record { width: auto; min-width: 38px; padding: 0 11px; border-radius: 19px; gap: 6px; display: inline-flex; align-items: center; font-size: 12.5px; font-weight: 600; }
+.pb-record .rec-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--rec); flex-shrink: 0; }
+.pb-record.on { background: rgba(239, 76, 76, 0.22); color: #ff9b9b; cursor: default; opacity: 1; }
+.pb-record.on .rec-dot { animation: pulse 1.2s ease-in-out infinite; }
 /* Captions: readable on any picture */
 #video::cue { font-family: Inter, system-ui, sans-serif; font-size: 1em; color: #fff; background: rgba(0, 0, 0, 0.78); }
 .pb-sleep span:empty { display: none; }
@@ -749,6 +753,7 @@ img { display: block; }
 .ad-line #adText span { color: var(--text-3); }
 .ad-progress { font-weight: 600; white-space: nowrap; }
 .ad-tag.dim { background: var(--surface-2); color: var(--text-3); }
+.drop-tag { background: var(--rec-soft); color: #ff8e8e; }  /* signal dropouts: red, like on the timeline */
 /* PIN sign-in on other devices */
 .pin-screen { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; background: var(--bg); padding: 16px; }
 .pin-box { width: 100%; max-width: 340px; display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; }
@@ -803,6 +808,7 @@ img { display: block; }
 .tl-played::after { content: ''; position: absolute; right: -6px; top: -3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; }
 .tl-breaks { position: absolute; inset: 0; pointer-events: none; }
 .tl-breaks span { position: absolute; top: 0; bottom: 0; background: rgba(242, 184, 75, 0.85); border-radius: 2px; }
+.tl-dropouts span { background: rgba(239, 76, 76, 0.9); }  /* signal dropouts: red, beside the yellow breaks */
 .skip-break {
   position: absolute; right: 24px; bottom: 120px; z-index: 3; display: inline-flex; align-items: center; gap: 8px;
   padding: 10px 16px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.25); cursor: pointer;

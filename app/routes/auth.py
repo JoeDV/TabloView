@@ -49,7 +49,8 @@ async def get_auth_status():
 @router.post("/login")
 async def login(req: LoginRequest):
     try:
-        devices = await tablo_manager.login(req.email, req.password)
+        # Autofill often adds a space after the email, which Tablo's sign-in rejects as a wrong email
+        devices = await tablo_manager.login(req.email.strip(), req.password)
         # Trigger background library sync automatically on login
         asyncio.create_task(sync_service.sync_library())
         return {

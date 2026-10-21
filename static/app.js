@@ -214,6 +214,9 @@ const RULE_LABEL = { new: 'Recording new', all: 'Recording all', none: 'Record' 
 const store = (k, fallback) => { try { return localStorage.getItem(k) ?? fallback; } catch { return fallback; } };
 const save = (k, v) => { try { localStorage.setItem(k, v); } catch { /* storage unavailable */ } };
 
+// Device → Appearance → Open TabloView on (per browser)
+const START_PAGES = [['home', 'Home'], ['library', 'Library'], ['guide', 'Guide'], ['live', 'Live TV'], ['scheduled', 'Scheduled']];
+
 const state = {
   status: null,
   shows: null,
@@ -1261,7 +1264,7 @@ async function setProtected(id, value) {
 }
 
 function episodeStatus(ep) {
-  const tag = episodeStatusTag(ep) + commercialTag(ep);
+  const tag = episodeStatusTag(ep) + commercialTag(ep) + dropoutTag(ep);
   return ep.incomplete
     ? `${tag}<button class="link-btn" data-action="rerecord" data-id="${esc(ep.id)}" title="Find another airing of this episode to record">Record again</button>`
     : tag;
@@ -1280,6 +1283,15 @@ function commercialTag(ep) {
   }
   if (ep.commercials === 'unreliable') return '<span class="ad-tag dim" title="The show and its ads look too much alike to mark the breaks safely">–</span>';
   return '';
+}
+
+// Signal dropouts found in this recording (the Tablo flagged it as not clean): marked in red in the player
+function dropoutTag(ep) {
+  if (ep.finding_dropouts) return '<span class="ad-tag drop-tag dim" title="Looking for signal dropouts in this recording (in the background, while nothing is playing)">Checking signal</span>';
+  const d = ep.dropouts || [];
+  if (!d.length) return '';
+  const secs = Math.round(d.reduce((sum, x) => sum + (x.end - x.start), 0));
+  return `<span class="ad-tag drop-tag" title="${plural(d.length, 'signal dropout')} (${fmt.dur(secs) || `${secs} s`} in all) where the picture breaks up or freezes; marked in red on the timeline, and skippable">${plural(d.length, 'dropout')}</span>`;
 }
 
 function episodeStatusTag(ep) {
@@ -2619,7 +2631,7 @@ PAGES.antenna = async (r, token) => {
 
 PAGES.downloads = async (r, token) => {
   paint(`<div class="page">
-    <div class="page-head"><div><h1 class="page-title">Downloads</h1><div class="page-sub">MP4 exports saved to the downloads folder on this computer</div></div></div>
+    <div class="page-head"><div><h1 class="page-title">Downloads</h1><div class="page-sub">MP4 exports saved to this computer (choose the folder under Device → Playback)</div></div></div>
     <div id="dlList"><div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>
   </div>`);
   const refresh = async () => {
@@ -2645,7 +2657,9 @@ function renderDownloads(jobs) {
       <div style="min-width:0"><div class="row-title">${esc(j.filename)}</div><div class="row-sub">${esc(fmt.bytes(j.file_size))}${j.created_at ? ` · started ${esc(fmt.ago(j.created_at))}` : ''}${j.error ? ` · ${esc(j.error.slice(-140))}` : ''}</div></div>
       <div>${j.status === 'downloading' ? `<div class="progress"><div style="width:${pct}%"></div></div><div class="row-sub" style="margin-top:4px">${pct}%</div>` : ''}</div>
       <span class="status-text ${esc(j.status)}">${esc({ downloading: 'Exporting', pending: 'Waiting' }[j.status] || j.status)}</span>
-      <div>${j.status === 'completed' ? `<a class="btn btn-sm" href="/downloads/${encodeURIComponent(j.filename)}" download>${icon('download', 15)}Save</a>` : ''}</div>
+      <div>${j.status === 'completed' ? `<a class="btn btn-sm" href="/downloads/${encodeURIComponent(j.filename)}" download>${icon('download', 15)}Save</a>`
+        : ['downloading', 'pending'].includes(j.status) ? `<button class="btn btn-sm" data-action="export-cancel" data-id="${esc(j.job_id)}" data-name="${esc(j.filename)}">Cancel</button>`
+        : `<button class="btn btn-sm btn-ghost" data-action="export-remove" data-id="${esc(j.job_id)}" title="Remove from this list">${icon('x', 14)}</button>`}</div>
     </div>`;
   }).join('')}</div>`;
 }
@@ -2811,6 +2825,11 @@ PAGES.device = async (r, token) => {
         </label>
         <p class="dim" style="margin-top:6px;font-size:12.5px">For shows with “Skip commercials” turned on (on the show’s page). Off: a Skip break button appears instead (or press S).</p>
         <label class="switch-row" style="margin-top:16px">
+          <input type="checkbox" class="switch" data-change="skip-dropouts" ${settings.skip_dropouts ? 'checked' : ''}>
+          <span>Skip signal dropouts automatically</span>
+        </label>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">When a weak signal left part of a recording broken up or frozen, TabloView finds it in the background and marks it in red on the timeline. Off: a Skip dropout button appears instead (or press S).</p>
+        <label class="switch-row" style="margin-top:16px">
           <input type="checkbox" class="switch" data-change="autoplay" ${state.autoplay ? 'checked' : ''}>
           <span>Play the next episode automatically</span>
         </label>
@@ -2826,6 +2845,13 @@ PAGES.device = async (r, token) => {
           </select>
         </label>
         <p class="dim" style="margin-top:6px;font-size:12.5px">The stations' own logos in color, or all in white like before.</p>
+        <label class="switch-row" style="font-weight:400;cursor:default;margin-top:14px">
+          <span>Open TabloView on</span>
+          <select class="select" data-change="start-page" style="height:32px">
+            ${START_PAGES.map(([v, label]) => `<option value="${v}" ${store('tv_start_page', 'home') === v ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </label>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">The page you see when TabloView opens, on this computer.</p>
       </div>
       ${desktop}
       ${network}
@@ -2972,6 +2998,7 @@ const player = {
       recoveries: 0, stallSince: 0, stallShown: false,
       // Commercial breaks skipped so far stay skipped when the same recording restarts (seek, stall)
       breaks: sameEpisode ? state.stream.breaks : [], skippedBreaks: sameEpisode ? state.stream.skippedBreaks : new Set(),
+      dropouts: sameEpisode ? state.stream.dropouts : [], skippedDropouts: sameEpisode ? state.stream.skippedDropouts : new Set(),
       episodeId: id, channelId: null, offset: start,
       duration: ep ? ep.actual_duration || ep.duration || 0 : 0,
       lastSaved: start, markedWatched: false,
@@ -3005,13 +3032,53 @@ const player = {
     $('#pbLive').classList.toggle('hidden', !live);
     $('#pbSpeed').disabled = live;  // live TV can't run faster than it's broadcast
     $('#pbChannels').classList.toggle('hidden', !live);
+    if (!live) { $('#pbRecord').classList.add('hidden'); $('#pbRecord').dataset.key = ''; }
     $('#pbDual').classList.toggle('hidden', !on || dual.on);
     $('#pbLayout').classList.toggle('hidden', !on || !dual.on);
-    if (live || !on) { $('#tlBreaks').innerHTML = ''; $('#skipBreak').classList.add('hidden'); }
+    if (live || !on) { $('#tlBreaks').innerHTML = ''; $('#tlDropouts').innerHTML = ''; $('#skipBreak').classList.add('hidden'); }
     if (!live) this.toggleChannels(false);
     clearInterval(state.stream.timelineTimer);
     state.stream.timelineTimer = on ? setInterval(() => this.updateTimeline(), 500) : null;
     if (on) this.updateTimeline();
+  },
+
+  // Live antenna TV: Record the show on now, on the Tablo, without leaving the channel
+  liveAiring() {
+    const s = state.stream;
+    if (!s.channelId || s.channelKind === 'fast' || !state.epg) return null;
+    const c = state.epg.channels.find(x => x.channel_id === s.channelId);
+    const a = c && nowNext(c).now;
+    // Placeholder entries (no guide data) have nothing on the Tablo to schedule
+    return a && a.path && !a.path.startsWith('/channel/') && !a.path.startsWith('/cloud/') ? { c, a } : null;
+  },
+
+  updateRecordButton() {
+    const btn = $('#pbRecord');
+    const hit = this.liveAiring();
+    const recording = hit && (hit.a.schedule_state === 'scheduled' || hit.a.recording_now || hit.a.recording);
+    const key = hit ? `${hit.a.path}|${recording ? 1 : 0}` : '';
+    if (btn.dataset.key === key) return;
+    btn.dataset.key = key;
+    btn.classList.toggle('hidden', !hit);
+    btn.classList.toggle('on', !!recording);
+    btn.disabled = !!recording;
+    $('#pbRecordText').textContent = recording ? 'Recording' : 'Record';
+    btn.title = !hit ? '' : recording ? `${hit.a.title} is recording on your Tablo`
+      : `Record ${hit.a.title} on your Tablo, from now until it ends`;
+  },
+
+  async recordLive() {
+    const hit = this.liveAiring();
+    if (!hit) return;
+    try {
+      await api('/api/guide/episodes/schedule', { method: 'POST', body: JSON.stringify({ path: hit.a.path, scheduled: true }) });
+      hit.a.schedule_state = 'scheduled';
+      state.upcoming = null;
+      toast(`Recording ${hit.a.title} on your Tablo. It'll be in your Library.`, 'success');
+    } catch (err) {
+      toast(`Couldn't record it: ${err.message}`, 'error');
+    }
+    this.updateRecordButton();
   },
 
   // Live TV: the window kept for pause/rewind ([start, end] in video time)
@@ -3022,6 +3089,7 @@ const player = {
   },
 
   updateLiveTimeline() {
+    this.updateRecordButton();
     const w = this.liveWindow();
     const v = this.video();
     if (!w || w.end <= w.start) {
@@ -3219,22 +3287,26 @@ const player = {
     if (state.stream.episodeId !== id) return;
     state.stream.breaks = res.breaks || [];
     state.stream.autoSkip = !!res.auto_skip;
+    state.stream.dropouts = res.dropouts || [];
+    state.stream.autoSkipDropouts = !!res.auto_skip_dropouts;
     this.drawBreaks();
   },
 
   drawBreaks() {
     const s = state.stream, dur = s.duration;
-    const box = $('#tlBreaks');
-    box.innerHTML = dur && s.episodeId ? (s.breaks || []).map(b =>
-      `<span style="left:${(b.start / dur) * 100}%;width:${((b.end - b.start) / dur) * 100}%" title="Commercial break"></span>`).join('') : '';
+    const mark = (list, title) => dur && s.episodeId ? (list || []).map(b =>
+      `<span style="left:${(b.start / dur) * 100}%;width:${Math.max(0.25, ((b.end - b.start) / dur) * 100)}%" title="${title}"></span>`).join('') : '';
+    $('#tlBreaks').innerHTML = mark(s.breaks, 'Commercial break');
+    $('#tlDropouts').innerHTML = mark(s.dropouts, 'Signal dropout: the picture breaks up or freezes here');
   },
 
-  // In a break: skip it (automatically if that's on, once per break) or offer a button
+  // In a break: skip it (automatically if that's on, once per break) or offer a button.
+  // Signal dropouts work the same way, with their own setting.
   checkBreak(pos) {
     const s = state.stream;
     const i = (s.breaks || []).findIndex(b => pos >= b.start && pos < b.end - 2);
     const btn = $('#skipBreak');
-    if (i < 0) { btn.classList.add('hidden'); return; }
+    if (i < 0) { this.checkDropout(pos); return; }
     const b = s.breaks[i];
     if (s.autoSkip && !s.skippedBreaks.has(i)) {
       s.skippedBreaks.add(i);
@@ -3245,6 +3317,24 @@ const player = {
     }
     btn.dataset.end = b.end;
     btn.innerHTML = `Skip break ${icon('next', 16)}<span>${fmtClock(b.end - pos)}</span>`;
+    btn.classList.remove('hidden');
+  },
+
+  checkDropout(pos) {
+    const s = state.stream;
+    const i = (s.dropouts || []).findIndex(d => pos >= d.start && pos < d.end - 0.5);
+    const btn = $('#skipBreak');
+    if (i < 0) { btn.classList.add('hidden'); return; }
+    const d = s.dropouts[i];
+    if (s.autoSkipDropouts && !s.skippedDropouts.has(i)) {
+      s.skippedDropouts.add(i);
+      btn.classList.add('hidden');
+      toast(`Skipped ${fmt.dur(d.end - d.start) || 'a few seconds'} of signal dropout`);
+      this.seekTo(d.end);
+      return;
+    }
+    btn.dataset.end = d.end;
+    btn.innerHTML = `Skip dropout ${icon('next', 16)}<span>${fmtClock(d.end - pos)}</span>`;
     btn.classList.remove('hidden');
   },
 
@@ -4269,6 +4359,19 @@ const ACTIONS = {
   'guide-highlight': el => { state.guide.highlight = el.dataset.value; state.guide.sort = el.dataset.value ? 'soonest' : 'primetime'; const s = $('[data-change="guide-sort"]'); if (s) s.value = state.guide.sort; loadGuide(routeToken); },
   'guide-more': el => { el.disabled = true; loadGuide(routeToken, true); },
   'guide-sport': el => { state.guide.sport = el.dataset.value; renderGuideGrid(); },
+  'export-cancel': async el => {
+    const ok = await confirmDialog({ title: 'Cancel this export?', text: `${el.dataset.name}: the part made so far is deleted, and the next export in the list starts.`, confirm: 'Cancel export', danger: true });
+    if (!ok) return;
+    try {
+      await api(`/api/exports/${encodeURIComponent(el.dataset.id)}/cancel`, { method: 'POST' });
+      toast('Export cancelled');
+    } catch (err) { toast(err.message, 'error'); }
+    if (parseRoute().name === 'downloads') route();
+  },
+  'export-remove': async el => {
+    try { await api(`/api/exports/${encodeURIComponent(el.dataset.id)}`, { method: 'DELETE' }); } catch (err) { toast(err.message, 'error'); }
+    if (parseRoute().name === 'downloads') route();
+  },
   'guide-retry': async el => {
     el.disabled = true;
     try {
@@ -4380,6 +4483,7 @@ const ACTIONS = {
   'pb-tune': el => player.tune(el.dataset.id, el.dataset.name, el.dataset.kind),
   'pb-retune': () => { const s = state.stream; player.watchLive(s.channelId, s.channelName, s.channelKind); },
   'pb-recordings': () => { player.close(); location.hash = '#/library'; },
+  'pb-record': () => player.recordLive(),
   'reception-panel': () => reception.toggle(),
   'upnext-play': () => player.playNext(),
   'upnext-cancel': () => player.hideUpNext(),
@@ -4496,6 +4600,10 @@ const CHANGES = {
   'show-cleanup': el => setCleanup(el),
   'buffer': el => { state.bufferTarget = parseInt(el.value, 10) || 8; save('tablo_buffer_target', state.bufferTarget); toast(`Buffer set to ${state.bufferTarget} seconds`); },
   'autoplay': el => { state.autoplay = el.checked; save('tablo_autoplay', el.checked ? '1' : '0'); },
+  'start-page': el => {
+    save('tv_start_page', el.value);
+    toast(`TabloView will open on ${START_PAGES.find(([v]) => v === el.value)[1]}`);
+  },
   'startup': async el => {
     try {
       const res = await api('/api/system/startup', { method: 'POST', body: JSON.stringify({ enabled: el.checked }) });
@@ -4522,6 +4630,12 @@ const CHANGES = {
     try {
       await api('/api/settings', { method: 'POST', body: JSON.stringify({ skip_commercials: el.checked }) });
       toast(el.checked ? 'Commercial breaks will be skipped automatically' : 'A Skip break button will appear instead');
+    } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
+  },
+  'skip-dropouts': async el => {
+    try {
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ skip_dropouts: el.checked }) });
+      toast(el.checked ? 'Signal dropouts will be skipped automatically' : 'A Skip dropout button will appear instead');
     } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
   },
   'export-format': async el => {
@@ -4747,6 +4861,12 @@ async function init() {
   hydrateIcons();
   wireEvents();
   await loadStatus();
+  // Opened without a page in the address (the tray, a bookmark to the site): the chosen start page
+  const start = store('tv_start_page', 'home');
+  if ((!location.hash || location.hash === '#/' || location.hash === '#') && start !== 'home'
+      && START_PAGES.some(([v]) => v === start)) {
+    history.replaceState(null, '', `#/${start}`);
+  }
   route();
   showWhatsNew();
   loadStorage();

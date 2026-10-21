@@ -96,10 +96,16 @@ async def episode_commercials(episode_id: str):
     from .. import commercials
     from ..database import get_commercials
     from ..settings import load_settings
+    from .. import dropouts
     found = get_commercials([episode_id]).get(episode_id)
+    drops = dropouts.get(episode_id)
+    settings = load_settings()
     return {"status": found["status"] if found else ("analyzing" if commercials.status["current"] == episode_id else None),
             "breaks": found["breaks"] if found else [],
-            "auto_skip": bool(load_settings().get("skip_commercials"))}
+            "auto_skip": bool(settings.get("skip_commercials")),
+            # Signal dropouts (recordings the Tablo flagged as not clean; app/dropouts.py)
+            "dropouts": drops["spans"] if drops else [],
+            "auto_skip_dropouts": bool(settings.get("skip_dropouts"))}
 
 
 @router.post("/{episode_id}/find_commercials")

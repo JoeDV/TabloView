@@ -15,9 +15,9 @@ from fastapi.responses import FileResponse, Response, JSONResponse
 from .config import (
     APP_NAME, APP_VERSION, STATIC_DIR, TRANSCODE_DIR, DOWNLOADS_DIR, IMAGE_CACHE_DIR, HOST, PORT,
 )
-from . import commercials, encoders, lanauth, whatsnew
+from . import commercials, dropouts, encoders, lanauth, whatsnew
 from .settings import exports_dir
-from .database import get_export_jobs
+from .database import get_export_jobs, fail_interrupted_exports
 from .database import init_db
 from .tablo_client import tablo_manager
 from .sync_service import sync_service, auto_sync_loop
@@ -43,13 +43,22 @@ async def lifespan(app: FastAPI):
     else:
         print("[Startup] No authenticated Tablo device yet. Ready for login via web UI.")
 
+    # Exports cut off by TabloView closing: mark them, and remove their unfinished file
+    for job in fail_interrupted_exports():
+        print(f"[Startup] Export interrupted when TabloView closed: {job.get('filename')}")
+        if job.get("filepath"):
+            p = Path(job["filepath"])
+            p.with_name(p.stem + ".part.ts").unlink(missing_ok=True)
+
     auto_sync = asyncio.create_task(auto_sync_loop(sync_service))
     ad_finder = asyncio.create_task(commercials.worker_loop())
+    dropout_finder = asyncio.create_task(dropouts.worker_loop())
 
     yield
 
     auto_sync.cancel()
     ad_finder.cancel()
+    dropout_finder.cancel()
     # Shutdown: clean up transcode sessions
     print("[Shutdown] Cleaning up stream sessions...")
     for sid in list(transcode_manager.sessions.keys()):
@@ -204,8 +213,18 @@ async def serve_transcoded_file(session_id: str, filename: str):
             raise HTTPException(status_code=404, detail="Transcoded segment not ready or not found")
 
     if filename.endswith(".m3u8"):
+        # FFmpeg replaces the playlist by renaming a new copy over it; read at that instant, Windows
+        # refuses for a moment (PermissionError). Try again rather than fail the player's request.
+        for attempt in range(6):
+            try:
+                content = file_path.read_bytes()
+                break
+            except PermissionError:
+                if attempt == 5:
+                    raise HTTPException(status_code=503, detail="Playlist busy, try again")
+                await asyncio.sleep(0.05)
         return Response(
-            content=file_path.read_bytes(),
+            content=content,
             media_type="application/vnd.apple.mpegurl",
             headers={
                 "Cache-Control": "no-cache, no-store",

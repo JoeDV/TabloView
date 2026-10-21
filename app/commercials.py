@@ -298,7 +298,8 @@ async def worker_loop() -> None:
     while True:
         await asyncio.sleep(WORKER_INTERVAL)
         try:
-            if not tablo_manager.is_authenticated or _busy():
+            from . import dropouts  # one background read of a recording from the Tablo at a time
+            if not tablo_manager.is_authenticated or _busy() or dropouts.status.get("current"):
                 continue
             queue = await asyncio.to_thread(pending)
             if not queue:

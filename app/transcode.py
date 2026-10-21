@@ -8,6 +8,7 @@ import asyncio
 import stat
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from datetime import datetime, timezone
@@ -33,6 +34,10 @@ LIVE_REWIND_MINUTES = 30
 # Recordings: a small preview frame every this many seconds, for the timeline. Named by position in
 # the recording (p01234.jpg = 1234 x PREVIEW_SECONDS), so a restart or a resume point fits in.
 PREVIEW_SECONDS = 5
+# MP4 exports: no progress for this long means the Tablo stopped sending (see _stop_stalled_export);
+# past this share of the recording, what arrived is kept rather than thrown away
+EXPORT_STALL_SECONDS = 60
+EXPORT_NEAR_END = 0.9
 
 
 def run_at_full_speed(proc: subprocess.Popen) -> None:
@@ -113,6 +118,8 @@ class TranscodeManager:
         self.export_tasks: Dict[str, asyncio.Task] = {}
         # Exports run one at a time (created on first use, inside the event loop)
         self._export_slot: Optional[asyncio.Semaphore] = None
+        self.export_procs: Dict[str, subprocess.Popen] = {}  # running exports' FFmpeg, by job
+        self.cancelled_exports: set = set()
         # Watch sessions being ended on the Tablo; tuning waits for these so the old channel's
         # tuner is given back before the new channel asks for one
         self._ending: set = set()
@@ -123,14 +130,25 @@ class TranscodeManager:
         self.cleanup_stale_transcodes()
 
     def cleanup_stale_transcodes(self):
-        """Wipe old transcode temp folders on startup."""
+        """Wipe old transcode temp folders on startup. A folder something is still writing to (changed
+        in the last couple of minutes) belongs to a session another TabloView process is playing right
+        now: left alone. Wiping it deleted a live stream's rewind (2026-10-20, twice)."""
         try:
             if TRANSCODE_DIR.exists():
                 for d in TRANSCODE_DIR.iterdir():
-                    if d.is_dir():
+                    if d.is_dir() and not self._in_use(d):
                         force_rmtree(d)
         except Exception as e:
             print(f"[TranscodeManager] Cleanup notice: {e}")
+
+    @staticmethod
+    def _in_use(folder: Path, recent_seconds: float = 120) -> bool:
+        """Anything in folder modified within recent_seconds (an FFmpeg writing a stream's pieces)."""
+        cutoff = time.time() - recent_seconds
+        try:
+            return any(f.stat().st_mtime > cutoff for f in folder.iterdir())
+        except OSError:
+            return True  # can't tell: leave it
 
     def create_session(self, playlist_url: str) -> StreamSession:
         session_id = uuid.uuid4().hex
@@ -566,10 +584,27 @@ class TranscodeManager:
         }
         save_export_job(job_info)
 
-        task = asyncio.create_task(self._queued_export(job_id, get_playlist_url, dest_path, episode.get("duration", 0)))
+        # The recording's own length (the Tablo pads its time slot by about 75 s), for progress and
+        # for telling a stall near the end from one partway through
+        length = int(episode.get("actual_duration") or episode.get("duration") or 0)
+        task = asyncio.create_task(self._queued_export(job_id, get_playlist_url, dest_path, length))
         self.export_tasks[job_id] = task
 
         return job_id
+
+    def cancel_export(self, job_id: str) -> bool:
+        """Stop an export that's running (its FFmpeg is stopped and the partial file removed) or still
+        waiting its turn. False if it's already finished."""
+        if job_id in self.export_procs:
+            self.cancelled_exports.add(job_id)  # _run_ffmpeg_export stops it within 2 s
+            return True
+        task = self.export_tasks.get(job_id)
+        if task and not task.done():
+            task.cancel()
+            save_export_job({"job_id": job_id, "status": "cancelled", "progress": 0.0,
+                             "completed_at": datetime.now(timezone.utc).isoformat()})
+            return True
+        return False
 
     async def _queued_export(self, job_id: str, get_playlist_url, output_path: Path, expected_duration: int):
         if self._export_slot is None:
@@ -592,9 +627,13 @@ class TranscodeManager:
                                               encoders.for_export(encoders.cpu_fallback()), last_try=True)
 
     @staticmethod
-    def export_cmd(playlist_url: str, output_path: Path, enc: Optional[Dict[str, Any]]) -> List[str]:
+    def export_cmd(playlist_url: str, part_path: Path, enc: Optional[Dict[str, Any]]) -> List[str]:
         """enc None: copy the broadcast video as is (largest, exact). Otherwise convert to H.264
-        (deinterlaced, like playback), which is usually much smaller."""
+        (deinterlaced, like playback), which is usually much smaller.
+
+        Written as MPEG-TS first (part_path), then re-packaged as the MP4 (remux_cmd): an MP4 is only
+        playable once FFmpeg closes it, and FFmpeg can't when the Tablo stops sending partway (an
+        export on Ubuntu sat at 97% for 47 minutes); a .ts is good up to wherever it stopped."""
         video = (["-c:v", "copy"] if enc is None else
                  ["-vf", "bwdif=mode=send_frame:deint=interlaced", *enc["args"], "-pix_fmt", enc["pix_fmt"]])
         return [
@@ -609,23 +648,62 @@ class TranscodeManager:
             *video,
             "-af", "aresample=async=1:ochl=stereo:clev=1.0:slev=0.6",
             "-c:a", "aac", "-b:a", "192k", "-ac", "2",
-            "-movflags", "+faststart",
-            str(output_path)
+            "-f", "mpegts",
+            str(part_path)
         ]
 
     @staticmethod
-    def export_progress(log_tail: str, expected_duration: int) -> Optional[float]:
-        """Percent done from the last "time=HH:MM:SS.xx" FFmpeg wrote, or None if unknown."""
+    def remux_cmd(part_path: Path, output_path: Path) -> List[str]:
+        """The finished (or salvaged) .ts as the MP4, without converting anything again."""
+        return [FFMPEG_PATH, "-y", "-fflags", "+genpts", "-i", str(part_path), "-map", "0:v", "-map", "0:a?",
+                "-c", "copy", "-movflags", "+faststart", str(output_path)]
+
+    async def _remux(self, part_path: Path, output_path: Path) -> Optional[str]:
+        """Re-package the .ts as the MP4; None if it worked, otherwise why not."""
+        def run() -> Optional[str]:
+            proc = subprocess.Popen(self.remux_cmd(part_path, output_path), stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.PIPE, creationflags=NO_WINDOW, **childproc.popen_kwargs())
+            childproc.tie_to_app(proc)
+            _, err = proc.communicate()
+            if proc.returncode == 0 and output_path.exists() and output_path.stat().st_size > 0:
+                return None
+            return (err or b"").decode("utf-8", errors="replace")[-400:] or f"FFmpeg exited with code {proc.returncode}"
+        return await asyncio.to_thread(run)
+
+    @staticmethod
+    def export_seconds(log_tail: str) -> Optional[float]:
+        """Seconds of the recording converted so far, from the last "time=HH:MM:SS.xx" FFmpeg wrote."""
         found = re.findall(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)", log_tail)
-        if not found or not expected_duration:
+        if not found:
             return None
         h, m, sec = found[-1]
-        done = int(h) * 3600 + int(m) * 60 + float(sec)
+        return int(h) * 3600 + int(m) * 60 + float(sec)
+
+    @classmethod
+    def export_progress(cls, log_tail: str, expected_duration: int) -> Optional[float]:
+        """Percent done from the last "time=HH:MM:SS.xx" FFmpeg wrote, or None if unknown."""
+        done = cls.export_seconds(log_tail)
+        if done is None or not expected_duration:
+            return None
         return round(min(99.0, done / expected_duration * 100), 1)
+
+    @staticmethod
+    def _stop_stalled_export(proc: subprocess.Popen, done: float, expected_duration: int) -> str:
+        """FFmpeg made no progress for EXPORT_STALL_SECONDS: the Tablo stopped sending (FFmpeg waits for
+        more and ignores its own quit command while it does). Stop it. Near the end, what arrived is
+        kept (the .ts is good up to there); earlier on, say why it stopped."""
+        proc.kill()
+        proc.wait(timeout=10)
+        if expected_duration and done >= expected_duration * EXPORT_NEAR_END:
+            return "near_end"
+        pct = f" at {round(done / expected_duration * 100)}%" if expected_duration and done > 0 else ""
+        return (f"The Tablo stopped sending this recording{pct}, so the export was stopped. "
+                f"Try again later; if it stops at the same point, that part of the recording may be damaged.")
 
     async def _run_ffmpeg_export(self, job_id: str, playlist_url: str, output_path: Path, expected_duration: int,
                                  enc: Optional[Dict[str, Any]] = None, last_try: bool = True) -> bool:
-        cmd = self.export_cmd(playlist_url, output_path, enc)
+        part_path = output_path.with_name(output_path.stem + ".part.ts")  # becomes the MP4 when done
+        cmd = self.export_cmd(playlist_url, part_path, enc)
         print(f"[ExportWorker] Starting export {job_id} -> {output_path.name} "
               f"({enc['label'] if enc else 'original video'})")
         save_export_job({"job_id": job_id, "status": "downloading", "progress": 0.0, "error": None})
@@ -633,22 +711,35 @@ class TranscodeManager:
         # which would fill up and stall long exports
         log_path = TRANSCODE_DIR / f"export_{job_id}.log"
         proc = None
+        stalled = None  # why FFmpeg was stopped, if it stopped making progress
         try:
             with open(log_path, "w", encoding="utf-8") as log_f:
-                proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=log_f, creationflags=NO_WINDOW,
-                                        **childproc.popen_kwargs())
+                proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=log_f,
+                                        creationflags=NO_WINDOW, **childproc.popen_kwargs())
             childproc.tie_to_app(proc)
+            self.export_procs[job_id] = proc
+            last_done, last_change = -1.0, time.monotonic()
 
             # Poll progress while process is running
             while proc.poll() is None:
                 await asyncio.sleep(2)
-                size = output_path.stat().st_size if output_path.exists() else 0
+                if job_id in self.cancelled_exports:
+                    proc.kill()
+                    proc.wait(timeout=10)
+                    break
+                size = part_path.stat().st_size if part_path.exists() else 0
                 try:
                     with open(log_path, "rb") as f:
                         f.seek(max(0, log_path.stat().st_size - 4096))
                         tail = f.read().decode("utf-8", errors="replace")
                 except OSError:
                     tail = ""
+                done = self.export_seconds(tail)
+                if done is not None and done > last_done:
+                    last_done, last_change = done, time.monotonic()
+                elif time.monotonic() - last_change >= EXPORT_STALL_SECONDS:
+                    stalled = self._stop_stalled_export(proc, last_done, expected_duration)
+                    break
                 progress = self.export_progress(tail, expected_duration)
                 if progress is None:
                     # Unknown length: a rough guess from the size (about 2 GB per hour)
@@ -662,11 +753,35 @@ class TranscodeManager:
                     "file_size": size
                 })
 
+            if job_id in self.cancelled_exports:
+                print(f"[ExportWorker] Export {job_id} cancelled")
+                save_export_job({"job_id": job_id, "status": "cancelled", "error": None,
+                                 "completed_at": datetime.now(timezone.utc).isoformat()})
+                return True  # nothing to retry
+
             try:
                 stderr = log_path.read_text(encoding="utf-8", errors="replace")
             except Exception:
                 stderr = ""
-            if proc.returncode == 0 and output_path.exists():
+            if stalled == "near_end":
+                print(f"[ExportWorker] Export {job_id}: the Tablo stopped sending near the end "
+                      f"({round(last_done)} of {expected_duration} s); keeping what arrived")
+            elif stalled:
+                # The Tablo's doing, not the encoder's: don't retry on the CPU, just say what happened
+                print(f"[ExportWorker] Export {job_id} stalled at {round(last_done)} s; stopped")
+                save_export_job({"job_id": job_id, "status": "failed", "error": stalled,
+                                 "completed_at": datetime.now(timezone.utc).isoformat()})
+                return True
+            if (proc.returncode == 0 or stalled == "near_end") and part_path.exists() and part_path.stat().st_size:
+                save_export_job({"job_id": job_id, "status": "downloading", "progress": 99.0})
+                remux_error = await self._remux(part_path, output_path)
+                if remux_error:
+                    print(f"[ExportWorker] Export {job_id}: couldn't make the MP4: {remux_error}")
+                    output_path.unlink(missing_ok=True)
+                    save_export_job({"job_id": job_id, "status": "failed",
+                                     "error": f"Couldn't finish the MP4: {remux_error[-200:]}",
+                                     "completed_at": datetime.now(timezone.utc).isoformat()})
+                    return True
                 size = output_path.stat().st_size
                 print(f"[ExportWorker] Export {job_id} completed successfully ({round(size / 1024**2, 1)} MB)")
                 save_export_job({
@@ -680,7 +795,6 @@ class TranscodeManager:
             err_msg = stderr[-400:] if stderr else f"FFmpeg exited with code {proc.returncode}"
             print(f"[ExportWorker] Export {job_id} failed: {err_msg}")
             if not last_try:
-                output_path.unlink(missing_ok=True)
                 return False
             save_export_job({
                 "job_id": job_id,
@@ -697,10 +811,13 @@ class TranscodeManager:
                 "completed_at": datetime.now(timezone.utc).isoformat()
             })
         finally:
-            try:
-                log_path.unlink(missing_ok=True)
-            except Exception:
-                pass
+            self.export_procs.pop(job_id, None)
+            self.cancelled_exports.discard(job_id)
+            for leftover in (log_path, part_path):  # the .ts is either the MP4 now, or not wanted
+                try:
+                    leftover.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
 
 transcode_manager = TranscodeManager()

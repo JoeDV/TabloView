@@ -397,7 +397,7 @@ async def tune_check():
     """Before tuning an antenna channel: would it leave too few tuners for recordings starting soon?"""
     status = await get_tuner_status()
     return live_tv_check(get_upcoming_recordings(within_hours=2), status.get("total", 0),
-                         status.get("in_use", 0), status.get("held", 0))
+                         status.get("in_use", 0), status.get("held", 0), status.get("recording"))
 
 
 @router.get("/epg")

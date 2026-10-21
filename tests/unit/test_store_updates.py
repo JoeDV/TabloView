@@ -35,6 +35,9 @@ class StoreUpdateTests(unittest.TestCase):
             u = self.check()
         self.assertFalse(u["update_available"])
         self.assertIn("Microsoft Store", u["error"])
+        # Says what to do, not Windows' own error text (a user got a "WinNT" message)
+        self.assertIn("Get updates", u["error"])
+        self.assertNotIn("no store", u["error"])
 
 
 if __name__ == "__main__":

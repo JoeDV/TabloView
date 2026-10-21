@@ -155,12 +155,17 @@ async def set_keep(req: KeepRequest, show_id: str = Query(...)):
 def _with_commercials(episodes: List[dict]) -> List[dict]:
     """Add each recording's commercial-finding status: done (with breaks), unreliable, failed,
     analyzing, or None (not looked at)."""
+    from .. import dropouts
     found = get_commercials([e["id"] for e in episodes])
     current = commercials.status["current"]
     queued = set(commercials.queued_episodes())
+    drops = {e["id"]: dropouts.get(e["id"]) for e in episodes}
     return [{**e, "commercials": (found[e["id"]]["status"] if e["id"] in found else "analyzing" if e["id"] == current
                                   else "queued" if e["id"] in queued else None),
-             "commercial_breaks": len(found[e["id"]]["breaks"]) if e["id"] in found else 0} for e in episodes]
+             "commercial_breaks": len(found[e["id"]]["breaks"]) if e["id"] in found else 0,
+             # Signal dropouts found (recordings the Tablo flagged as not clean; app/dropouts.py)
+             "dropouts": (drops[e["id"]] or {}).get("spans", []),
+             "finding_dropouts": dropouts.status["current"] == e["id"]} for e in episodes]
 
 
 @router.post("/commercials")

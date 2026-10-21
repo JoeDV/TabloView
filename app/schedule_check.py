@@ -118,26 +118,41 @@ def peak_overlap(airings: List[Dict[str, Any]]) -> int:
     return peak
 
 
+def _channel(a: Dict[str, Any]) -> str:
+    return a.get("channel_identifier") or a.get("channel_call_sign") or a.get("path") or ""
+
+
 def live_tv_check(upcoming: List[Dict[str, Any]], total: int, in_use: int, held: int,
-                  horizon_minutes: int = 90) -> Dict[str, Any]:
+                  recording: Optional[int] = None, horizon_minutes: int = 90) -> Dict[str, Any]:
     """Would tuning one more antenna channel now leave too few tuners for recordings that are about
-    to start? Held tuners (closed streams the Tablo hasn't released yet) count as busy."""
+    to start? Checked at each moment a recording starts: the recordings running then (one tuner per
+    channel), plus the tuners busy with anything else now (live TV, or held after a stream closed:
+    counted as still busy), plus the new channel.
+
+    A recording that follows another on the same channel takes over its tuner: two recordings
+    running and two more starting on the same two channels need two tuners, not four (a 4-tuner
+    Tablo warned "Not enough tuners" for any other channel)."""
     now = datetime.now(timezone.utc)
-    soon = []
-    for a in upcoming:
-        start, end = _span(a)
-        if now < start <= now + timedelta(minutes=horizon_minutes):
-            soon.append(a)
-    needed = peak_overlap(soon)
-    free_after = total - in_use - 1
+    horizon = now + timedelta(minutes=horizon_minutes)
+    spans = [(a, *_span(a)) for a in upcoming]
+    soon = [a for a, start, _ in spans if now < start <= horizon]
+
+    def channels_recording(t: datetime) -> int:
+        return len({_channel(a) for a, start, end in spans if start <= t < end})
+
+    recording_now = max(channels_recording(now), recording or 0)
+    other = max(in_use - recording_now, 0)  # live TV and held tuners
+    worst = recording_now + other + 1
+    for a in soon:
+        worst = max(worst, channels_recording(_span(a)[0]) + other + 1)
     return {
         "total": total,
         "in_use": in_use,
         "held": held,
-        "free_after_tuning": max(free_after, 0),
+        "free_after_tuning": max(total - in_use - 1, 0),
         "recordings_soon": [{"title": a["show_title"], "start": a["air_datetime"],
                              "channel": a.get("channel_call_sign")} for a in soon],
-        "needed": needed,
-        "warn": total > 0 and needed > 0 and free_after < needed,
+        "needed": max(worst - other - 1, 0),
+        "warn": total > 0 and bool(soon) and worst > total,
         "no_free_tuner": total > 0 and total - in_use <= 0,
     }

@@ -55,6 +55,31 @@ class LiveTvCheckTests(unittest.TestCase):
     def test_all_tuners_busy(self):
         self.assertTrue(live_tv_check([], total=4, in_use=4, held=1)["no_free_tuner"])
 
+    def on(self, channel, start_min, minutes):
+        a = airing(f"{channel}@{start_min}", start_min / 60, minutes, base=datetime.now(timezone.utc))
+        a["channel_identifier"] = channel
+        return a
+
+    def test_recordings_that_follow_on_the_same_channels_reuse_their_tuners(self):
+        # 4-tuner Tablo: two recording now, two more in 15 min on the same two channels. Tuning a third
+        # channel needs 3 tuners at most (a user got "Not enough tuners" for every other channel)
+        upcoming = [self.on("A", -45, 60), self.on("B", -45, 60), self.on("A", 15, 60), self.on("B", 15, 60)]
+        r = live_tv_check(upcoming, total=4, in_use=2, held=0, recording=2)
+        self.assertFalse(r["warn"])
+
+    def test_a_new_channel_recording_still_warns(self):
+        # A and B still recording when C starts: 3 recording + the new channel = 4 fits; with a held
+        # tuner as well it doesn't
+        upcoming = [self.on("A", -45, 90), self.on("B", -45, 90), self.on("C", 15, 60)]
+        self.assertFalse(live_tv_check(upcoming, total=4, in_use=2, held=0, recording=2)["warn"])
+        self.assertTrue(live_tv_check(upcoming, total=4, in_use=3, held=1, recording=2)["warn"])
+
+    def test_two_recordings_on_one_channel_use_one_tuner(self):
+        upcoming = [self.on("A", 10, 60), self.on("A", 10, 60), self.on("B", 10, 60), self.on("C", 10, 60)]
+        self.assertFalse(live_tv_check(upcoming, total=4, in_use=0, held=0, recording=0)["warn"])
+        upcoming.append(self.on("D", 10, 60))
+        self.assertTrue(live_tv_check(upcoming, total=4, in_use=0, held=0, recording=0)["warn"])
+
 
 if __name__ == "__main__":
     unittest.main()

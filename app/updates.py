@@ -68,8 +68,10 @@ async def check_for_update(force: bool = False) -> Dict[str, Any]:
             latest = await store_update_version()
             result.update(latest=latest, update_available=bool(latest) and _version_tuple(latest) > _version_tuple(APP_VERSION))
         except Exception as e:
-            result["error"] = f"Couldn't check the Microsoft Store: {e}"
-            print(f"[Updates] {result['error']}")
+            # Windows' own error text ("WinNT ...") means nothing to people: say what to do instead
+            result["error"] = ("The Microsoft Store didn't answer TabloView just now. To check for updates, "
+                               "open the Store, go to Library, and click Get updates.")
+            print(f"[Updates] Couldn't ask the Microsoft Store for updates: {e!r}")
         _cache.update(checked=time.time(), result=result)
         return result
 

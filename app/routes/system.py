@@ -32,6 +32,7 @@ class SettingsUpdate(BaseModel):
     export_format: Optional[Literal["smaller", "original"]] = None
     rerecord_failed: Optional[bool] = None
     skip_commercials: Optional[bool] = None
+    skip_dropouts: Optional[bool] = None
 
 
 class ExportFolderRequest(BaseModel):
@@ -342,3 +343,24 @@ async def list_exports():
             continue
         jobs.append(job)
     return {"jobs": jobs}
+
+
+@router.post("/exports/{job_id}/cancel")
+async def cancel_export(job_id: str):
+    """Stop an export that's running or waiting its turn; the next one in the queue starts."""
+    from ..transcode import transcode_manager
+    if not transcode_manager.cancel_export(job_id):
+        raise HTTPException(status_code=404, detail="That export has already finished")
+    return {"status": "cancelling"}
+
+
+@router.delete("/exports/{job_id}")
+async def remove_export(job_id: str):
+    """Remove a failed or cancelled export from the list (finished files stay in the folder)."""
+    job = next((j for j in get_export_jobs() if j["job_id"] == job_id), None)
+    if not job:
+        raise HTTPException(status_code=404, detail="Export not found")
+    if job.get("status") in ("pending", "downloading"):
+        raise HTTPException(status_code=409, detail="Cancel it first")
+    delete_export_job(job_id)
+    return {"status": "removed"}
