@@ -3517,7 +3517,7 @@ const player = {
     const scroll = panel.querySelector('.chan-list');
     const top = scroll ? scroll.scrollTop : null;
     panel.innerHTML = `<div class="chan-head">
-        <span>${dual.picking ? 'Pick a second channel' : dual.on ? `Change ${dual.active === 'second' ? dual.s.name : state.stream.channelName}` : 'Channels'}</span>
+        <span>${dual.picking ? 'Pick a second channel' : dual.on ? `Change ${esc(dual.active === 'second' ? dual.s.name : state.stream.channelName)}` : 'Channels'}</span>
         <button class="pb-btn" data-action="pb-surf" data-dir="-1" title="Previous channel (Page Up)">${icon('up', 16)}</button>
         <button class="pb-btn" data-action="pb-surf" data-dir="1" title="Next channel (Page Down)">${icon('down', 16)}</button>
         <button class="pb-btn" data-action="pb-channels" title="Close (C)">${icon('x', 16)}</button>

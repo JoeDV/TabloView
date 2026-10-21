@@ -83,6 +83,7 @@ async def tablo_not_answering(request: Request, exc: httpx.TransportError):
 
 _LOCAL_NAMES = {"localhost", socket.gethostname().lower(), f"{socket.gethostname().lower()}.local"}
 _UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+_OTHER_SITES = {"cross-site", "same-site"}  # same-site: another program's page on this PC (another port)
 
 
 def _host_allowed(host_header: str) -> bool:
@@ -110,6 +111,12 @@ async def request_guard(request: Request, call_next):
     # without a CORS preflight, which this server never approves.
     if request.method in _UNSAFE_METHODS and request.headers.get("x-tabloview") != "1":
         return JSONResponse({"detail": "Missing X-TabloView header"}, status_code=403)
+    # Some reads use a tuner (the VLC links), so other websites can't make them either: browsers mark
+    # requests a page on another site makes. TabloView's own pages are same-origin; VLC, calendar apps
+    # and typed addresses send no such mark (or "none")
+    if request.headers.get("sec-fetch-site") in _OTHER_SITES and \
+            (request.url.path.startswith("/api/") or request.url.path.startswith("/downloads/")):
+        return JSONResponse({"detail": "Requests from other websites aren't allowed"}, status_code=403)
     # Other devices on the network need the PIN (this PC never does)
     why = lanauth.blocked(request.url.path, request.client.host if request.client else None,
                           request.cookies.get(lanauth.COOKIE))

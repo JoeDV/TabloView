@@ -33,7 +33,7 @@ from .database import (
 def slugify_show_title(title: str) -> str:
     """Generate a clean consistent ID from show title."""
     cleaned = re.sub(r"[^\w\s-]", "", title.lower()).strip()
-    return re.sub(r"[-\s]+", "-", cleaned) or hashlib.md5(title.encode()).hexdigest()[:10]
+    return re.sub(r"[-\s]+", "-", cleaned) or hashlib.md5(title.encode(), usedforsecurity=False).hexdigest()[:10]
 
 
 def extract_image_url(img_obj: Any) -> Optional[str]:
@@ -261,7 +261,7 @@ class LibrarySyncService:
                 duration = ad.get("duration", 0)
 
                 # Episode object
-                ep_id = f"ep_{data.get('object_id', hashlib.md5(path.encode()).hexdigest()[:8])}"
+                ep_id = f"ep_{data.get('object_id', hashlib.md5(path.encode(), usedforsecurity=False).hexdigest()[:8])}"
                 season_num = ep.get("season_number") or 0
                 ep_num = ep.get("number") or ep.get("episode_number") or 0
                 ep_title = ep.get("title")

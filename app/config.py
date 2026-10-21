@@ -79,7 +79,8 @@ CONFIG_FILE = DATA_DIR / "config.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 DB_FILE = DATA_DIR / "tablo_cache.db"
 
-HOST = os.getenv("HOST", "0.0.0.0")
+# Only for running app.main directly; the launcher and start scripts choose (localhost unless network access is on)
+HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "7070"))
 
 # Only honoured in a developer checkout; packaged users sign in through the UI

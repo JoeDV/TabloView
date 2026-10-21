@@ -45,6 +45,17 @@ class ApiGuardTests(unittest.TestCase):
         for ok_host in ("localhost:7070", "192.168.1.50:7070", "[::1]:7070"):
             self.assertEqual(self.client.get("/api/system/info", headers={"Host": ok_host}).status_code, 200, ok_host)
 
+    def test_other_websites_cannot_make_reads(self):
+        # e.g. <img src="http://127.0.0.1:7070/api/live/vlc/..."> on another site would tune a channel
+        for site in ("cross-site", "same-site"):
+            r = self.client.get("/api/system/info", headers={"Sec-Fetch-Site": site})
+            self.assertEqual(r.status_code, 403, site)
+        # TabloView's own pages, typed addresses, and VLC (no header)
+        for headers in ({"Sec-Fetch-Site": "same-origin"}, {"Sec-Fetch-Site": "none"}, {}):
+            self.assertEqual(self.client.get("/api/system/info", headers=headers).status_code, 200, headers)
+        # The page itself still opens from a link on another site
+        self.assertEqual(self.client.get("/", headers={"Sec-Fetch-Site": "cross-site"}).status_code, 200)
+
     def test_path_traversal_is_blocked(self):
         for url in ("/downloads/..%2F.env", "/api/transcoded/x/..%2F..%2F.env", "/api/images/..%2F..%2F.env"):
             self.assertEqual(self.client.get(url).status_code, 404, url)
