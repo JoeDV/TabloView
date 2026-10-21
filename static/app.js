@@ -2669,7 +2669,7 @@ PAGES.antenna = async (r, token) => {
 
 PAGES.downloads = async (r, token) => {
   paint(`<div class="page">
-    <div class="page-head"><div><h1 class="page-title">Downloads</h1><div class="page-sub">MP4 exports saved to this computer (choose the folder under Device → Playback)</div></div></div>
+    <div class="page-head"><div><h1 class="page-title">Downloads</h1><div class="page-sub">MP4 exports saved to this computer (choose the folder under <a href="#/device?tab=playback">Device → Playback → Exports</a>)</div></div></div>
     <div id="dlList"><div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>
   </div>`);
   const refresh = async () => {
@@ -2783,10 +2783,7 @@ PAGES.device = async (r, token) => {
       <div class="panel-actions"><button class="btn btn-danger btn-sm" data-action="logout">Sign out</button></div>
     </div>` : '';
 
-  paint(`<div class="page">
-    <div class="page-head"><div><h1 class="page-title">Device</h1><div class="page-sub">Connection, syncing, storage and playback settings</div></div></div>
-    <div class="panel-grid">
-      ${connection}
+  const libraryPanel = `
       <div class="panel">
         <h3>Library sync</h3><div class="panel-sub">Recordings are cached locally so pages load instantly.</div>
         <dl class="kv">
@@ -2811,6 +2808,8 @@ PAGES.device = async (r, token) => {
           <button class="btn btn-sm" data-action="sync-guide">${icon('guide', 15)}Refresh guide</button>
         </div>
       </div>
+`;
+  const storagePanel = `
       <div class="panel">
         <h3>Storage</h3><div class="panel-sub">${storage.connected ? `${fmt.size(storage.used_gb)} of ${fmt.size(storage.total_gb)} used` : 'Unavailable'}</div>
         ${(storage.drives || []).map(d => `
@@ -2819,10 +2818,10 @@ PAGES.device = async (r, token) => {
             <div class="meter" style="height:6px"><div class="meter-fill" style="width:${Math.min(d.percent_used, 100)}%"></div></div>
           </div>`).join('')}
       </div>
-      ${spaceByShowPanel(space, storage.connected ? storage.used_gb : 0)}
-      ${signalPanel(signal)}
+`;
+  const playbackPanel = `
       <div class="panel">
-        <h3>Playback</h3><div class="panel-sub">Picture quality and buffering for watching in the browser.</div>
+        <h3>Playback</h3><div class="panel-sub">Picture quality, skipping and buffering for watching in TabloView.</div>
         <label class="switch-row" style="font-weight:400;cursor:default">
           <span>Video quality</span>
           <select class="select" data-change="video-quality" style="height:32px">
@@ -2836,21 +2835,6 @@ PAGES.device = async (r, token) => {
           <span>Smooth motion (60 fps)</span>
         </label>
         <p class="dim" style="margin-top:6px;font-size:12.5px">Shows antenna TV at its full 60 motion steps a second, like on the TV. Best for sports. It works your PC much harder: if you see glitches or stutters, or live TV falls behind, turn it off. (If live TV can't keep up, TabloView switches that channel back to standard motion by itself.)</p>
-        <label class="switch-row" style="font-weight:400;cursor:default;margin-top:14px">
-          <span>MP4 exports</span>
-          <select class="select" data-change="export-format" style="height:32px">
-            ${[['smaller', 'Smaller (about a third smaller)'], ['original', 'Original (exact copy, larger)']]
-              .map(([v, label]) => `<option value="${v}" ${(settings.export_format || 'smaller') === v ? 'selected' : ''}>${label}</option>`).join('')}
-          </select>
-        </label>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">Smaller exports are converted to H.264 (with your graphics chip when it can): about 2.2 GB per hour of HD instead of 3.2 GB, and they play on almost anything. Original keeps the broadcast video exactly as recorded.</p>
-        <div class="switch-row" style="font-weight:400;cursor:default;margin-top:14px;align-items:center">
-          <span style="flex-shrink:0">Save exports to</span>
-          <code class="path-box" title="${esc(info.downloads_dir || '')}">${esc(info.downloads_dir || '')}</code>
-          <button class="btn btn-sm" data-action="export-folder">Change…</button>
-          ${info.downloads_dir && info.default_downloads_dir && info.downloads_dir !== info.default_downloads_dir
-            ? '<button class="btn btn-sm btn-ghost" data-action="export-folder-reset">Reset</button>' : ''}
-        </div>
         <label class="switch-row" style="font-weight:400;cursor:default;margin-top:14px">
           <span>Buffer before playing</span>
           <select class="select" data-change="buffer" style="height:32px">
@@ -2873,6 +2857,28 @@ PAGES.device = async (r, token) => {
         </label>
         <p class="dim" style="margin-top:6px;font-size:12.5px">When a show ends, TabloView counts down 10 seconds to the next unwatched episode. You can cancel and keep watching.</p>
       </div>
+`;
+  const exportsPanel = `
+      <div class="panel">
+        <h3>Exports</h3><div class="panel-sub">Recordings saved as MP4 files from the Downloads page.</div>
+        <label class="switch-row" style="font-weight:400;cursor:default">
+          <span>Format</span>
+          <select class="select" data-change="export-format" style="height:32px">
+            ${[['smaller', 'Smaller (about a third smaller)'], ['original', 'Original (exact copy, larger)']]
+              .map(([v, label]) => `<option value="${v}" ${(settings.export_format || 'smaller') === v ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </label>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">Smaller exports are converted to H.264 (with your graphics chip when it can): about 2.2 GB per hour of HD instead of 3.2 GB, and they play on almost anything. Original keeps the broadcast video exactly as recorded.</p>
+        <div class="switch-row" style="font-weight:400;cursor:default;margin-top:14px;align-items:center">
+          <span style="flex-shrink:0">Save exports to</span>
+          <code class="path-box" title="${esc(info.downloads_dir || '')}">${esc(info.downloads_dir || '')}</code>
+          <button class="btn btn-sm" data-action="export-folder">Change…</button>
+          ${info.downloads_dir && info.default_downloads_dir && info.downloads_dir !== info.default_downloads_dir
+            ? '<button class="btn btn-sm btn-ghost" data-action="export-folder-reset">Reset</button>' : ''}
+        </div>
+      </div>
+`;
+  const appearancePanel = `
       <div class="panel">
         <h3>Appearance</h3><div class="panel-sub">How TabloView looks.</div>
         <label class="switch-row" style="font-weight:400;cursor:default">
@@ -2891,14 +2897,35 @@ PAGES.device = async (r, token) => {
         </label>
         <p class="dim" style="margin-top:6px;font-size:12.5px">The page you see when TabloView opens, on this computer.</p>
       </div>
-      ${desktop}
-      ${network}
-      ${about}
+`;
+  const diagnosticsPanel = `
       <div class="panel" style="grid-column:1/-1">
         <h3>Diagnostics</h3><div class="panel-sub">Probe the Tablo's local API and the cloud guide to troubleshoot connection problems.</div>
         <button class="btn btn-sm" data-action="run-inspector">${icon('info', 15)}Run API inspector</button>
         <div id="inspectorOut"></div>
       </div>
+`;
+  const signalHtml = signalPanel(signal) || `
+      <div class="panel" style="grid-column:1/-1">
+        <h3>Signal health</h3><div class="panel-sub">How recordings on each channel turned out, and why the Tablo says any failed.</div>
+        <p class="dim" style="font-size:13px">Nothing to show yet: this fills in as your Tablo records.</p>
+      </div>`;
+  const TABS = [
+    ['general', 'General', connection + libraryPanel + appearancePanel],
+    ['playback', 'Playback', playbackPanel + exportsPanel],
+    ['storage', 'Storage', storagePanel + spaceByShowPanel(space, storage.connected ? storage.used_gb : 0)],
+    ['signal', 'Signal health', signalHtml],
+    ['desktop', 'Desktop & network', desktop + network],
+    ['about', 'About', about + diagnosticsPanel],
+  ];
+  const current = TABS.find(([id]) => id === r.query.get('tab')) || TABS[0];
+  const tab = ([id, label]) => `<a href="#/device${id === 'general' ? '' : `?tab=${id}`}" class="${id === current[0] ? 'active' : ''}" style="display:inline-flex;align-items:center;height:28px;padding:0 12px;border-radius:7px;font-weight:500;font-size:13px">${label}</a>`;
+
+  paint(`<div class="page">
+    <div class="page-head"><div><h1 class="page-title">Device</h1><div class="page-sub">Your Tablo and TabloView's settings</div></div></div>
+    <div class="toolbar"><div class="segmented tabs">${TABS.map(tab).join('')}</div></div>
+    <div class="panel-grid">
+${current[2]}
     </div>
   </div>`);
 };
