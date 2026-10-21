@@ -24,11 +24,23 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
     echo
 fi
 
-if [ ! -x .venv/bin/python ]; then
+# First run (or one that didn't finish): set up a private Python environment with TabloView's packages.
+# Only marked ready once the install worked; a half-made one used to be kept, and every start after
+# that failed with "No module named uvicorn".
+if [ ! -f .venv/.ready ]; then
     echo "First run: setting up TabloView (this takes a minute)..."
+    rm -rf .venv
     "$PY" -m venv .venv || exit 1
     .venv/bin/python -m pip install --quiet --upgrade pip
-    .venv/bin/python -m pip install --quiet -r requirements.txt || { echo "Couldn't install TabloView's packages."; exit 1; }
+    if ! .venv/bin/python -m pip install --quiet --disable-pip-version-check -r requirements.txt; then
+        echo
+        echo "Couldn't install TabloView's packages (the messages above say why)."
+        echo "If they mention SSL or CERTIFICATE_VERIFY_FAILED: open Applications > Python 3.x and"
+        echo "double-click 'Install Certificates.command', then run this again."
+        rm -rf .venv
+        exit 1
+    fi
+    touch .venv/.ready
 fi
 
 PORT=7070

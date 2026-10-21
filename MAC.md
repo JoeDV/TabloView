@@ -25,7 +25,7 @@ The first time, it spends a minute setting itself up. Then TabloView opens in yo
 
 ## Good to know
 
-- Your password goes only to Tablo's sign-in service and is never saved. TabloView keeps its sign-in and cache in a `data` folder inside the TabloView folder, and MP4 exports go to its `downloads` folder.
+- Your password goes only to Tablo's sign-in service and is never saved. TabloView keeps its sign-in and cache in a `data` folder inside the TabloView folder, and MP4 exports go to its `downloads` folder (choose another under **Device → Playback → Save exports to**).
 - Only your Mac can open TabloView; other devices on your network can't.
 - **Open in VLC** downloads a small playlist file; open it with VLC (https://www.videolan.org) or IINA.
 - **To update**, replace the TabloView folder with a new copy, keeping the `data` folder if you don't want to sign in again.
@@ -34,5 +34,7 @@ The first time, it spends a minute setting itself up. Then TabloView opens in yo
 ## If something goes wrong
 
 - *"TabloView needs Python 3.12 or newer"*: run `brew install python@3.12` and try again.
+- *"No module named uvicorn"*: the first-time setup didn't finish. Delete the `.venv` folder inside the TabloView folder (in Terminal: `rm -rf ~/TabloView/.venv`) and start TabloView again; it sets itself up from scratch. If it stops with *"Couldn't install TabloView's packages"*, the lines above that say why.
+- *SSL or CERTIFICATE_VERIFY_FAILED errors during setup* (Python from python.org rather than Homebrew): open Applications → Python 3.x, double-click **Install Certificates.command**, then start TabloView again.
 - *Port already in use*: TabloView is probably already running in another Terminal window.
 - Anything else: copy the text from the Terminal window and post it in the forum thread.
