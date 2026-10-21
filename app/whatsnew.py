@@ -13,6 +13,15 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.2.1": [
+        "Antenna helper (Antenna in the sidebar): aim your antenna with a big live picture-quality readout, a tone that rises as reception improves, a check of all your channels, and saved positions to compare. Open TabloView on your phone and take it to the antenna.",
+        "Channel logos in the stations' own colors. Prefer them white? Device → Appearance.",
+        "Scheduled now shows the episodes your Tablo won't record because more shows overlap than it has tuners, marked Won't record, so nothing quietly goes missing on a busy night.",
+        "The signal meter no longer makes heavy breakup look worse than it is.",
+        "A clear message when the Tablo can't pick up a channel, instead of a technical error.",
+        "If the TV guide doesn't finish loading, TabloView says so and tries again within minutes; recordings no longer drop out of the Library when a sync is cut short.",
+        "Live TV guide pages stay on the hour and half hour, and the Library count in the sidebar stays put.",
+    ],
     "1.2.0": [
         "Live signal meter: on antenna channels, a badge beside the channel name shows how much of the picture is reaching you, second by second. Click it for the last 5 minutes. Handy while aiming an antenna.",
         "Sports in the Guide are grouped by sport and league (Football: NFL, College; Soccer: Premier League, Liga MX…), and each game is listed by matchup.",
