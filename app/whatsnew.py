@@ -13,6 +13,14 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.2.2": [
+        "Signal dropouts in recordings: when your Tablo says a recording didn't come in cleanly, TabloView finds the parts where a weak signal broke up the picture and marks them in red on the timeline. Skip them with the Skip dropout button (or S), or have TabloView skip them for you (Device → Playback). Episodes with dropouts are tagged on the show's page.",
+        "Record from the live player: a Record button records the show you're watching.",
+        "Choose the page TabloView opens on (Device → Appearance).",
+        "Exports can be cancelled and removed, and a recording the Tablo stops sending no longer leaves an export stuck. If it stops near the end, you keep what arrived.",
+        "Back-to-back recordings on the same channel no longer trigger a \"Not enough tuners\" warning.",
+        "Sign-in works even with a space before or after your email, and the Store update check says what to do instead of showing a Windows error.",
+    ],
     "1.2.1": [
         "Antenna helper (Antenna in the sidebar): aim your antenna with a big live picture-quality readout, a tone that rises as reception improves, a check of all your channels, and saved positions to compare. Open TabloView on your phone and take it to the antenna.",
         "Channel logos in the stations' own colors. Prefer them white? Device → Appearance.",
