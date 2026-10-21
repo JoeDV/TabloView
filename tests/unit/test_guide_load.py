@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock
@@ -19,9 +20,10 @@ def airing(path):
 class FakeTablo:
     """Answers POST /batch (optionally refusing once, or rejecting batches) and single GETs."""
 
-    def __init__(self, airing_paths, refuse_once_at=None, batch_status=200):
+    def __init__(self, airing_paths, refuse_once_at=None, batch_status=200, refuse_from=None):
         self.airing_paths = airing_paths
         self.refuse_once_at = refuse_once_at
+        self.refuse_from = refuse_from  # stops answering for good once a batch reaches this path
         self.batch_status = batch_status
         self.requests = []
 
@@ -33,6 +35,8 @@ class FakeTablo:
             wanted = json.loads(body)
             if self.refuse_once_at in wanted:
                 self.refuse_once_at = None
+                raise httpx.ConnectError("All connection attempts failed")
+            if self.refuse_from in wanted:
                 raise httpx.ConnectError("All connection attempts failed")
             if self.batch_status != 200:
                 return httpx.Response(self.batch_status, json={"error": "nope"})
@@ -84,6 +88,29 @@ class GuideLoadTests(unittest.TestCase):
             got = asyncio.run(fetch_objects(paths))
         self.assertEqual(set(got), set(paths))
         self.assertTrue(any(m == "GET" and p.startswith("/guide/airings/") for m, p in tablo.requests))
+
+    def test_a_load_the_tablo_cuts_short_is_flagged_and_retried_soon(self):
+        # The Tablo stops answering for good after 150 of 320: the gaps would last until the next
+        # 6-hourly load (a Reddit user's missing recordings could be this)
+        paths = [f"/guide/airings/{i}" for i in range(320)]
+        service = LibrarySyncService()
+        with mock.patch.object(sync.tablo_manager, "request_bulk", new=FakeTablo(paths, refuse_from=paths[150])):
+            result = asyncio.run(service._sync_guide())
+        self.assertEqual(result["status"], "incomplete")
+        g = service.guide_incomplete
+        self.assertEqual((g["missing"], g["total"]), (170, 320))
+        self.assertAlmostEqual(g["retry_at"] - time.time(), sync.GUIDE_RETRY_SECONDS, delta=5)
+
+        # The retry gets everything: the flag clears
+        with mock.patch.object(sync.tablo_manager, "request_bulk", new=FakeTablo(paths)):
+            self.assertEqual(asyncio.run(service._sync_guide())["status"], "success")
+        self.assertIsNone(service.guide_incomplete)
+
+    def test_how_many_missing_counts_as_unfinished(self):
+        self.assertFalse(sync.fetch_incomplete(3000, 2998))  # a couple vanished meanwhile: fine
+        self.assertFalse(sync.fetch_incomplete(100, 95))
+        self.assertTrue(sync.fetch_incomplete(3000, 2900))
+        self.assertTrue(sync.fetch_incomplete(320, 150))
 
     def test_airings_no_longer_listed_are_removed(self):
         soon = (datetime.now(timezone.utc) + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")

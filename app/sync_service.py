@@ -115,6 +115,15 @@ async def fetch_objects(paths: List[str], on_chunk: Optional[Callable[[Dict[str,
     return results
 
 
+GUIDE_RETRY_SECONDS = 600  # an unfinished guide load is tried again after this, not GUIDE_SYNC_HOURS
+
+
+def fetch_incomplete(asked: int, got: int) -> bool:
+    """fetch_objects gave up partway (the Tablo stopped answering): more than a handful missing.
+    A few can legitimately vanish between listing and fetching (a recording deleted meanwhile)."""
+    return asked - got > max(5, asked * 0.02)
+
+
 def guide_airing_row(p: str, d: Dict[str, Any]) -> Dict[str, Any]:
     """A /guide/... airing object as a guide_airings row (with New / Primetime / Premiere flags)."""
     ep = d.get('episode', {})
@@ -163,6 +172,8 @@ class LibrarySyncService:
         # While the first guide load on this PC runs: shown as a banner.
         # {"first", "step": "shows"|"airings", "done", "total", "started", "waiting_until"}
         self.guide_progress: Optional[Dict[str, Any]] = None
+        # The last guide load stopped short: {"missing", "total", "retry_at"} (shown as a banner)
+        self.guide_incomplete: Optional[Dict[str, Any]] = None
 
     async def sync_library(self, include_guide: bool = True) -> Dict[str, Any]:
         """Full synchronization of Tablo DVR library into SQLite cache.
@@ -221,6 +232,12 @@ class LibrarySyncService:
                 airings_data.append(data)
 
             print(f"[LibrarySync] Successfully fetched {len(airings_data)} airing records.")
+            # If the Tablo stopped answering partway, the recordings not fetched aren't gone: keep them
+            # (pruning would drop them from the Library until the next sync)
+            partial = fetch_incomplete(len(airing_paths), len(airings_data))
+            if partial:
+                print(f"[LibrarySync] Only {len(airings_data)} of {len(airing_paths)} recordings came back; "
+                      "keeping the rest until the next sync")
 
             # 4. Group by show and prepare models
             shows_map: Dict[str, Dict[str, Any]] = {}
@@ -307,8 +324,12 @@ class LibrarySyncService:
             for ep_data in episodes_list:
                 upsert_episode(ep_data)
 
-            # Prune obsolete shows and episodes no longer returned by Tablo
-            prune_obsolete_shows_and_episodes(list(shows_map.keys()), [e["id"] for e in episodes_list])
+            # Prune obsolete shows and episodes no longer returned by Tablo (not after a partial fetch)
+            if not partial:
+                prune_obsolete_shows_and_episodes(list(shows_map.keys()), [e["id"] for e in episodes_list])
+            else:
+                for show_id in shows_map:  # counts from all the recordings kept, not just those fetched
+                    recalculate_show_stats(show_id)
 
             now_iso = datetime.now(timezone.utc).isoformat()
             set_sync_meta("last_sync", now_iso)
@@ -428,6 +449,7 @@ class LibrarySyncService:
         print(f"[GuideSync] Finished guide show catalog sync! Cached {total_synced} guide entries.")
 
         # Also sync all upcoming guide airings to detect Primetime New and Season Premieres
+        incomplete: Optional[Dict[str, Any]] = {"missing": None, "total": None}  # until the airings arrive
         try:
             print("[GuideSync] Syncing upcoming broadcast airings for Primetime & Premiere detection...")
             airings_resp = await tablo_manager.request_bulk("GET", "/guide/airings")
@@ -450,10 +472,20 @@ class LibrarySyncService:
 
                     await fetch_objects(airing_paths, on_chunk=save, progress=self.guide_progress)
                     print(f"[GuideSync] Saved {saved} upcoming airings with Primetime & Premiere tags.")
+                    incomplete = ({"missing": len(airing_paths) - saved, "total": len(airing_paths)}
+                                  if fetch_incomplete(len(airing_paths), saved) else None)
         except Exception as e:
             print(f"[GuideSync] Error syncing guide airings: {e}")
 
-        return {"status": "success", "count": total_synced, "synced_at": now_iso}
+        # An unfinished load leaves gaps (recordings missing from Scheduled): say so, and try again
+        # in GUIDE_RETRY_SECONDS rather than GUIDE_SYNC_HOURS (auto_sync_loop)
+        if incomplete:
+            self.guide_incomplete = {**incomplete, "retry_at": time.time() + GUIDE_RETRY_SECONDS}
+            print(f"[GuideSync] The guide didn't finish loading ({incomplete['missing']} of {incomplete['total']} "
+                  f"airings missing); trying again in {GUIDE_RETRY_SECONDS // 60} minutes")
+        else:
+            self.guide_incomplete = None
+        return {"status": "success" if not incomplete else "incomplete", "count": total_synced, "synced_at": now_iso}
 
 
 def _age_seconds(iso: Optional[str]) -> float:
@@ -483,6 +515,10 @@ async def auto_sync_loop(service: "LibrarySyncService"):
             if (minutes > 0 and not service.is_guide_syncing
                     and _age_seconds(get_sync_meta("last_guide_sync")) >= GUIDE_SYNC_HOURS * 3600):
                 print(f"[AutoSync] Guide (every {GUIDE_SYNC_HOURS} h)")
+                await service.sync_guide()
+            elif (service.guide_incomplete and not service.is_guide_syncing
+                    and time.time() >= service.guide_incomplete["retry_at"]):
+                print("[AutoSync] Guide (the last load didn't finish)")
                 await service.sync_guide()
         except asyncio.CancelledError:
             raise

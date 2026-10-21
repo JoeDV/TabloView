@@ -21,6 +21,7 @@ import threading
 import time
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from . import childproc
 from .config import FFMPEG_PATH, TRANSCODE_DIR
 from .database import get_connection, save_commercials, recording_details
 from .settings import load_settings, save_settings
@@ -241,7 +242,8 @@ def _analyze(url: str, log_path, stop: threading.Event, progress: Optional[Dict[
     hists: List[List[float]] = []
     with open(log_path, "w", encoding="utf-8") as log:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=log, creationflags=LOW_PRIORITY,
-                                preexec_fn=LOW_PRIORITY_POSIX)
+                                **childproc.popen_kwargs(LOW_PRIORITY_POSIX))
+        childproc.tie_to_app(proc)
         watcher = threading.Thread(target=lambda: (stop.wait(), proc.poll() is None and proc.kill()), daemon=True)
         watcher.start()
         try:
