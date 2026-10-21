@@ -34,7 +34,7 @@ class ConflictedRecordingTests(unittest.TestCase):
              mock.patch.object(live, "model_tuner_count", new=mock.AsyncMock(return_value=2)), \
              mock.patch.object(type(guide.tablo_manager), "is_authenticated", new=mock.PropertyMock(return_value=True)):
             data = self.client.get("/api/guide/upcoming", headers=HDR).json()
-        get.assert_called_once_with(include_conflicted=True)
+        get.assert_called_once_with(include_conflicted=True, include_missed_new=True)
         return data
 
     def test_three_shows_at_once_on_two_tuners(self):

@@ -170,6 +170,9 @@ def init_db():
         if "channel_identifier" not in ga_cols:
             # Stable channel ID (e.g. S36147_029_01), same as the Live TV channel list uses
             cursor.execute("ALTER TABLE guide_airings ADD COLUMN channel_identifier TEXT")
+        if "skip_reason" not in ga_cols:
+            # Why the Tablo won't record it (schedule.skip_reason), e.g. not_new for a Record New series
+            cursor.execute("ALTER TABLE guide_airings ADD COLUMN skip_reason TEXT")
         ep_cols = {r[1] for r in cursor.execute("PRAGMA table_info(episodes)").fetchall()}
         if "position" not in ep_cols:
             # Resume point in seconds, as stored on the Tablo (user_info.position)
@@ -710,6 +713,7 @@ def batch_upsert_guide_airings(airings: List[Dict[str, Any]]):
             1 if a.get("is_primetime") else 0,
             1 if a.get("is_premiere") else 0,
             a.get("schedule_state") or "none",
+            a.get("skip_reason") or "",
             a.get("channel_identifier"),
             now
         ) for a in airings
@@ -719,8 +723,8 @@ def batch_upsert_guide_airings(airings: List[Dict[str, Any]]):
             INSERT INTO guide_airings (
                 path, series_path, show_title, episode_title, season_number, episode_number,
                 air_datetime, duration, channel_call_sign, channel_network, qualifiers,
-                is_new, is_primetime, is_premiere, schedule_state, channel_identifier, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                is_new, is_primetime, is_premiere, schedule_state, skip_reason, channel_identifier, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
                 series_path = excluded.series_path,
                 show_title = excluded.show_title,
@@ -736,6 +740,7 @@ def batch_upsert_guide_airings(airings: List[Dict[str, Any]]):
                 is_primetime = excluded.is_primetime,
                 is_premiere = excluded.is_premiere,
                 schedule_state = excluded.schedule_state,
+                skip_reason = excluded.skip_reason,
                 channel_identifier = COALESCE(excluded.channel_identifier, guide_airings.channel_identifier),
                 updated_at = excluded.updated_at
         """, rows)
@@ -758,14 +763,16 @@ def prune_guide_airings(paths: List[str]) -> int:
     return len(gone)
 
 
-def update_airing_schedule_states(states: Dict[str, str]):
-    """Set the Tablo record status ('scheduled' / 'none' / ...) for specific airing paths."""
+def update_airing_schedule_states(states: Dict[str, str], skip_reasons: Optional[Dict[str, str]] = None):
+    """Set the Tablo record status ('scheduled' / 'none' / ...) for specific airing paths, and why it
+    skips them (cleared when not given)."""
     if not states:
         return
+    reasons = skip_reasons or {}
     with get_connection() as conn:
         conn.executemany(
-            "UPDATE guide_airings SET schedule_state = ? WHERE path = ?",
-            [(state or "none", path) for path, state in states.items()],
+            "UPDATE guide_airings SET schedule_state = ?, skip_reason = ? WHERE path = ?",
+            [(state or "none", reasons.get(path) or "", path) for path, state in states.items()],
         )
         conn.commit()
 
@@ -786,21 +793,27 @@ def get_series_airings(series_paths: List[str]) -> List[Dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-def get_upcoming_recordings(within_hours: Optional[float] = None,
-                            include_conflicted: bool = False) -> List[Dict[str, Any]]:
+def get_upcoming_recordings(within_hours: Optional[float] = None, include_conflicted: bool = False,
+                            include_missed_new: bool = False) -> List[Dict[str, Any]]:
     """Airings the Tablo plans to record that haven't finished yet, soonest first, with show art.
 
     include_conflicted adds the airings your rules ask for that the Tablo won't record because more
     overlap than it has tuners (state 'conflicted'; the first scheduled wins). The Tablo's own apps
-    list those with a warning; leaving them out made busy nights look like recordings had vanished."""
+    list those with a warning; leaving them out made busy nights look like recordings had vanished.
+
+    include_missed_new adds airings the guide marks New, of series set to Record New, that the Tablo
+    skipped as not new (skip_reason not_new). Some Tablos have done this since the fall 2026 season
+    started, until the series rule is changed and back (a forum report)."""
     states = "('scheduled', 'conflicted')" if include_conflicted else "('scheduled')"
+    missed = ("OR (ga.schedule_state = 'skipped' AND ga.skip_reason = 'not_new' AND ga.is_new = 1 "
+              "AND g.schedule_rule = 'new')") if include_missed_new else ""
     query = f"""
         SELECT ga.path, ga.series_path, ga.show_title, ga.episode_title, ga.season_number, ga.episode_number,
                ga.air_datetime, ga.duration, ga.channel_call_sign, ga.channel_network, ga.qualifiers,
-               ga.is_new, ga.is_premiere, ga.schedule_state, g.cover_url, g.backdrop_url, g.schedule_rule
+               ga.is_new, ga.is_premiere, ga.schedule_state, ga.skip_reason, g.cover_url, g.backdrop_url, g.schedule_rule
         FROM guide_airings ga
         LEFT JOIN guide_shows g ON g.path = ga.series_path
-        WHERE ga.schedule_state IN {states}
+        WHERE (ga.schedule_state IN {states} {missed})
           AND datetime(ga.air_datetime, '+' || ga.duration || ' seconds') > datetime('now')
     """
     params: List[Any] = []

@@ -797,6 +797,8 @@ PAGES.home = async (r, token) => {
   const parts = [];
 
   if (homeConflicts.length) parts.push(`<section class="section">${conflictBanner(homeConflicts, { compact: true })}</section>`);
+  const missed = missedNew(upcomingRes.value);
+  if (missed.length) parts.push(`<section class="section">${missedNewBanner(missed, { compact: true })}</section>`);
 
   if (state.inProgress.length) {
     parts.push(section({
@@ -845,7 +847,7 @@ PAGES.home = async (r, token) => {
       link: '#/scheduled?view=upcoming',
       body: `<div class="list">${upNext.map(a => {
         const se = fmt.se(a.season_number, a.episode_number);
-        const onNow = new Date(a.air_datetime).getTime() <= Date.now() && !a.wont_record;
+        const onNow = new Date(a.air_datetime).getTime() <= Date.now() && !a.wont_record && !a.missed_new;
         const art = imgUrl(a.cover_url || a.backdrop_url);
         return `
           <div class="list-row upnext-row clickable ${a.conflict ? 'conflict' : ''}" data-action="open-series" data-path="${esc(a.series_path)}">
@@ -1831,6 +1833,39 @@ function conflictBanner(conflicts, { compact = false } = {}) {
   </div>`;
 }
 
+// New episodes of Record New series that the Tablo decided aren't new, so it won't record them
+// (a Tablo problem since the fall 2026 season: toggling the series rule fixed it until the next one)
+function missedNew(u) {
+  return ((u && u.recordings) || []).filter(a => a.missed_new);
+}
+
+function missedNewBanner(list, { compact = false } = {}) {
+  if (!list.length) return '';
+  return `<div class="conflict-banner">
+    <div class="conflict-head">${icon('alert', 18)}<b>${plural(list.length, 'new episode')} your Tablo won't record</b>
+      <span class="dim">The guide marks ${list.length === 1 ? 'it' : 'them'} New, but your Tablo decided ${list.length === 1 ? 'it isn’t' : 'they aren’t'}, so Record New skips ${list.length === 1 ? 'it' : 'them'}.</span>
+      <span style="margin-left:auto;display:flex;gap:8px">
+        <button class="btn btn-sm btn-primary" data-action="record-missed-new">Record ${list.length === 1 ? 'it' : 'all'}</button>
+        ${compact ? '<a class="btn btn-sm" href="#/scheduled?view=upcoming">Review</a>' : ''}
+      </span></div>
+  </div>`;
+}
+
+async function recordMissedNew(paths) {
+  let done = 0;
+  for (const path of paths) {
+    try {
+      await api('/api/guide/episodes/schedule', { method: 'POST', body: JSON.stringify({ path, scheduled: true }) });
+      done++;
+    } catch (err) {
+      toast(`Couldn't record it: ${err.message}`, 'error');
+    }
+  }
+  if (done) toast(`Your Tablo will record ${plural(done, 'more episode')}`, 'success');
+  await loadUpcoming();
+  route();
+}
+
 // Conflict helper: for each recording in a conflict, other airings of the same episode to record instead
 async function fixConflicts() {
   let data;
@@ -1922,8 +1957,8 @@ function renderUpcomingList() {
   }
   const byDay = {};
   u.recordings.forEach(a => { (byDay[fmt.dayLabel(a.air_datetime)] = byDay[fmt.dayLabel(a.air_datetime)] || []).push(a); });
-  box.innerHTML = conflictBanner(u.conflicts) + Object.entries(byDay).map(([day, list]) => `
-    <div class="section-head" style="margin:22px 0 10px"><h2 class="section-title">${esc(day)}</h2><span class="section-sub">${plural(list.length, 'recording')}${list.some(a => a.wont_record) ? ` · ${list.filter(a => a.wont_record).length} won't record` : ''}</span></div>
+  box.innerHTML = conflictBanner(u.conflicts) + missedNewBanner(missedNew(u)) + Object.entries(byDay).map(([day, list]) => `
+    <div class="section-head" style="margin:22px 0 10px"><h2 class="section-title">${esc(day)}</h2><span class="section-sub">${plural(list.length, 'recording')}${list.some(a => a.wont_record || a.missed_new) ? ` · ${list.filter(a => a.wont_record || a.missed_new).length} won't record` : ''}</span></div>
     <div class="list">${list.map(upcomingRow).join('')}</div>`).join('');
   hydrateIcons(box);
 }
@@ -1931,13 +1966,15 @@ function renderUpcomingList() {
 // The Tablo marks a recording 'conflicted' when more overlap than it has tuners (the first scheduled wins)
 const WONT_RECORD_TAG = `<span class="tag tag-rec" title="Your Tablo has no tuner free for this: more shows overlap than it has tuners, and the ones scheduled first win. Use Fix… to record another airing.">Won't record</span>`;
 
+const MISSED_NEW_TAG = `<span class="tag tag-rec" title="The guide marks this episode New, but your Tablo decided it isn't, so the series' Record New rule skips it. Click Record to record it anyway.">Won't record</span>`;
+
 function conflictTag(a) {
-  return a.wont_record ? WONT_RECORD_TAG : a.conflict ? '<span class="tag tag-warn">Conflict</span>' : '';
+  return a.missed_new ? MISSED_NEW_TAG : a.wont_record ? WONT_RECORD_TAG : a.conflict ? '<span class="tag tag-warn">Conflict</span>' : '';
 }
 
 function upcomingRow(a) {
   const end = new Date(new Date(a.air_datetime).getTime() + (a.duration || 0) * 1000).toISOString();
-  const onNow = new Date(a.air_datetime).getTime() <= Date.now() && !a.wont_record;
+  const onNow = new Date(a.air_datetime).getTime() <= Date.now() && !a.wont_record && !a.missed_new;
   const se = fmt.se(a.season_number, a.episode_number);
   const art = imgUrl(a.cover_url || a.backdrop_url);
   return `
@@ -1952,7 +1989,8 @@ function upcomingRow(a) {
       <div class="hero-kicker" style="margin:0;flex-wrap:nowrap">
         ${conflictTag(a)}${a.is_premiere ? '<span class="tag tag-premiere">PREMIERE</span>' : ''}${a.is_new ? '<span class="tag tag-new">NEW</span>' : ''}
       </div>
-      ${onNow ? '<span></span>' : `<button class="btn btn-sm" data-action="cancel-recording" data-path="${esc(a.path)}" data-title="${esc(a.show_title)}">Skip</button>`}
+      ${a.missed_new ? `<button class="btn btn-sm btn-primary" data-action="record-missed-new" data-path="${esc(a.path)}">Record</button>`
+        : onNow ? '<span></span>' : `<button class="btn btn-sm" data-action="cancel-recording" data-path="${esc(a.path)}" data-title="${esc(a.show_title)}">Skip</button>`}
     </div>`;
 }
 
@@ -4411,6 +4449,7 @@ const ACTIONS = {
   'player-vlc': () => player.openInVlc(),
   'space-delete-watched': el => deleteWatchedForShow(el),
   'fix-conflicts': () => fixConflicts(),
+  'record-missed-new': el => recordMissedNew(el.dataset.path ? [el.dataset.path] : missedNew(state.upcoming).map(a => a.path)),
   'swap-recording': async el => {
     el.disabled = true;
     try {

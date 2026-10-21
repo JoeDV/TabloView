@@ -73,18 +73,24 @@ async def list_guide_shows(
 async def upcoming_recordings():
     """Every airing the Tablo plans to record, soonest first, with times where more overlap than
     there are tuners ('conflicts'). Airings the Tablo has marked as conflicts are included with
-    'wont_record' (the Tablo's apps list them too). Built from the cached guide; no extra requests to
-    the Tablo beyond the (cached) tuner count."""
+    'wont_record' (the Tablo's apps list them too), and New airings of Record New series the Tablo
+    skipped as not new with 'missed_new'. Built from the cached guide; no extra requests to the Tablo
+    beyond the (cached) tuner count."""
     from .live import model_tuner_count
-    recordings = get_upcoming_recordings(include_conflicted=True)
+    recordings = get_upcoming_recordings(include_conflicted=True, include_missed_new=True)
+    for r in recordings:
+        r["missed_new"] = r.get("schedule_state") == "skipped"
+        r["conflict"] = False
     tuners = (await model_tuner_count()) if tablo_manager.is_authenticated else None
-    conflicts = find_conflicts(recordings, tuners) if tuners else []
+    # Missed ones use no tuner, so they can't be part of a conflict
+    conflicts = find_conflicts([r for r in recordings if not r["missed_new"]], tuners) if tuners else []
     for r in recordings:
         r["wont_record"] = r.get("schedule_state") == "conflicted"
         if r["wont_record"]:
             r["conflict"] = True
     return {"tuners": tuners, "count": len(recordings), "recordings": recordings, "conflicts": conflicts,
-            "wont_record": sum(1 for r in recordings if r["wont_record"])}
+            "wont_record": sum(1 for r in recordings if r["wont_record"]),
+            "missed_new": sum(1 for r in recordings if r["missed_new"])}
 
 
 @router.get("/upcoming.ics")
@@ -198,7 +204,9 @@ async def refresh_series_airing_states(series_path: str, delay: float = 2.0):
         if resp.status_code != 200 or not isinstance(resp.json(), list):
             return
         objects = await tablo_manager.batch_get(resp.json())
-        update_airing_schedule_states({p: (d.get("schedule") or {}).get("state") or "none" for p, d in objects.items()})
+        schedules = {p: d.get("schedule") or {} for p, d in objects.items()}
+        update_airing_schedule_states({p: s.get("state") or "none" for p, s in schedules.items()},
+                                      {p: s.get("skip_reason") or "" for p, s in schedules.items()})
     except Exception as e:
         print(f"[Guide] Couldn't refresh record status for {series_path}: {e}")
 

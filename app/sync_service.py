@@ -161,6 +161,7 @@ def guide_airing_row(p: str, d: Dict[str, Any]) -> Dict[str, Any]:
         "is_primetime": 1 if 'primetime' in qual else 0,
         "is_premiere": is_premiere,
         "schedule_state": (d.get('schedule') or {}).get('state') or 'none',
+        "skip_reason": (d.get('schedule') or {}).get('skip_reason') or '',
     }
 
 
