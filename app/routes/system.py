@@ -28,6 +28,7 @@ class SettingsUpdate(BaseModel):
     notifications: Optional[bool] = None
     video_quality: Optional[Literal["auto", "best", "fastest"]] = None
     smooth_motion: Optional[bool] = None
+    logo_style: Optional[Literal["color", "white"]] = None
     export_format: Optional[Literal["smaller", "original"]] = None
     rerecord_failed: Optional[bool] = None
     skip_commercials: Optional[bool] = None
@@ -188,6 +189,9 @@ async def update_settings(update: SettingsUpdate, request: Request):
     changes = update.model_dump(exclude_none=True)
     needs_restart = "allow_lan" in changes and changes["allow_lan"] != load_settings().get("allow_lan")
     saved = save_settings(changes)
+    if "logo_style" in changes:
+        from .live import _logo_style_cache
+        _logo_style_cache["at"] = 0.0  # the next channel list uses the new logos
     restart = getattr(request.app.state, "request_restart", None) if needs_restart else None
     if restart:
         # Let this response go out first, then rebind
@@ -320,6 +324,7 @@ async def get_library_status():
         "auth_problem": tablo_manager.auth_problem,
         "tablo_unreachable": tablo_manager.tablo_unreachable,
         "guide_progress": guide_progress(),
+        "guide_incomplete": sync_service.guide_incomplete,
         "commercials": commercials.summary(),
         "total_shows": int(total_shows),
         "total_episodes": int(total_episodes)

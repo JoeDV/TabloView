@@ -33,14 +33,26 @@ class CategoryTests(unittest.TestCase):
 
 
 class LogoTests(unittest.TestCase):
-    def test_prefers_white_logo_for_dark_ui(self):
-        logos = [{"kind": "darkLarge", "url": "black.png"}, {"kind": "lightLarge", "url": "white.png"},
-                 {"kind": "originalLarge", "url": "color.png"}]
-        self.assertEqual(pick_logo(logos), "white.png")
+    LOGOS = [{"kind": "darkLarge", "url": "black.png"}, {"kind": "lightLarge", "url": "white.png"},
+             {"kind": "originalLarge", "url": "color.png"}]
+
+    def test_color_by_default(self):
+        # "originalLarge" is the station's own colors (NBC's peacock)
+        self.assertEqual(pick_logo(self.LOGOS, "color"), "color.png")
+
+    def test_white_when_chosen(self):
+        self.assertEqual(pick_logo(self.LOGOS, "white"), "white.png")
 
     def test_falls_back(self):
-        self.assertEqual(pick_logo([{"kind": "darkLarge", "url": "black.png"}]), "black.png")
-        self.assertIsNone(pick_logo([]))
+        self.assertEqual(pick_logo([{"kind": "darkLarge", "url": "black.png"}], "color"), "black.png")
+        self.assertEqual(pick_logo([{"kind": "originalLarge", "url": "color.png"}], "white"), "color.png")
+        self.assertIsNone(pick_logo([], "color"))
+
+    def test_the_setting_decides_when_no_style_is_given(self):
+        from unittest import mock
+        from app.routes import live
+        with mock.patch.object(live, "logo_style", return_value="white"):
+            self.assertEqual(pick_logo(self.LOGOS), "white.png")
 
 
 if __name__ == "__main__":

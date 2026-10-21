@@ -90,7 +90,8 @@ def check_conflicts(tuners: Optional[int]) -> List[Dict[str, Any]]:
         return []
     now = datetime.now(timezone.utc)
     horizon = now + timedelta(hours=CONFLICT_HORIZON_HOURS)
-    soon = [c for c in find_conflicts(get_upcoming_recordings(), tuners)
+    # Conflicted airings included: they're the recordings that won't happen
+    soon = [c for c in find_conflicts(get_upcoming_recordings(include_conflicted=True), tuners)
             if now < datetime.fromisoformat(c["start"].replace("Z", "+00:00")) <= horizon]
     keys = {c["start"] + "|" + "|".join(sorted(c["paths"])): c for c in soon}
     seen = _load("notified_conflicts") or set()

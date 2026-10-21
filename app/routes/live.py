@@ -16,6 +16,7 @@ from ..tablo_client import tablo_manager
 from ..transcode import transcode_manager
 from ..database import get_live_airings_for_channels, get_epg_schedule, get_upcoming_recordings
 from ..schedule_check import live_tv_check
+from ..settings import load_settings
 from tablo_api import TabloClient, TabloAuth
 import tablo_api.client as tc
 
@@ -171,10 +172,25 @@ def channel_categories(c: Dict[str, Any]) -> List[str]:
     return cats
 
 
-def pick_logo(logos: List[Dict[str, Any]]) -> Optional[str]:
-    """Prefer the white logo ("lightLarge"), which reads on the dark UI; "darkLarge" is the black variant."""
+_LOGO_ORDER = {
+    # "originalLarge" is the station's own colors (NBC's peacock, Univision's U); some are white anyway
+    "color": ("originalLarge", "lightLarge", "darkLarge"),
+    "white": ("lightLarge", "originalLarge", "darkLarge"),  # "darkLarge" is the black version
+}
+_logo_style_cache: Dict[str, Any] = {"at": 0.0, "style": "color"}
+
+
+def logo_style() -> str:
+    """Device > Playback > Channel logos, read at most every few seconds (it's asked once per channel)."""
+    if time.time() - _logo_style_cache["at"] > 5:
+        _logo_style_cache.update(at=time.time(), style=load_settings().get("logo_style") or "color")
+    return _logo_style_cache["style"]
+
+
+def pick_logo(logos: List[Dict[str, Any]], style: Optional[str] = None) -> Optional[str]:
+    """The channel logo in the chosen style: the station's colors (default) or all white."""
     by_kind = {lg.get("kind"): lg.get("url") for lg in logos or [] if lg.get("url")}
-    for kind in ("lightLarge", "originalLarge", "darkLarge"):
+    for kind in _LOGO_ORDER.get(style or logo_style(), _LOGO_ORDER["color"]):
         if by_kind.get(kind):
             return by_kind[kind]
     return None
@@ -599,7 +615,22 @@ async def tune_live_channel(req: TuneRequest):
         busy = await all_tuners_busy_message() if req.kind != "fast" else None
         if busy:
             raise HTTPException(status_code=409, detail=busy)
+        if req.kind != "fast" and _refused(e):
+            raise HTTPException(status_code=502, detail=NO_PICKUP_MESSAGE)
         raise HTTPException(status_code=500, detail=f"Failed to tune live channel: {e}")
+
+
+# The Tablo answers 503 to a watch request both when it has no tuner free and when it can't pick up
+# the station (69.1 WDTI, 2026-10-20: refused with a tuner free that tuned 6.1 straight after). Once
+# all_tuners_busy_message has ruled out the first, it's the second.
+NO_PICKUP_MESSAGE = ("The Tablo can't pick up this channel right now: a tuner is free, but it couldn't tune the "
+                     "station. The signal may be too weak where your antenna is pointed, or the station may be "
+                     "off the air. The Antenna helper can check your other channels.")
+
+
+def _refused(e: Exception) -> bool:
+    resp = getattr(e, "response", None)
+    return isinstance(e, requests.HTTPError) and resp is not None and resp.status_code == 503
 
 
 async def all_tuners_busy_message() -> Optional[str]:
@@ -648,6 +679,37 @@ async def get_live_vlc_playlist(channel_id: str):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating VLC live stream: {e}")
+
+
+class MeasureRequest(BaseModel):
+    channel_id: str
+
+
+@router.post("/measure")
+async def measure_channel(req: MeasureRequest):
+    """Antenna helper: tune an antenna channel only to measure its picture quality (no video is
+    sent to a player). Read it with /reception/{session_id}; stop it with /stop."""
+    if not tablo_manager.is_authenticated:
+        raise HTTPException(status_code=400, detail="Tablo device not connected")
+    await transcode_manager.wait_for_ended_sessions()
+    try:
+        stream = await asyncio.to_thread(TabloClient(tablo_manager.device).watch, req.channel_id)
+        if not stream or not stream.playlist_url:
+            raise ValueError("No playlist URL returned by Tablo")
+    except Exception as e:
+        print(f"[Antenna] Couldn't tune {req.channel_id}: {e}")
+        if isinstance(e, (httpx.TransportError, requests.ConnectionError, requests.Timeout)):
+            raise HTTPException(status_code=503, detail=tablo_manager.UNREACHABLE_MESSAGE)
+        busy = await all_tuners_busy_message()
+        if busy:
+            raise HTTPException(status_code=409, detail=busy)
+        if _refused(e):
+            raise HTTPException(status_code=502, detail=NO_PICKUP_MESSAGE)
+        raise HTTPException(status_code=500, detail=f"Couldn't tune this channel: {e}")
+    sess = transcode_manager.create_session(stream.playlist_url)
+    sess.tablo_token = stream.token
+    transcode_manager.start_measure(sess, stream.playlist_url)
+    return {"session_id": sess.session_id, "channel_id": req.channel_id}
 
 
 @router.get("/reception/{session_id}")

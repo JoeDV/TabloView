@@ -17,7 +17,7 @@ import httpx
 from starlette.responses import Response, StreamingResponse
 from starlette.background import BackgroundTask
 
-from . import encoders
+from . import childproc, encoders
 from .config import TRANSCODE_DIR, FFMPEG_PATH
 from .database import save_export_job
 from .settings import load_settings, exports_dir
@@ -140,6 +140,21 @@ class TranscodeManager:
 
     def get_session(self, session_id: str) -> Optional[StreamSession]:
         return self.sessions.get(session_id)
+
+    def start_measure(self, sess: StreamSession, input_url: str) -> None:
+        """Antenna helper: decode a live channel only to measure it (no video for a player), so it's
+        light on the PC; the picture quality meter follows its log as for live TV."""
+        session_dir = TRANSCODE_DIR / sess.session_id
+        session_dir.mkdir(exist_ok=True, parents=True)
+        cmd = [FFMPEG_PATH, "-y", "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+               "-fflags", "+discardcorrupt", "-i", input_url, "-map", "0:v:0", "-f", "null", "-"]
+        with open(session_dir / "ffmpeg.log", "w", encoding="utf-8") as f:
+            sess.proc = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT, cwd=str(session_dir),
+                                         creationflags=NO_WINDOW, **childproc.popen_kwargs())
+        childproc.tie_to_app(sess.proc)
+        run_at_full_speed(sess.proc)  # throttled, it falls behind live TV and looks like lost frames
+        sess.encoder = "measure only"
+        self.start_reception(sess)
 
     def start_reception(self, sess: StreamSession) -> None:
         """Follow a live antenna channel's FFmpeg log once a second for the picture quality meter."""
@@ -374,7 +389,8 @@ class TranscodeManager:
             # The child process keeps its own inherited handle; close ours right away
             with open(session_dir / "ffmpeg.log", "w", encoding="utf-8") as f:
                 proc = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT, cwd=str(session_dir),
-                                        creationflags=NO_WINDOW)
+                                        creationflags=NO_WINDOW, **childproc.popen_kwargs())
+            childproc.tie_to_app(proc)
             run_at_full_speed(proc)
             sess.proc = proc
             sess.transcoded = True
@@ -465,7 +481,8 @@ class TranscodeManager:
                 f.write(f"\n===== restart {restarts} =====\n")
                 f.flush()
                 sess.proc = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT, cwd=str(session_dir),
-                                             creationflags=NO_WINDOW)
+                                             creationflags=NO_WINDOW, **childproc.popen_kwargs())
+            childproc.tie_to_app(sess.proc)
             run_at_full_speed(sess.proc)
             sess.encoder = "copy" if plan["encoder"] is None else plan["encoder"]["label"]
             # A restart that dies straight away counts against the limit too
@@ -618,7 +635,9 @@ class TranscodeManager:
         proc = None
         try:
             with open(log_path, "w", encoding="utf-8") as log_f:
-                proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=log_f, creationflags=NO_WINDOW)
+                proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=log_f, creationflags=NO_WINDOW,
+                                        **childproc.popen_kwargs())
+            childproc.tie_to_app(proc)
 
             # Poll progress while process is running
             while proc.poll() is None:

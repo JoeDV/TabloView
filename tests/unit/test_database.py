@@ -35,6 +35,9 @@ class DatabaseTests(unittest.TestCase):
              "duration": 1800, "channel_call_sign": "WBBB", "channel_identifier": "S2_004_01", "schedule_state": "none"},
             {"path": "/a/old", "series_path": "/guide/series/1", "show_title": "Airing Recorded", "air_datetime": iso(now - timedelta(hours=10)),
              "duration": 1800, "channel_call_sign": "WAAA", "schedule_state": "scheduled"},
+            # Asked for by a rule, but the Tablo has no tuner free for it
+            {"path": "/a/3", "series_path": "/guide/series/1", "show_title": "Airing Recorded", "air_datetime": iso(now + timedelta(hours=4)),
+             "duration": 3600, "channel_call_sign": "WCCC", "schedule_state": "conflicted"},
         ])
         # Library: one show, two episodes
         db.upsert_show({"id": "show-1", "title": "Show One", "episode_count": 2, "unwatched_count": 2})
@@ -61,10 +64,21 @@ class DatabaseTests(unittest.TestCase):
     def test_upcoming_recordings_only_include_scheduled(self):
         self.assertEqual([r["path"] for r in db.get_upcoming_recordings()], ["/a/1"])
 
+    def test_upcoming_recordings_can_include_ones_the_tablo_wont_record(self):
+        rows = db.get_upcoming_recordings(include_conflicted=True)
+        self.assertEqual([(r["path"], r["schedule_state"]) for r in rows], [("/a/1", "scheduled"), ("/a/3", "conflicted")])
+
     def test_epg_groups_by_channel_identifier(self):
         epg = db.get_epg_schedule(hours=6)
         self.assertIn("S1_002_01", epg["airings_by_identifier"])
         self.assertEqual(epg["airings_by_identifier"]["S1_002_01"][0]["genres"], ["Drama"])
+
+    def test_guide_pages_start_on_the_half_hour(self):
+        # Paging Live TV asked for e.g. 7:37, which made every column odd and moved with the clock
+        epg = db.get_epg_schedule(hours=3, start_iso="2026-10-20T19:37:12Z")
+        self.assertEqual(epg["window_start"], "2026-10-20T19:30:00Z")
+        self.assertEqual([s["iso"][11:16] for s in epg["slots"]], ["19:30", "20:00", "20:30", "21:00", "21:30", "22:00"])
+        self.assertEqual(db.get_epg_schedule(hours=3, start_iso="2026-10-20T20:05:00Z")["window_start"], "2026-10-20T20:00:00Z")
 
     def test_stale_rules_are_cleared(self):
         db.upsert_guide_show({"path": "/guide/series/9", "title": "Removed On TV", "category": "series", "schedule_rule": "new"})

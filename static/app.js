@@ -34,6 +34,7 @@ const ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   tv: '<rect width="20" height="15" x="2" y="7" rx="2"/><path d="m17 2-5 5-5-5"/>',
+  antenna: '<path d="M12 12 6 2M12 12l6-10"/><circle cx="12" cy="13" r="1.6"/><path d="M12 15v6M8 21h8"/>',
   info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
   alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/>',
   lock: '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
@@ -239,6 +240,7 @@ const state = {
 
 let routeToken = 0;
 let pageTimers = [];
+let pageLeave = [];  // run when the page is left
 
 // ---------------------------------------------------------------------------
 // Toasts, menus, dialogs
@@ -369,7 +371,9 @@ async function pollStatus() {
   try {
     const s = await api('/api/library/status');
     showAuthProblem(s.auth_problem);
+    state.guidePartial = s.guide_incomplete;
     showGuideProgress(s.guide_progress);
+    showGuidePartial(s.guide_progress ? null : s.guide_incomplete);
     showCommercialProgress(s.commercials);
     // While a guide load waits out the Tablo's break, its banner already says so
     const waiting = s.guide_progress && s.guide_progress.waiting_seconds !== null;
@@ -390,6 +394,7 @@ async function pollStatus() {
       state.scheduled.items = null;
       loadStorage();
       refreshCurrentPageQuietly();
+      if (!state.shows) loadShows().catch(() => {});  // keep the sidebar's Library count current on any page
     }
   } catch { /* transient */ }
 
@@ -424,7 +429,10 @@ function showGuideProgress(p) {
   state.guideProgress = p;
   banner.classList.toggle('hidden', !p);
   if (!p) {
-    if (was) { toast('The TV guide has finished loading', 'success'); refreshGuidePages(); }
+    if (was) {
+      if (!state.guidePartial) toast('The TV guide has finished loading', 'success');
+      refreshGuidePages();
+    }
     return;
   }
   $('#guideBannerTitle').textContent = p.first ? 'Loading the TV guide from your Tablo for the first time…' : 'Updating the TV guide from your Tablo…';
@@ -444,6 +452,17 @@ function showGuideProgress(p) {
     state.guideRefreshedAt = p.done;
     refreshGuidePages();
   }
+}
+
+// The last guide load stopped short (the Tablo stopped answering): some recordings and airings are
+// missing until it's tried again, which happens by itself after a few minutes
+function showGuidePartial(g) {
+  const banner = $('#guidePartialBanner');
+  banner.classList.toggle('hidden', !g);
+  if (!g) return;
+  const missing = g.missing ? `${g.missing.toLocaleString()} of ${g.total.toLocaleString()} upcoming airings are missing, so Scheduled and the Guide may have gaps. ` : 'Scheduled and the Guide may have gaps. ';
+  const when = g.retry_at ? fmt.time(new Date(g.retry_at * 1000).toISOString()) : '';
+  $('#guidePartialText').textContent = `${missing}Your Tablo stopped answering partway through. TabloView will try again${when ? ` at ${when}` : ' soon'}.`;
 }
 
 // Commercial finding: a line in the sidebar, and live progress on the episode being analyzed
@@ -672,6 +691,7 @@ function route() {
   const token = ++routeToken;
   pageTimers.forEach(t => clearInterval(t));
   pageTimers = [];
+  pageLeave.splice(0).forEach(f => f());  // e.g. the antenna helper frees its tuner
   closeMenu();
   hideSearch();
   clearSelection();
@@ -822,7 +842,7 @@ PAGES.home = async (r, token) => {
       link: '#/scheduled?view=upcoming',
       body: `<div class="list">${upNext.map(a => {
         const se = fmt.se(a.season_number, a.episode_number);
-        const onNow = new Date(a.air_datetime).getTime() <= Date.now();
+        const onNow = new Date(a.air_datetime).getTime() <= Date.now() && !a.wont_record;
         const art = imgUrl(a.cover_url || a.backdrop_url);
         return `
           <div class="list-row upnext-row clickable ${a.conflict ? 'conflict' : ''}" data-action="open-series" data-path="${esc(a.series_path)}">
@@ -833,7 +853,7 @@ PAGES.home = async (r, token) => {
               <div class="row-sub">${se ? `${se} · ` : ''}${esc(a.episode_title || '')}</div>
             </div>
             <div class="row-sub upnext-ch">${esc(a.channel_network || '')}${a.channel_call_sign ? ` · ${esc(a.channel_call_sign)}` : ''}</div>
-            ${a.conflict ? '<span class="tag tag-warn">Conflict</span>' : (a.is_new ? '<span class="tag tag-new">NEW</span>' : '<span></span>')}
+            ${conflictTag(a) || (a.is_new ? '<span class="tag tag-new">NEW</span>' : '<span></span>')}
           </div>`;
       }).join('')}</div>`,
     }));
@@ -1891,14 +1911,21 @@ function renderUpcomingList() {
   const byDay = {};
   u.recordings.forEach(a => { (byDay[fmt.dayLabel(a.air_datetime)] = byDay[fmt.dayLabel(a.air_datetime)] || []).push(a); });
   box.innerHTML = conflictBanner(u.conflicts) + Object.entries(byDay).map(([day, list]) => `
-    <div class="section-head" style="margin:22px 0 10px"><h2 class="section-title">${esc(day)}</h2><span class="section-sub">${plural(list.length, 'recording')}</span></div>
+    <div class="section-head" style="margin:22px 0 10px"><h2 class="section-title">${esc(day)}</h2><span class="section-sub">${plural(list.length, 'recording')}${list.some(a => a.wont_record) ? ` · ${list.filter(a => a.wont_record).length} won't record` : ''}</span></div>
     <div class="list">${list.map(upcomingRow).join('')}</div>`).join('');
   hydrateIcons(box);
 }
 
+// The Tablo marks a recording 'conflicted' when more overlap than it has tuners (the first scheduled wins)
+const WONT_RECORD_TAG = `<span class="tag tag-rec" title="Your Tablo has no tuner free for this: more shows overlap than it has tuners, and the ones scheduled first win. Use Fix… to record another airing.">Won't record</span>`;
+
+function conflictTag(a) {
+  return a.wont_record ? WONT_RECORD_TAG : a.conflict ? '<span class="tag tag-warn">Conflict</span>' : '';
+}
+
 function upcomingRow(a) {
   const end = new Date(new Date(a.air_datetime).getTime() + (a.duration || 0) * 1000).toISOString();
-  const onNow = new Date(a.air_datetime).getTime() <= Date.now();
+  const onNow = new Date(a.air_datetime).getTime() <= Date.now() && !a.wont_record;
   const se = fmt.se(a.season_number, a.episode_number);
   const art = imgUrl(a.cover_url || a.backdrop_url);
   return `
@@ -1911,7 +1938,7 @@ function upcomingRow(a) {
       </div>
       <div class="row-sub">${esc(a.channel_network || '')}${a.channel_call_sign ? ` · ${esc(a.channel_call_sign)}` : ''}</div>
       <div class="hero-kicker" style="margin:0;flex-wrap:nowrap">
-        ${a.conflict ? '<span class="tag tag-warn">Conflict</span>' : ''}${a.is_premiere ? '<span class="tag tag-premiere">PREMIERE</span>' : ''}${a.is_new ? '<span class="tag tag-new">NEW</span>' : ''}
+        ${conflictTag(a)}${a.is_premiere ? '<span class="tag tag-premiere">PREMIERE</span>' : ''}${a.is_new ? '<span class="tag tag-new">NEW</span>' : ''}
       </div>
       ${onNow ? '<span></span>' : `<button class="btn btn-sm" data-action="cancel-recording" data-path="${esc(a.path)}" data-title="${esc(a.show_title)}">Skip</button>`}
     </div>`;
@@ -2041,8 +2068,11 @@ function epgCatButtons() {
 async function loadEpg(token, scrollToNow = false) {
   let startIso = '';
   if (state.epgOffset) {
+    // Pages line up with the Now view (which starts at the half hour before now), so the column
+    // times stay put however often the arrows are pressed
     const d = new Date();
-    d.setHours(d.getHours() + state.epgOffset);
+    d.setMinutes(d.getMinutes() >= 30 ? 30 : 0, 0, 0);
+    d.setMinutes(d.getMinutes() - 30 + state.epgOffset * 60);
     startIso = `&start_iso=${encodeURIComponent(d.toISOString())}`;
   }
   try {
@@ -2260,6 +2290,333 @@ function openAiringModal(key) {
 // ---------------------------------------------------------------------------
 // Downloads
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Antenna helper: the picture quality meter on its own page, made to be used on a phone at the
+// antenna. One channel is measured without video (light on the PC), with a big readout and an
+// optional tone that rises as reception improves; "Check all channels" gives a scorecard per antenna
+// position, and positions can be saved on this device to compare.
+// ---------------------------------------------------------------------------
+const ANT_SPOTS_KEY = 'tabloview.antennaSpots';
+const ANT_SCAN_SECONDS = 20;
+
+const antenna = {
+  sessionId: null, channel: null, data: null, timer: null, starting: false,
+  scan: null,  // { list, index, results, cancelled }
+  tone: { on: false, ctx: null, timer: null },
+
+  channels() {
+    return ((state.epg && state.epg.channels) || []).filter(c => c.kind === 'ota');
+  },
+
+  label(c) {
+    const { num, name } = channelName(c);
+    return num ? `${num} ${name}` : name;
+  },
+
+  async start(c, { quiet = false } = {}) {
+    await this.stop();
+    if (!quiet && !(await tunerOk('ota', this.label(c)))) return false;
+    this.starting = true;
+    this.channel = c;
+    this.data = null;
+    this.noPickup = false;
+    this.render();
+    try {
+      const res = await api('/api/live/measure', { method: 'POST', body: JSON.stringify({ channel_id: c.channel_id }) });
+      this.sessionId = res.session_id;
+    } catch (err) {
+      this.starting = false;
+      this.lastStatus = err.status;
+      // 502: a tuner was free but the Tablo couldn't tune the station, so as far as aiming goes: no signal
+      this.noPickup = err.status === 502;
+      if (!this.noPickup) this.channel = null;
+      if (!quiet) toast(this.noPickup ? err.message : `Couldn't tune ${this.label(c)}: ${err.message}`, 'error');
+      this.render();
+      return false;
+    }
+    this.starting = false;
+    this.timer = setInterval(() => this.poll(), 1000);
+    this.poll();
+    return true;
+  },
+
+  // Resolves once the backend has the stop (the next channel waits for it)
+  stop({ keepalive = false } = {}) {
+    clearInterval(this.timer);
+    this.timer = null;
+    const id = this.sessionId;
+    this.sessionId = null;
+    this.data = null;
+    if (!this.scan) { this.channel = null; this.noPickup = false; }
+    this.render();
+    if (!id) return Promise.resolve();
+    return fetch('/api/live/stop', { method: 'POST', headers: API_HEADERS, body: JSON.stringify({ session_id: id }), keepalive })
+      .catch(() => {});
+  },
+
+  async poll() {
+    const id = this.sessionId;
+    if (!id) return;
+    let d;
+    try { d = await api(`/api/live/reception/${id}`); } catch { return; }
+    if (id !== this.sessionId || !d.available) return;
+    this.data = d;
+    this.render();
+    this.beepFor(d);
+  },
+
+  // --- Tone: short beeps whose pitch rises with the score, so the antenna can be turned without looking
+  toggleTone() {
+    this.tone.on = !this.tone.on;
+    if (this.tone.on) {
+      try {
+        this.tone.ctx = this.tone.ctx || new (window.AudioContext || window.webkitAudioContext)();
+        this.tone.ctx.resume();
+      } catch { this.tone.on = false; toast("This browser can't play the tone", 'error'); }
+    }
+    this.render();
+  },
+
+  beepFor(d) {
+    const ctx = this.tone.ctx;
+    if (!this.tone.on || !ctx || d.score == null) return;
+    const lost = d.state === 'no_signal';
+    // Three beeps a second: 220 Hz at 0% up to 1,320 Hz at 100%; a low buzz for no signal
+    for (let i = 0; i < 3; i++) {
+      const t = ctx.currentTime + i * 0.33;
+      const osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.type = lost ? 'sawtooth' : 'sine';
+      osc.frequency.value = lost ? 110 : 220 + d.score * 11;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.25, t + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + (lost ? 0.3 : 0.12));
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.32);
+    }
+  },
+
+  // The Tablo keeps a tuner busy for 10-45 minutes after a channel is closed, so checking channel after
+  // channel uses them up (3 held after a few checks on a 4-tuner Tablo). Wait for one to free up.
+  async waitForTuner() {
+    for (;;) {
+      if (!this.scan || this.scan.cancelled) return false;
+      let t = null;
+      try { t = await api('/api/live/tuners'); } catch { /* try anyway */ }
+      if (!t || !t.total || t.available > 0) {
+        if (this.scan) this.scan.waiting = null;
+        return true;
+      }
+      if (!this.scan.waiting) this.scan.waiting = { since: Date.now() };
+      this.scan.waiting.held = t.held || 0;
+      this.scan.waiting.total = t.total;
+      this.renderScan();
+      for (let s = 0; s < 15 && this.scan && !this.scan.cancelled; s++) await new Promise(r => setTimeout(r, 1000));
+    }
+  },
+
+  // --- Check all channels: ANT_SCAN_SECONDS each, one tuner at a time
+  async checkAll() {
+    const list = this.channels();
+    if (!list.length) return;
+    if (!(await tunerOk('ota', 'each antenna channel in turn'))) return;
+    let tuners = null;
+    try { tuners = await api('/api/live/tuners'); } catch { /* not important */ }
+    if (tuners && tuners.total && tuners.total <= 2 && list.length > tuners.available) {
+      const go = await confirmDialog({
+        title: 'This may take a while',
+        text: `Your Tablo has ${tuners.total} tuners, and it keeps each one busy for 10–45 minutes after a channel is checked. So after every ${tuners.total === 1 ? 'channel' : 'couple of channels'} the check waits for a tuner to free up. You can leave it running, or check one channel at a time with Start instead.`,
+        confirm: 'Check all channels',
+      });
+      if (!go) return;
+    }
+    this.scan = { list, index: 0, results: {}, cancelled: false, waiting: null };
+    for (let i = 0; i < list.length && !this.scan.cancelled; i++) {
+      this.scan.index = i;
+      const c = list[i];
+      if (!(await this.waitForTuner())) break;
+      let ok = await this.start(c, { quiet: true });
+      if (!ok && this.lastStatus === 409 && (await this.waitForTuner())) ok = await this.start(c, { quiet: true });
+      const scores = [];
+      for (let s = 0; s < ANT_SCAN_SECONDS && this.scan && !this.scan.cancelled; s++) {
+        await new Promise(r => setTimeout(r, 1000));
+        this.renderScan();
+      }
+      if (!this.scan || this.scan.cancelled) break;
+      for (const [, sc] of (this.data && this.data.history) || []) scores.push(sc);
+      this.scan.results[c.channel_id] = {
+        name: this.label(c),
+        score: ok && scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0,
+        worst: ok && scores.length ? Math.round(Math.min(...scores)) : 0,
+        failed: !ok || !scores.length,
+        noPickup: !ok && this.noPickup,
+      };
+      this.renderScan();
+    }
+    const done = this.scan && !this.scan.cancelled;
+    const results = this.scan ? this.scan.results : {};
+    this.scan = null;
+    await this.stop();
+    this.lastScan = done ? results : null;
+    this.render();
+  },
+
+  cancelScan() {
+    if (this.scan) this.scan.cancelled = true;
+  },
+
+  // --- Saved antenna positions (this device only: it's where you stand with the antenna)
+  spots() {
+    try { return JSON.parse(localStorage.getItem(ANT_SPOTS_KEY) || '[]'); } catch { return []; }
+  },
+
+  saveSpots(spots) {
+    try { localStorage.setItem(ANT_SPOTS_KEY, JSON.stringify(spots.slice(-8))); } catch { /* private window */ }
+  },
+
+  saveSpot() {
+    if (!this.lastScan) return;
+    const input = $('#antSpotName');
+    const spots = this.spots();
+    const name = (input && input.value.trim()) || `Position ${spots.length + 1}`;
+    spots.push({ name, at: new Date().toISOString(), results: this.lastScan });
+    this.saveSpots(spots);
+    this.lastScan = null;
+    toast(`Saved “${name}”`, 'success');
+    this.render();
+  },
+
+  deleteSpot(i) {
+    const spots = this.spots();
+    spots.splice(i, 1);
+    this.saveSpots(spots);
+    this.render();
+  },
+
+  // --- Drawing
+  render() {
+    const big = $('#antBig');
+    if (!big) return;
+    const d = this.data;
+    const state_ = this.starting || (this.sessionId && (!d || d.score == null)) ? 'starting'
+      : d ? d.state : this.noPickup ? 'no_signal' : 'idle';
+    const score = d && d.score != null ? (d.state === 'no_signal' ? 'No signal' : `${d.score}%`)
+      : this.noPickup ? 'No signal' : '';
+    const LABELS = { clean: 'Clean picture', minor: 'Minor glitches', breaking: 'Breaking up', losing: 'Losing signal',
+                     no_signal: this.noPickup ? "The Tablo can't pick up this channel" : 'Nothing is arriving',
+                     starting: 'Tuning and measuring…', idle: 'Pick a channel and press Start' };
+    big.className = `ant-big q-${state_}`;
+    const hist = (d && d.history) || [];
+    const recent = hist.filter(([ago]) => ago >= -60);
+    const pts = recent.map(([ago, s]) => `${((60 + ago) / 60 * 300).toFixed(1)},${(58 - s * 0.56).toFixed(1)}`).join(' ');
+    big.innerHTML = `
+      <div class="ant-chan">${this.channel ? esc(this.label(this.channel)) : 'Antenna helper'}</div>
+      <div class="ant-score">${esc(score) || (state_ === 'starting' ? '…' : '—')}</div>
+      <div class="ant-label">${esc(LABELS[state_] || '')}</div>
+      ${d && d.worst ? `<div class="ant-worst">Worst in the last 5 min: ${d.worst.score}% · ${plural(d.dropouts, 'dropout')}</div>` : ''}
+      ${pts ? `<svg class="ant-spark" viewBox="0 0 300 60" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/></svg>
+        <div class="ant-spark-axis"><span>1 min ago</span><span>now</span></div>` : ''}`;
+    const go = $('#antGo');
+    if (go) {
+      go.textContent = this.sessionId || this.starting ? 'Stop' : 'Start';
+      go.classList.toggle('btn-primary', !(this.sessionId || this.starting));
+      go.disabled = !!this.scan;
+    }
+    const sel = $('#antChannel');
+    if (sel) sel.disabled = !!this.scan;
+    const tone = $('#antTone');
+    if (tone) { tone.classList.toggle('active', this.tone.on); tone.textContent = this.tone.on ? 'Tone on' : 'Tone off'; }
+    const all = $('#antAll');
+    if (all) { all.textContent = this.scan ? 'Cancel check' : 'Check all channels'; }
+    this.renderScan();
+    this.renderSpots();
+  },
+
+  renderScan() {
+    const box = $('#antScan');
+    if (!box) return;
+    const sc = this.scan;
+    const results = sc ? sc.results : this.lastScan;
+    if (!results) { box.innerHTML = ''; return; }
+    const list = sc ? sc.list : this.channels().filter(c => results[c.channel_id]);
+    const rows = list.map((c, i) => {
+      const r = results[c.channel_id];
+      const now = sc && i === sc.index && !r;
+      const cls = r ? (r.failed ? 'q-no_signal' : `q-${state_for(r.score)}`) : '';
+      return `<tr class="${cls}"><td>${esc(this.label(c))}</td>
+        <td class="num">${r ? (r.noPickup ? 'No signal' : r.failed ? 'Couldn’t measure' : `${r.score}%`) : now ? '<span class="spinner"></span>' : ''}</td>
+        <td class="num dim">${r && !r.failed ? `worst ${r.worst}%` : ''}</td></tr>`;
+    }).join('');
+    box.innerHTML = `
+      <div class="panel">
+        <h3>${sc ? (sc.waiting ? `Waiting for a free tuner to check ${esc(this.label(sc.list[sc.index]))} (${sc.index + 1} of ${sc.list.length})…`
+                               : `Checking ${esc(this.label(sc.list[sc.index]))} (${sc.index + 1} of ${sc.list.length})…`) : 'This position'}</h3>
+        <div class="panel-sub">${sc ? (sc.waiting
+            ? `All ${sc.waiting.total} tuners are busy${sc.waiting.held ? ` (${sc.waiting.held} still held by the Tablo from channels just checked)` : ''}. The Tablo frees them on its own, usually within 10–45 minutes; the check carries on by itself. Waiting ${Math.round((Date.now() - sc.waiting.since) / 60000)} min so far.`
+            : `About ${ANT_SCAN_SECONDS} seconds per channel. Leave the antenna still.`) : 'Average picture quality per channel while it was checked.'}</div>
+        <table class="ant-table">${rows}</table>
+        ${!sc ? `<div class="ant-save"><input class="input" id="antSpotName" placeholder="Name this position, e.g. Attic, facing north">
+          <button class="btn btn-primary" data-action="ant-save">Save</button></div>` : ''}
+      </div>`;
+  },
+
+  renderSpots() {
+    const box = $('#antSpots');
+    if (!box) return;
+    const spots = this.spots();
+    if (!spots.length) { box.innerHTML = ''; return; }
+    const ids = [];
+    const names = {};
+    for (const s of spots) for (const [id, r] of Object.entries(s.results)) { if (!names[id]) { ids.push(id); names[id] = r.name; } }
+    const rows = ids.map(id => {
+      const scores = spots.map(s => s.results[id] && !s.results[id].failed ? s.results[id].score : null);
+      const best = Math.max(...scores.map(x => x == null ? -1 : x));
+      return `<tr><td>${esc(names[id])}</td>${scores.map(x => `<td class="num ${x != null && x === best && spots.length > 1 ? 'best' : ''} ${x == null ? 'dim' : `q-${state_for(x)}`}">${x == null ? '—' : `${x}%`}</td>`).join('')}</tr>`;
+    }).join('');
+    box.innerHTML = `
+      <div class="panel">
+        <h3>Saved positions</h3><div class="panel-sub">Kept on this device. The best position for each channel is highlighted.</div>
+        <div class="ant-table-wrap"><table class="ant-table">
+          <tr><th></th>${spots.map((s, i) => `<th>${esc(s.name)}<button class="link-btn" data-action="ant-delete" data-index="${i}" title="Remove">${icon('x', 12)}</button></th>`).join('')}</tr>
+          ${rows}
+        </table></div>
+      </div>`;
+    hydrateIcons(box);
+  },
+};
+
+function state_for(score) {
+  return score >= 99 ? 'clean' : score >= 90 ? 'minor' : score >= 50 ? 'breaking' : score > 0 ? 'losing' : 'no_signal';
+}
+
+PAGES.antenna = async (r, token) => {
+  paint(`<div class="page ant-page">
+    <div class="page-head">
+      <div><h1 class="page-title">Antenna helper</h1>
+        <div class="page-sub">Live picture quality from your Tablo while you adjust your antenna. Open TabloView on your phone and take it with you.</div></div>
+    </div>
+    <div class="ant-controls">
+      <select class="select" id="antChannel" data-change="ant-channel"><option>Loading channels…</option></select>
+      <button class="btn btn-primary" id="antGo" data-action="ant-go">Start</button>
+      <button class="btn" id="antTone" data-action="ant-tone" title="Beeps that rise in pitch as reception improves">Tone off</button>
+      <button class="btn" id="antAll" data-action="ant-all" title="Measure every antenna channel for about ${ANT_SCAN_SECONDS} seconds each">Check all channels</button>
+    </div>
+    <div class="ant-big q-idle" id="antBig"></div>
+    <div id="antScan"></div>
+    <div id="antSpots"></div>
+    <p class="dim ant-note">How it works: TabloView watches the channel through your Tablo and counts the parts of the picture that arrive damaged or not at all. 100% means a perfect picture right now. Digital TV is all or nothing, though: a channel can show 100% while only just strong enough, so a channel that dips now and then needs attention even if it's usually at 100%. It uses one of your Tablo's tuners while it measures.</p>
+  </div>`);
+  pageLeave.push(() => { antenna.cancelScan(); antenna.stop(); });
+  antenna.render();
+  await player.ensureEpg();
+  if (stale(token)) return;
+  const sel = $('#antChannel');
+  const list = antenna.channels();
+  sel.innerHTML = list.length ? list.map(c => `<option value="${esc(c.channel_id)}">${esc(antenna.label(c))}</option>`).join('')
+    : '<option>No antenna channels</option>';
+  if (antenna.channel) sel.value = antenna.channel.channel_id;
+};
+
 PAGES.downloads = async (r, token) => {
   paint(`<div class="page">
     <div class="page-head"><div><h1 class="page-title">Downloads</h1><div class="page-sub">MP4 exports saved to the downloads folder on this computer</div></div></div>
@@ -2458,6 +2815,17 @@ PAGES.device = async (r, token) => {
           <span>Play the next episode automatically</span>
         </label>
         <p class="dim" style="margin-top:6px;font-size:12.5px">When a show ends, TabloView counts down 10 seconds to the next unwatched episode. You can cancel and keep watching.</p>
+      </div>
+      <div class="panel">
+        <h3>Appearance</h3><div class="panel-sub">How TabloView looks.</div>
+        <label class="switch-row" style="font-weight:400;cursor:default">
+          <span>Channel logos</span>
+          <select class="select" data-change="logo-style" style="height:32px">
+            <option value="color" ${settings.logo_style !== 'white' ? 'selected' : ''}>In color</option>
+            <option value="white" ${settings.logo_style === 'white' ? 'selected' : ''}>All white</option>
+          </select>
+        </label>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">The stations' own logos in color, or all in white like before.</p>
       </div>
       ${desktop}
       ${network}
@@ -3901,6 +4269,24 @@ const ACTIONS = {
   'guide-highlight': el => { state.guide.highlight = el.dataset.value; state.guide.sort = el.dataset.value ? 'soonest' : 'primetime'; const s = $('[data-change="guide-sort"]'); if (s) s.value = state.guide.sort; loadGuide(routeToken); },
   'guide-more': el => { el.disabled = true; loadGuide(routeToken, true); },
   'guide-sport': el => { state.guide.sport = el.dataset.value; renderGuideGrid(); },
+  'guide-retry': async el => {
+    el.disabled = true;
+    try {
+      await api('/api/guide/sync', { method: 'POST' });
+      $('#guidePartialBanner').classList.add('hidden');
+      toast('Loading the TV guide again…');
+    } catch (err) { toast(err.message, 'error'); }
+    el.disabled = false;
+  },
+  'ant-go': () => {
+    if (antenna.sessionId || antenna.starting) { antenna.stop(); return; }
+    const c = antenna.channels().find(x => x.channel_id === $('#antChannel').value);
+    if (c) antenna.start(c);
+  },
+  'ant-tone': () => antenna.toggleTone(),
+  'ant-all': () => (antenna.scan ? antenna.cancelScan() : antenna.checkAll()),
+  'ant-save': () => antenna.saveSpot(),
+  'ant-delete': el => antenna.deleteSpot(Number(el.dataset.index)),
   'guide-reload': () => loadGuide(routeToken),
   'scheduled-filter': el => { state.scheduled.filter = el.dataset.value; renderScheduledList(); },
 
@@ -4041,6 +4427,11 @@ const INPUTS = {
 };
 
 const CHANGES = {
+  // Antenna helper: picking another channel while measuring switches to it
+  'ant-channel': el => {
+    const c = antenna.channels().find(x => x.channel_id === el.value);
+    if (c && antenna.sessionId) antenna.start(c);
+  },
   'library-sort': el => { state.library.sort = el.value; save('tv_lib_sort', el.value); renderLibraryGrid(); },
   'guide-category': el => { state.guide.category = el.value; loadGuide(routeToken); },
   'guide-rule': el => { state.guide.rule = el.value; loadGuide(routeToken); },
@@ -4137,6 +4528,13 @@ const CHANGES = {
     try {
       await api('/api/settings', { method: 'POST', body: JSON.stringify({ export_format: el.value }) });
       toast(el.value === 'smaller' ? 'Exports will be converted to smaller files' : 'Exports will keep the original video');
+    } catch (err) { toast(err.message, 'error'); }
+  },
+  'logo-style': async el => {
+    try {
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ logo_style: el.value }) });
+      state.epg = null;  // channel lists load again with the new logos
+      toast(el.value === 'white' ? 'Channel logos will be shown in white' : 'Channel logos will be shown in color', 'success');
     } catch (err) { toast(err.message, 'error'); }
   },
   'smooth-motion': async el => {
@@ -4337,6 +4735,8 @@ function wireEvents() {
     if (state.stream.episodeId) player.saveProgress({ final: true });
     player.stopStream({ keepalive: true });
     dual.stopSession(true);  // the second channel's tuner too
+    antenna.cancelScan();
+    antenna.stop({ keepalive: true });  // and the antenna helper's
   });
 }
 
@@ -4350,6 +4750,7 @@ async function init() {
   route();
   showWhatsNew();
   loadStorage();
+  loadShows().catch(() => {});  // the Library count in the sidebar, whichever page opened first
   loadScheduled().catch(() => {});
   api('/api/exports').then(({ jobs }) => setActiveExports(jobs.filter(j => j.status === 'downloading' || j.status === 'pending').length)).catch(() => {});
   setInterval(pollStatus, 5000);

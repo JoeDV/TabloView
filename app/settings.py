@@ -17,6 +17,7 @@ DEFAULTS: Dict[str, Any] = {
     "notifications": True,  # tray notifications for failed/short recordings and recording conflicts
     "video_quality": "auto",  # browser playback: auto (graphics chip if available), best, fastest
     "smooth_motion": False,  # 60 fps from 1080i (opt-in: harder on graphics-chip encoders)
+    "logo_style": "color",  # channel logos: "color" (the station's own) or "white"
     "export_format": "smaller",  # MP4 exports: "smaller" (H.264, graphics chip if available) or "original" (exact copy)
     "export_folder": None,  # where MP4 exports go; None = DOWNLOADS_DIR (Downloads\TabloView)
     "rerecord_failed": True,  # schedule a rerun of a recording that failed or came out short (app/rerecord.py)

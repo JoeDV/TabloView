@@ -1,8 +1,14 @@
+try:
+    from . import _test_env  # noqa: F401
+except ImportError:
+    import _test_env  # noqa: F401
+
 import tempfile
 import unittest
 from pathlib import Path
 
 from app.reception import Meter, state_for
+
 
 
 def header(size="1920x1080", fps="29.97", out_fps="29.97"):
@@ -84,6 +90,14 @@ class MeterTests(unittest.TestCase):
         self.start()
         self.assertAlmostEqual(self.tick(extra=CORRUPT_VIDEO * 3), 90.0, delta=0.2)
         self.assertAlmostEqual(self.tick(extra=CORRUPT_VIDEO * 15), 50.0, delta=0.2)
+
+    def test_thrown_away_frames_arent_counted_twice(self):
+        # A thrown-away frame also leaves a gap in the timeline: half a second's frames lost is 50%, not 0%
+        self.start()
+        self.assertAlmostEqual(self.tick(frames=15, extra=CORRUPT_VIDEO * 15), 50.0, delta=1)
+        for _ in range(5):
+            self.tick()
+        self.assertGreater(self.report()["worst"]["score"], 45)
 
     def test_frames_the_decoder_patched_count_as_damaged(self):
         # From a live WTHR session: damaged frames reach the decoder, which conceals the broken parts

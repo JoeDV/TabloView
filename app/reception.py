@@ -97,7 +97,7 @@ class Meter:
         if m and out:
             video_stream, self.fps, self.out_fps = m.group(1), float(m.group(2)), float(out.group(1))
             self.corrupt_pattern = re.compile(
-                rf"Packet corrupt \(stream = {video_stream},"
+                rf"(Packet corrupt \(stream = {video_stream},)"
                 rf"|\[vist#0:{video_stream}/[^\]]*\] \[dec:[^\]]*\] corrupt decoded frame")
 
     def _add(self, stamps: List[float], score: float) -> None:
@@ -115,7 +115,12 @@ class Meter:
             self._streams(text)
             if self.corrupt_pattern is None:
                 return None
-        corrupt = len(self.corrupt_pattern.findall(text)) + self.corrupt_waiting
+        found = self.corrupt_pattern.findall(text)  # a thrown-away frame captures its group; a patched one doesn't
+        thrown_away = sum(1 for g in found if g)
+        corrupt = len(found) + self.corrupt_waiting
+        if self.missing_ref is not None and thrown_away:
+            # A thrown-away frame also leaves a gap in the timeline: expect it there, so it isn't counted twice
+            self.missing_ref += thrown_away * self.out_fps / self.fps
         prog = _PROGRESS.findall(text)
         if not prog:
             if self.last_progress is None:

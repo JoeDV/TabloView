@@ -72,13 +72,19 @@ async def list_guide_shows(
 @router.get("/upcoming")
 async def upcoming_recordings():
     """Every airing the Tablo plans to record, soonest first, with times where more overlap than
-    there are tuners ('conflicts'). Built from the cached guide; no extra requests to the Tablo
-    beyond the (cached) tuner count."""
+    there are tuners ('conflicts'). Airings the Tablo has marked as conflicts are included with
+    'wont_record' (the Tablo's apps list them too). Built from the cached guide; no extra requests to
+    the Tablo beyond the (cached) tuner count."""
     from .live import model_tuner_count
-    recordings = get_upcoming_recordings()
+    recordings = get_upcoming_recordings(include_conflicted=True)
     tuners = (await model_tuner_count()) if tablo_manager.is_authenticated else None
     conflicts = find_conflicts(recordings, tuners) if tuners else []
-    return {"tuners": tuners, "count": len(recordings), "recordings": recordings, "conflicts": conflicts}
+    for r in recordings:
+        r["wont_record"] = r.get("schedule_state") == "conflicted"
+        if r["wont_record"]:
+            r["conflict"] = True
+    return {"tuners": tuners, "count": len(recordings), "recordings": recordings, "conflicts": conflicts,
+            "wont_record": sum(1 for r in recordings if r["wont_record"])}
 
 
 @router.get("/upcoming.ics")
@@ -103,7 +109,7 @@ async def conflict_alternatives():
     (reruns, or the same network on another station) that could be recorded instead. From the cached
     guide; no requests to the Tablo beyond the (cached) tuner count."""
     from .live import model_tuner_count
-    scheduled = get_upcoming_recordings()
+    scheduled = get_upcoming_recordings(include_conflicted=True)
     tuners = (await model_tuner_count()) if tablo_manager.is_authenticated else None
     if not tuners:
         return {"tuners": tuners, "conflicts": []}

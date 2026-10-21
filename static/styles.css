@@ -281,6 +281,12 @@ img { display: block; }
 .onnow-card:hover { background: var(--surface-2); border-color: var(--border-strong); }
 .onnow-ch { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); min-width: 0; }
 .onnow-ch img { width: 36px; height: 22px; object-fit: contain; flex-shrink: 0; }
+/* Channel logos: a faint light edge keeps the darker colored ones (navy lettering, say) readable on the
+   dark background; on white logos it doesn't show */
+.onnow-ch img, .epg-ch-logo, .chan-logo, .channel-chip img, .airing-modal-head img {
+  filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.55)) drop-shadow(0 0 3px rgba(255, 255, 255, 0.18));
+}
+.chan-logo-text { filter: none; }
 .onnow-ch span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .onnow-ch b { color: var(--text); }
 .onnow-title { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -565,6 +571,37 @@ img { display: block; }
 .player.idle .player-top { opacity: 0; }
 .player-title { font-weight: 650; font-size: 16px; }
 .player-title-row { display: flex; align-items: center; gap: 12px; }
+/* Antenna helper: big readout for a phone held at the antenna */
+.ant-page { max-width: 760px; }
+.ant-controls { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+.ant-controls .select { flex: 1 1 200px; min-width: 0; }
+.ant-controls .btn.active { border-color: var(--ok); color: var(--ok); }
+.ant-big { border-radius: 18px; padding: 26px 20px 18px; text-align: center; margin-bottom: 20px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text-2); transition: background 0.4s, color 0.4s; }
+.ant-big .ant-chan { font-size: 15px; font-weight: 600; color: var(--text); }
+.ant-big .ant-score { font-size: clamp(64px, 18vw, 120px); font-weight: 750; line-height: 1.05; margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
+.ant-big .ant-label { font-size: 17px; font-weight: 600; }
+.ant-big .ant-worst { font-size: 13px; margin-top: 6px; opacity: 0.85; }
+.ant-big .ant-spark { display: block; width: 100%; height: 60px; margin-top: 14px; }
+.ant-big .ant-spark-axis { display: flex; justify-content: space-between; font-size: 11px; opacity: 0.7; }
+.ant-big.q-clean { background: rgba(60, 201, 133, 0.14); color: var(--ok); border-color: rgba(60, 201, 133, 0.4); }
+.ant-big.q-minor { background: rgba(181, 211, 52, 0.14); color: #b5d334; border-color: rgba(181, 211, 52, 0.4); }
+.ant-big.q-breaking { background: rgba(242, 184, 75, 0.14); color: var(--warn); border-color: rgba(242, 184, 75, 0.4); }
+.ant-big.q-losing, .ant-big.q-no_signal { background: rgba(239, 76, 76, 0.14); color: var(--rec); border-color: rgba(239, 76, 76, 0.4); }
+.ant-table-wrap { overflow-x: auto; }
+.ant-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
+.ant-table td, .ant-table th { padding: 7px 8px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+.ant-table th { font-weight: 600; font-size: 12.5px; color: var(--text-2); }
+.ant-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.ant-table tr.q-clean td.num:nth-child(2), .ant-table td.q-clean { color: var(--ok); }
+.ant-table tr.q-minor td.num:nth-child(2), .ant-table td.q-minor { color: #b5d334; }
+.ant-table tr.q-breaking td.num:nth-child(2), .ant-table td.q-breaking { color: var(--warn); }
+.ant-table tr.q-losing td.num:nth-child(2), .ant-table tr.q-no_signal td.num:nth-child(2), .ant-table td.q-losing, .ant-table td.q-no_signal { color: var(--rec); }
+.ant-table td.best { font-weight: 750; text-decoration: underline; text-underline-offset: 3px; }
+.ant-save { display: flex; gap: 8px; margin-top: 14px; }
+.ant-save .input { flex: 1; min-width: 0; }
+.ant-note { font-size: 12.5px; line-height: 1.5; margin-top: 18px; }
+#antScan .panel, #antSpots .panel { margin-bottom: 18px; }
 /* Picture quality from the antenna (live antenna channels): bars + percentage, and a 5-minute graph */
 .reception { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
   background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); color: var(--text); cursor: pointer; }

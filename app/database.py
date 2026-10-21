@@ -760,15 +760,21 @@ def get_series_airings(series_paths: List[str]) -> List[Dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-def get_upcoming_recordings(within_hours: Optional[float] = None) -> List[Dict[str, Any]]:
-    """Airings the Tablo plans to record that haven't finished yet, soonest first, with show art."""
-    query = """
+def get_upcoming_recordings(within_hours: Optional[float] = None,
+                            include_conflicted: bool = False) -> List[Dict[str, Any]]:
+    """Airings the Tablo plans to record that haven't finished yet, soonest first, with show art.
+
+    include_conflicted adds the airings your rules ask for that the Tablo won't record because more
+    overlap than it has tuners (state 'conflicted'; the first scheduled wins). The Tablo's own apps
+    list those with a warning; leaving them out made busy nights look like recordings had vanished."""
+    states = "('scheduled', 'conflicted')" if include_conflicted else "('scheduled')"
+    query = f"""
         SELECT ga.path, ga.series_path, ga.show_title, ga.episode_title, ga.season_number, ga.episode_number,
                ga.air_datetime, ga.duration, ga.channel_call_sign, ga.channel_network, ga.qualifiers,
-               ga.is_new, ga.is_premiere, g.cover_url, g.backdrop_url, g.schedule_rule
+               ga.is_new, ga.is_premiere, ga.schedule_state, g.cover_url, g.backdrop_url, g.schedule_rule
         FROM guide_airings ga
         LEFT JOIN guide_shows g ON g.path = ga.series_path
-        WHERE ga.schedule_state = 'scheduled'
+        WHERE ga.schedule_state IN {states}
           AND datetime(ga.air_datetime, '+' || ga.duration || ' seconds') > datetime('now')
     """
     params: List[Any] = []
@@ -1054,6 +1060,8 @@ def get_epg_schedule(hours: int = 6, start_iso: Optional[str] = None) -> Dict[st
     """Fetch structured EPG airings timeline across channels for grid view."""
     if start_iso:
         dt_start = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+        # Columns always start on the hour or half hour (a start like 7:37 would make every column odd)
+        dt_start = dt_start.replace(minute=30 if dt_start.minute >= 30 else 0, second=0, microsecond=0)
     else:
         now = datetime.now(timezone.utc)
         minute = 30 if now.minute >= 30 else 0

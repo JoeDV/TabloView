@@ -1,3 +1,8 @@
+try:
+    from . import _test_env  # noqa: F401
+except ImportError:
+    import _test_env  # noqa: F401
+
 import asyncio
 import unittest
 from unittest import mock
@@ -9,6 +14,7 @@ from app.main import app
 from app.routes import live
 from app.tablo_client import tablo_manager
 from app.transcode import transcode_manager
+
 
 HDR = {"X-TabloView": "1"}
 
@@ -68,8 +74,14 @@ class TuneRouteTests(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app, base_url="http://127.0.0.1:7070", client=("127.0.0.1", 50000))
 
-    def _tune(self, busy):
-        refused = requests.HTTPError("500 Server Error")
+    def test_refused_with_a_tuner_free_means_the_station_cant_be_picked_up(self):
+        # 69.1 WDTI, 2026-10-20: the Tablo answered 503 with a tuner free (that tuned 6.1 straight after)
+        r = self._tune(None, refused=requests.HTTPError("503 Server Error", response=mock.Mock(status_code=503)))
+        self.assertEqual(r.status_code, 502)
+        self.assertIn("can't pick up this channel", r.json()["detail"])
+
+    def _tune(self, busy, refused=None):
+        refused = refused or requests.HTTPError("500 Server Error")
         with mock.patch.object(type(tablo_manager), "is_authenticated", new=mock.PropertyMock(return_value=True)), \
              mock.patch.object(tablo_manager, "device", new=mock.Mock()), \
              mock.patch.object(live.TabloClient, "__init__", return_value=None), \
@@ -84,6 +96,36 @@ class TuneRouteTests(unittest.TestCase):
 
     def test_other_failures_stay_errors(self):
         self.assertEqual(self._tune(None).status_code, 500)
+
+
+class MeasureRouteTests(unittest.TestCase):
+    """Antenna helper: a channel is tuned only to be measured, and stopping it ends the Tablo session."""
+
+    def setUp(self):
+        self.client = TestClient(app, base_url="http://127.0.0.1:7070", client=("127.0.0.1", 50000))
+
+    def test_measure_starts_a_measure_only_session_and_stop_ends_it(self):
+        stream = mock.Mock(playlist_url="http://tablo/pl.m3u8", token="tok")
+        ended = []
+
+        async def fake_end(token):
+            ended.append(token)
+
+        with mock.patch.object(type(tablo_manager), "is_authenticated", new=mock.PropertyMock(return_value=True)), \
+             mock.patch.object(tablo_manager, "device", new=mock.Mock()), \
+             mock.patch.object(live.TabloClient, "__init__", return_value=None), \
+             mock.patch.object(live.TabloClient, "watch", return_value=stream), \
+             mock.patch.object(transcode_manager, "start_measure") as start_measure, \
+             mock.patch.object(tablo_manager, "end_watch_session", new=fake_end):
+            r = self.client.post("/api/live/measure", json={"channel_id": "S123"}, headers=HDR)
+            self.assertEqual(r.status_code, 200)
+            sid = r.json()["session_id"]
+            sess = transcode_manager.get_session(sid)
+            self.assertEqual(sess.tablo_token, "tok")
+            start_measure.assert_called_once_with(sess, "http://tablo/pl.m3u8")
+            self.client.post("/api/live/stop", json={"session_id": sid}, headers=HDR)
+        self.assertEqual(ended, ["tok"])
+        self.assertIsNone(transcode_manager.get_session(sid))
 
 
 if __name__ == "__main__":
