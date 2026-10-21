@@ -2669,7 +2669,7 @@ PAGES.antenna = async (r, token) => {
 
 PAGES.downloads = async (r, token) => {
   paint(`<div class="page">
-    <div class="page-head"><div><h1 class="page-title">Downloads</h1><div class="page-sub">MP4 exports saved to this computer (choose the folder under <a href="#/device?tab=playback">Device → Playback → Exports</a>)</div></div></div>
+    <div class="page-head"><div><h1 class="page-title">Downloads</h1><div class="page-sub">MP4 exports saved to this computer (choose the folder under <a href="#/device?tab=storage">Device → Storage → Exports</a>)</div></div></div>
     <div id="dlList"><div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>
   </div>`);
   const refresh = async () => {
@@ -2759,16 +2759,13 @@ PAGES.device = async (r, token) => {
       : '<p class="dim" style="margin-top:10px;font-size:13px">Notifications are available in the installed app.</p>'}
     </div>`;
 
-  const about = `
-    <div class="panel">
-      <h3>About</h3><div class="panel-sub">TabloView ${esc(info.version || '')}${info.packaged ? '' : ' (running from source)'} · <a href="#" data-action="version-history">Version history</a></div>
+  const aboutHead = `TabloView ${esc(info.version || '')}${info.packaged ? '' : ' (running from source)'} · <a href="#" data-action="version-history">Version history</a>`;
+  const aboutList = `
       <dl class="kv">
         <dt>Updates</dt><dd>${updateStatusHtml()}</dd>
         <dt>Playback engine</dt><dd>${info.ffmpeg_found ? 'FFmpeg ready' : '<span style="color:var(--warn)">FFmpeg not found: in-browser playback and MP4 export won’t work. VLC still works.</span>'}</dd>
-        <dt>Exports folder</dt><dd>${esc(info.downloads_dir || '')}</dd>
         <dt>App data</dt><dd>${esc(info.data_dir || '')}</dd>
-      </dl>
-    </div>`;
+      </dl>`;
 
   const connection = st.authenticated && dev ? `
     <div class="panel">
@@ -2781,7 +2778,13 @@ PAGES.device = async (r, token) => {
       </dl>
       ${(st.devices || []).length > 1 ? `<div class="panel-actions"><select class="select" data-change="select-device">${st.devices.map(d => `<option value="${esc(d.sid)}" ${d.sid === dev.sid ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select></div>` : ''}
       <div class="panel-actions"><button class="btn btn-danger btn-sm" data-action="logout">Sign out</button></div>
-    </div>` : '';
+      <div style="border-top:1px solid var(--border);margin-top:18px;padding-top:16px">
+        <h3>${aboutHead}</h3>${aboutList}
+      </div>
+    </div>` : `
+    <div class="panel">
+      <h3>About</h3><div class="panel-sub">${aboutHead}</div>${aboutList}
+    </div>`;
 
   const libraryPanel = `
       <div class="panel">
@@ -2912,11 +2915,11 @@ PAGES.device = async (r, token) => {
       </div>`;
   const TABS = [
     ['general', 'General', connection + libraryPanel + appearancePanel],
-    ['playback', 'Playback', playbackPanel + exportsPanel],
-    ['storage', 'Storage', storagePanel + spaceByShowPanel(space, storage.connected ? storage.used_gb : 0)],
+    ['playback', 'Playback', playbackPanel],
+    ['storage', 'Storage', storagePanel + exportsPanel + spaceByShowPanel(space, storage.connected ? storage.used_gb : 0)],
     ['signal', 'Signal health', signalHtml],
     ['desktop', 'Desktop & network', desktop + network],
-    ['about', 'About', about + diagnosticsPanel],
+    ['diagnostics', 'Diagnostics', diagnosticsPanel],
   ];
   const current = TABS.find(([id]) => id === r.query.get('tab')) || TABS[0];
   const tab = ([id, label]) => `<a href="#/device${id === 'general' ? '' : `?tab=${id}`}" class="${id === current[0] ? 'active' : ''}" style="display:inline-flex;align-items:center;height:28px;padding:0 12px;border-radius:7px;font-weight:500;font-size:13px">${label}</a>`;
