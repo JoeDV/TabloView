@@ -24,11 +24,12 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
     echo
 fi
 
-# First run (or one that didn't finish): set up a private Python environment with TabloView's packages.
-# Only marked ready once the install worked; a half-made one used to be kept, and every start after
-# that failed with "No module named uvicorn".
-if [ ! -f .venv/.ready ]; then
-    echo "First run: setting up TabloView (this takes a minute)..."
+# Set up a private Python environment with TabloView's packages: the first time, after a setup that
+# didn't finish, and when a new version needs different packages (.ready holds the list it was made
+# from, so a new version unzipped over the old folder sets up again). Only marked ready once the install worked; a half-made one used to be kept,
+# and every start after that failed with "No module named uvicorn".
+if [ ! -f .venv/.ready ] || [ "$(cat .venv/.ready)" != "$(cat requirements.txt)" ]; then
+    echo "Setting up TabloView (first run or new version; this takes a minute)..."
     rm -rf .venv
     "$PY" -m venv .venv || exit 1
     .venv/bin/python -m pip install --quiet --upgrade pip
@@ -40,7 +41,7 @@ if [ ! -f .venv/.ready ]; then
         rm -rf .venv
         exit 1
     fi
-    touch .venv/.ready
+    cp requirements.txt .venv/.ready
 fi
 
 PORT=7070

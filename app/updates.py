@@ -4,7 +4,6 @@ the user it's there)."""
 
 import os
 import re
-import sys
 import time
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
@@ -55,8 +54,9 @@ async def store_update_version() -> Optional[str]:
 async def check_for_update(force: bool = False) -> Dict[str, Any]:
     """Return {'current', 'latest', 'update_available', 'download_url', 'notes', 'error', 'store'}.
     Results are cached for CHECK_EVERY_SECONDS; failures never raise."""
-    # The published download is a Windows installer; Store copies ask the Store instead
-    url = "" if IS_STORE or sys.platform != "win32" else update_url()
+    # Store copies ask the Store; everyone else reads version.json, whose download link is the GitHub
+    # release (the Windows installer and the Mac and Linux downloads)
+    url = "" if IS_STORE else update_url()
     base: Dict[str, Any] = {"current": APP_VERSION, "latest": None, "update_available": False,
                             "download_url": STORE_LINK if IS_STORE else None, "notes": None, "error": None,
                             "enabled": bool(url) or IS_STORE, "store": IS_STORE}

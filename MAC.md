@@ -25,11 +25,30 @@ The first time, it spends a minute setting itself up. Then TabloView opens in yo
 
 ## Good to know
 
-- Your password goes only to Tablo's sign-in service and is never saved. TabloView keeps its sign-in and cache in a `data` folder inside the TabloView folder, and MP4 exports go to its `downloads` folder (choose another under **Device → Playback → Save exports to**).
+- Your password goes only to Tablo's sign-in service and is never saved. TabloView keeps its sign-in and cache in a `data` folder inside the TabloView folder, and MP4 exports go to its `downloads` folder (choose another under **Device → Storage → Exports**).
 - Only your Mac can open TabloView; other devices on your network can't.
 - **Open in VLC** downloads a small playlist file; open it with VLC (https://www.videolan.org) or IINA.
-- **To update**, replace the TabloView folder with a new copy, keeping the `data` folder if you don't want to sign in again.
+- **To update**, see [Updating](#updating) below.
 - **To remove it**, delete the TabloView folder. Python and FFmpeg can be removed with `brew uninstall python@3.12 ffmpeg`.
+
+## Updating
+
+TabloView tells you when a new version is out (**Update available** at the top of the page), with a link to the download.
+
+The simplest way: unzip the new version over your TabloView folder and start it as usual. It notices the new version, sets itself up again (about a minute) and keeps your sign-in and settings.
+
+Prefer to keep each version in its own folder, so you can go back? Keep your data in one place outside them, so every version uses it and you stay signed in. Once, copy your current `data` folder there:
+```
+mkdir -p ~/Library/Application\ Support/TabloView
+cp -r ~/TabloView/data ~/Library/Application\ Support/TabloView/
+```
+(using the folder you unzipped TabloView to), then add this line to `~/.zshrc`:
+```
+export TABLOVIEW_HOME=~/Library/Application\ Support/TabloView
+```
+Open a new terminal, and every version you start uses that data. Exports then go to `~/Library/Application Support/TabloView/downloads` unless you choose a folder under **Device → Storage → Exports**.
+
+`data/config.json` holds your Tablo sign-in; don't share it.
 
 ## If something goes wrong
 

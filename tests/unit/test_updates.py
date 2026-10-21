@@ -6,8 +6,10 @@ except ImportError:
 import asyncio
 import json
 import os
+import sys
 import threading
 import unittest
+from unittest import mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from app import updates
@@ -61,6 +63,18 @@ class UpdateCheckTests(unittest.TestCase):
             srv.close()
         self.assertTrue(r["update_available"])
         self.assertEqual((r["latest"], r["download_url"]), ("1.2.0", "https://example.com/dl"))
+
+    def test_mac_and_linux_copies_are_told_too(self):
+        # They used to get no notice (the download was only the Windows installer); the GitHub
+        # release now has all three
+        srv = VersionServer({"version": "1.2.0", "download_url": "https://example.com/releases/latest"})
+        try:
+            for platform in ("linux", "darwin"):
+                with mock.patch.object(sys, "platform", platform):
+                    r = self.check(srv.url)
+                self.assertTrue(r["enabled"] and r["update_available"], platform)
+        finally:
+            srv.close()
 
     def test_same_or_older_version_is_up_to_date(self):
         for v in ("1.1.1", "1.0.9"):
