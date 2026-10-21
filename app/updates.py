@@ -42,6 +42,9 @@ def direct_download_url(url: str) -> str:
 async def store_update_version() -> Optional[str]:
     """The newer version of this app the Microsoft Store has for this PC, or None."""
     from winrt.windows.services.store import StoreContext
+    # The answer is a Windows list, which needs its own package (missing from 1.2.2 and earlier, so
+    # "Check now" failed with "No module named 'winrt.windows.foundation.collections'")
+    import winrt.windows.foundation.collections  # noqa: F401
     found = await StoreContext.get_default().get_app_and_optional_store_package_updates_async()
     for update in found:
         v = update.package.id.version
