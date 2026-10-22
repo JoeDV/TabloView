@@ -36,7 +36,15 @@ HARDWARE = {
     "amf": ("AMD AMF",
             ["-c:v", "h264_amf", "-quality", "balanced", "-rc", "cqp", "-qp_i", "22", "-qp_p", "24"],
             ["-c:v", "h264_amf", "-quality", "quality", "-rc", "cqp", "-qp_i", "19", "-qp_p", "21"], "yuv420p"),
+    # Macs: Apple's encoder (Homebrew's FFmpeg has it). Until 1.2.3 Macs always encoded on the CPU;
+    # a 2-hour export took 30 minutes on an M2. A bitrate rather than -q:v, which only Apple Silicon
+    # accepts; 8 Mb/s is about what Quick Sync's quality 22 gives for 1080 broadcast TV.
+    "videotoolbox": ("Apple VideoToolbox",
+                     ["-c:v", "h264_videotoolbox", "-b:v", "8M", "-maxrate", "12M", "-bufsize", "16M"],
+                     ["-c:v", "h264_videotoolbox", "-b:v", "12M", "-maxrate", "16M", "-bufsize", "24M"], "nv12"),
 }
+# Which encoders are worth testing where: Apple's only exists on Macs, and the others not there
+PLATFORM_ENCODERS = {"darwin": ["videotoolbox"]}
 CPU = ("CPU (x264)", ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22"],
        ["-c:v", "libx264", "-preset", "faster", "-crf", "20"], "yuv420p")
 FASTEST = ("CPU (x264, fastest)", ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "26"], None, "yuv420p")
@@ -49,6 +57,8 @@ EXPORT_ARGS = {
     "qsv": ["-c:v", "h264_qsv", *QSV_STABLE, "-preset", "medium", "-global_quality", "26"],
     "nvenc": ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "26", "-b:v", "0"],
     "amf": ["-c:v", "h264_amf", "-quality", "quality", "-rc", "cqp", "-qp_i", "25", "-qp_p", "27"],
+    # About 2.2 GB per hour, like the others
+    "videotoolbox": ["-c:v", "h264_videotoolbox", "-b:v", "5M", "-maxrate", "8M", "-bufsize", "10M"],
     "cpu": ["-c:v", "libx264", "-preset", "faster", "-crf", "25"],
 }
 
@@ -67,13 +77,20 @@ def _test(name: str) -> bool:
         return False
 
 
+def candidates(platform: str = sys.platform) -> List[str]:
+    """The hardware encoders to test on this kind of computer, in preference order."""
+    if platform in PLATFORM_ENCODERS:
+        return PLATFORM_ENCODERS[platform]
+    return [n for n in HARDWARE if n not in {e for names in PLATFORM_ENCODERS.values() for e in names}]
+
+
 def detect() -> List[str]:
     """Hardware encoders that work on this PC (tested once, in preference order)."""
     global _working
     with _lock:
         if _working is None:
             # TABLOVIEW_NO_HW_ENCODE=1 forces CPU encoding (troubleshooting)
-            _working = [] if os.getenv("TABLOVIEW_NO_HW_ENCODE") else [n for n in HARDWARE if _test(n)]
+            _working = [] if os.getenv("TABLOVIEW_NO_HW_ENCODE") else [n for n in candidates() if _test(n)]
             print(f"[Encoders] Hardware H.264 encoders: {', '.join(HARDWARE[n][0] for n in _working) or 'none'}")
         return [n for n in _working if n not in _failed]
 

@@ -1916,13 +1916,29 @@ async function toggleAiring(btn) {
   }
 }
 
+// Refresh guide: your Tablo downloads the latest guide, then TabloView reads it (a few minutes)
 async function syncGuide() {
   try {
     await api('/api/guide/sync', { method: 'POST' });
-    toast('Refreshing the guide from your Tablo. This takes a minute.');
-    setTimeout(() => { state.scheduled.items = null; if (['guide', 'scheduled', 'home'].includes(parseRoute().name)) route(); }, 45000);
+    toast('Your Tablo is downloading the latest guide. TabloView updates when it’s done, in a few minutes.');
   } catch (err) {
     toast(`Guide refresh failed: ${err.message}`, 'error');
+    return;
+  }
+  let said = false;
+  for (let i = 0; i < 120; i++) {
+    await new Promise(r => setTimeout(r, 5000));
+    let s;
+    try { s = await api('/api/guide/sync/status'); } catch { continue; }
+    if (s.stage === 'syncing' && !said) { said = true; toast('Your Tablo has the new guide. Reading it now…'); }
+    if (s.stage === 'done' || s.stage === 'failed') {
+      if (s.stage === 'failed') toast(`Guide refresh failed: ${s.error || 'unknown error'}`, 'error');
+      else toast('Guide updated', 'success');
+      state.scheduled.items = null;
+      state.upcoming = null;
+      if (['guide', 'scheduled', 'home', 'live'].includes(parseRoute().name)) route();
+      return;
+    }
   }
 }
 
@@ -3311,11 +3327,14 @@ const player = {
   // Live antenna TV: Record the show on now, on the Tablo, without leaving the channel
   liveAiring() {
     const s = state.stream;
-    if (!s.channelId || s.channelKind === 'fast' || !state.epg) return null;
+    if (!s.channelId || !state.epg) return null;
     const c = state.epg.channels.find(x => x.channel_id === s.channelId);
     const a = c && nowNext(c).now;
+    if (!a) return null;
+    // Streaming channels: recordable ones only, by the cloud guide's airing ID
+    if (a.airing_id) return c.can_record ? { c, a } : null;
     // Placeholder entries (no guide data) have nothing on the Tablo to schedule
-    return a && a.path && !a.path.startsWith('/channel/') && !a.path.startsWith('/cloud/') ? { c, a } : null;
+    return a.path && !a.path.startsWith('/channel/') && !a.path.startsWith('/cloud/') ? { c, a } : null;
   },
 
   updateRecordButton() {
@@ -3337,7 +3356,8 @@ const player = {
     const hit = this.liveAiring();
     if (!hit) return;
     try {
-      await api('/api/guide/episodes/schedule', { method: 'POST', body: JSON.stringify({ path: hit.a.path, scheduled: true }) });
+      if (hit.a.airing_id) await api('/api/streaming/record', { method: 'POST', body: JSON.stringify({ airing_id: hit.a.airing_id, scheduled: true }) });
+      else await api('/api/guide/episodes/schedule', { method: 'POST', body: JSON.stringify({ path: hit.a.path, scheduled: true }) });
       hit.a.schedule_state = 'scheduled';
       state.upcoming = null;
       toast(`Recording ${hit.a.title} on your Tablo from now until it ends. It'll be in your Library.`, 'success');

@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from ..config import APP_NAME, APP_VERSION, IS_PACKAGED, IS_STORE, FFMPEG_PATH, HOME_DIR, DOWNLOADS_DIR
 from ..settings import load_settings, save_settings, exports_dir
 from ..updates import check_for_update
-from .. import commercials, encoders, lanauth, notifications, startup, whatsnew
+from .. import commercials, encoders, lanauth, notifications, presence, startup, whatsnew
 from ..tablo_client import tablo_manager
 from ..sync_service import sync_service
 from ..database import get_sync_meta, get_export_jobs, delete_export_job, get_storage_by_show
@@ -313,6 +313,7 @@ def guide_progress() -> Optional[dict]:
 @router.get("/library/status")
 async def get_library_status():
     """Check status of background library sync."""
+    presence.page_seen()  # open pages ask every few seconds
     await recheck_tablo()
     last_sync = get_sync_meta("last_sync")
     total_shows = get_sync_meta("total_shows") or "0"

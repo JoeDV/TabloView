@@ -1,6 +1,7 @@
 """Guide search, discovery, and series recording management routes."""
 
 import json
+import time
 from datetime import datetime
 import asyncio
 from typing import Optional, Dict, Any, List
@@ -377,11 +378,52 @@ async def set_episode_schedule(payload: EpisodeScheduleRequest):
         raise HTTPException(status_code=500, detail=f"Failed to toggle episode recording: {e}")
 
 
+# Refresh guide: the Tablo downloads a new guide first (its app's Update guide button, captured
+# 2026-10-22: POST /server/guide/refresh?lh, no body), then TabloView reads it
+GUIDE_REFRESH_WAIT = 300
+GUIDE_STATUS_EVERY = 5
+guide_refresh: Dict[str, Any] = {"stage": None}  # None, "tablo" (downloading), "syncing", "done", "failed"
+
+
+async def tablo_guide_status() -> Dict[str, Any]:
+    """The Tablo's guide: {'guide_seeded', 'last_update', 'limit' (how far ahead), 'download_progress'}."""
+    resp = await tablo_manager.request_local("GET", "/server/guide/status?lh")
+    return resp.json() if resp.status_code == 200 else {}
+
+
+async def refresh_guide_from_tablo() -> None:
+    try:
+        guide_refresh.update(stage="tablo", started=time.time())
+        before = (await tablo_guide_status()).get("last_update")
+        resp = await tablo_manager.request_local("POST", "/server/guide/refresh?lh")
+        if resp.status_code in (200, 201, 202, 204):
+            deadline = time.time() + GUIDE_REFRESH_WAIT
+            while time.time() < deadline:
+                await asyncio.sleep(GUIDE_STATUS_EVERY)
+                status = await tablo_guide_status()
+                if status.get("last_update") != before and status.get("download_progress") in (None, 1, 100):
+                    break
+        else:
+            # The Tablo didn't take the request: still read what it has
+            print(f"[Guide] The Tablo didn't start a guide update ({resp.status_code}: {resp.text[:120]})")
+        guide_refresh["stage"] = "syncing"
+        await sync_service.sync_guide()
+        guide_refresh["stage"] = "done"
+    except Exception as e:
+        print(f"[Guide] Refresh guide failed: {e}")
+        guide_refresh.update(stage="failed", error=str(e))
+
+
 @router.post("/sync")
 async def trigger_guide_sync():
-    """Trigger background sync of OTA guide series, movies, and sports."""
+    """Refresh guide: the Tablo downloads the latest guide, then TabloView reads it (background)."""
     if not tablo_manager.is_authenticated:
         raise HTTPException(status_code=400, detail="Tablo device is not connected")
+    if guide_refresh.get("stage") not in ("tablo", "syncing"):
+        asyncio.create_task(refresh_guide_from_tablo())
+    return {"status": "sync_started", "stage": "tablo"}
 
-    asyncio.create_task(sync_service.sync_guide())
-    return {"status": "sync_started", "message": "OTA Guide sync running in background"}
+
+@router.get("/sync/status")
+async def guide_sync_status():
+    return {"stage": guide_refresh.get("stage"), "error": guide_refresh.get("error")}

@@ -8,6 +8,7 @@ from pathlib import Path
 from .config import SETTINGS_FILE, DOWNLOADS_DIR
 
 DEFAULTS: Dict[str, Any] = {
+    "closing_notice_shown": False,  # the tray has said once that closing the browser doesn't quit
     "allow_lan": False,  # packaged app: listen on all interfaces instead of 127.0.0.1 only
     "lan_pin": None,  # {salt, hash}: PIN other devices sign in with (app/lanauth.py)
     "lan_secret": None,  # signs the "remembered device" cookies

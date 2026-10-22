@@ -69,5 +69,23 @@ class CommandTests(unittest.TestCase):
         self.assertNotIn("-readrate", self.cmd(self.plan(), live=True))
 
 
+
+class PlatformEncoderTests(unittest.TestCase):
+    """Macs use Apple's VideoToolbox (they always encoded on the CPU before); PCs the others."""
+
+    def test_macs_try_videotoolbox(self):
+        self.assertEqual(encoders.candidates("darwin"), ["videotoolbox"])
+
+    def test_pcs_try_the_pc_encoders(self):
+        for platform in ("win32", "linux"):
+            self.assertEqual(encoders.candidates(platform), ["qsv", "nvenc", "amf"])
+
+    def test_videotoolbox_exports_aim_for_a_smaller_file(self):
+        enc = {"name": "videotoolbox", "label": "Apple VideoToolbox", "hardware": True, "args": [], "pix_fmt": "nv12"}
+        args = encoders.for_export(enc)["args"]
+        self.assertEqual(args[:2], ["-c:v", "h264_videotoolbox"])
+        self.assertEqual(args[args.index("-b:v") + 1], "5M")
+
+
 if __name__ == "__main__":
     unittest.main()

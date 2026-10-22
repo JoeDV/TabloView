@@ -34,8 +34,8 @@ if sys.stdout is None or getattr(sys, "frozen", False):
     _setup_logging()
 
 from app.config import APP_NAME, APP_VERSION, DOWNLOADS_DIR, IS_STORE, LOG_DIR, STORE_LINK  # noqa: E402
-from app.settings import load_settings, exports_dir  # noqa: E402
-from app import notifications, startup, updates  # noqa: E402
+from app.settings import load_settings, save_settings, exports_dir  # noqa: E402
+from app import notifications, presence, startup, updates  # noqa: E402
 
 
 def running_tabloview(port: int) -> bool:
@@ -205,7 +205,20 @@ def main():
     icon = pystray.Icon(APP_NAME, draw_icon(64), f"{APP_NAME} is running", menu)
     # Recording problems and conflicts are announced from the tray icon
     notifications.set_notifier(lambda title, message: icon.notify(message, title))
+    threading.Thread(target=closing_notice, args=(icon,), name="closing-notice", daemon=True).start()
     icon.run()
+
+
+def closing_notice(icon) -> None:
+    """Once ever: when the last TabloView page has been closed, say that TabloView keeps running and
+    how to quit it (people expected closing the browser to close TabloView)."""
+    while not load_settings().get("closing_notice_shown"):
+        time.sleep(30)
+        if presence.pages_closed():
+            icon.notify("TabloView is still running in the background, keeping your library up to date. "
+                        "To close it completely, right-click the TabloView icon by the clock and choose Quit TabloView.",
+                        APP_NAME)
+            save_settings({"closing_notice_shown": True})
 
 
 def _fatal(message: str):

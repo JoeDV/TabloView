@@ -37,6 +37,11 @@ PREVIEW_SECONDS = 5
 # MP4 exports: no progress for this long means the Tablo stopped sending (see _stop_stalled_export);
 # past this share of the recording, what arrived is kept rather than thrown away
 EXPORT_STALL_SECONDS = 60
+# Exports read the recording at twice real time while something is playing (faster starves live TV and
+# playback sharing the Tablo: unthrottled is about 6.5x), and at 4x when nothing is, set when the export
+# starts. A 2-hour recording: about an hour, or half an hour.
+EXPORT_READRATE = 2
+EXPORT_IDLE_READRATE = 4
 EXPORT_NEAR_END = 0.9
 
 
@@ -633,7 +638,8 @@ class TranscodeManager:
                                               encoders.for_export(encoders.cpu_fallback()), last_try=True)
 
     @staticmethod
-    def export_cmd(playlist_url: str, part_path: Path, enc: Optional[Dict[str, Any]]) -> List[str]:
+    def export_cmd(playlist_url: str, part_path: Path, enc: Optional[Dict[str, Any]],
+                   readrate: float = EXPORT_READRATE) -> List[str]:
         """enc None: copy the broadcast video as is (largest, exact). Otherwise convert to H.264
         (deinterlaced, like playback), which is usually much smaller.
 
@@ -647,9 +653,8 @@ class TranscodeManager:
             "-y",
             "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
             "-fflags", "+discardcorrupt",
-            # Cap reads at 2x real time: unthrottled exports pull ~6.5x and starve
-            # live TV / playback streams sharing the Tablo
-            "-readrate", "2",
+            # Capped (see EXPORT_READRATE): unthrottled, exports starve live TV and playback
+            "-readrate", f"{readrate:g}",
             "-i", playlist_url,
             *video,
             "-af", "aresample=async=1:ochl=stereo:clev=1.0:slev=0.6",
@@ -706,10 +711,15 @@ class TranscodeManager:
         return (f"The Tablo stopped sending this recording{pct}, so the export was stopped. "
                 f"Try again later; if it stops at the same point, that part of the recording may be damaged.")
 
+    def export_readrate(self) -> float:
+        """Faster when nothing is playing from the Tablo (live TV, a recording, the antenna check)."""
+        playing = any(not s.stopped for s in self.sessions.values())
+        return EXPORT_READRATE if playing else EXPORT_IDLE_READRATE
+
     async def _run_ffmpeg_export(self, job_id: str, playlist_url: str, output_path: Path, expected_duration: int,
                                  enc: Optional[Dict[str, Any]] = None, last_try: bool = True) -> bool:
         part_path = output_path.with_name(output_path.stem + ".part.ts")  # becomes the MP4 when done
-        cmd = self.export_cmd(playlist_url, part_path, enc)
+        cmd = self.export_cmd(playlist_url, part_path, enc, self.export_readrate())
         print(f"[ExportWorker] Starting export {job_id} -> {output_path.name} "
               f"({enc['label'] if enc else 'original video'})")
         save_export_job({"job_id": job_id, "status": "downloading", "progress": 0.0, "error": None})

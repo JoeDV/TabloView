@@ -91,6 +91,8 @@ These are the most important things to know about the Tablo.
 | `GET /server/tuners` | A list of tuner slots | Each slot has `in_use`, `recording`, `channel` (a `/guide/channels/{id}` path) and `channel_identifier` (as in the channel lineup). A 4-tuner Tablo lists **8** slots: the first 4 are antenna tuners, the rest are virtual slots used by streaming (FAST) channels (verified by tuning one of each). |
 | `GET /server/harddrives` | A list of drives | `name` (e.g. "Internal Flash (128 GB)"), `kind` (`internal`), `connected`, `busy_state`, `format_state`, `error`, and `size`, `usage`, `free` and `limit` in bytes (also as `*_mib`). Verified. |
 | `GET /images/{image_id}` | JPEG | Unsigned. IDs come from objects (e.g. `snapshot_image.image_id`). Verified. |
+| `GET /server/guide/status?lh` | The Tablo's guide | `guide_seeded`, `last_update` (when it last downloaded the guide), `limit` (how far ahead it reaches, about 2 weeks) and `download_progress` (`null` when idle). Verified. |
+| `POST /server/guide/refresh?lh` (no body) | Starts a guide download | What the Tablo app's **Update guide** button sends (captured 2026-10-22). On a QUAD, `last_update` moved on about a minute later. Verified. |
 
 ### Reading many objects
 
@@ -208,7 +210,6 @@ A 401 or 403 means the cloud sign-in has expired: sign in again.
 
 Things the Tablo app does that we haven't seen the request for:
 
-- **Update guide.** The Tablo app's button makes the Tablo fetch new guide data. TabloView's "Refresh guide" only re-reads the Tablo's current copy. Capturing the app's request (e.g. with PCAPdroid on Android) would tell us.
 - **Channel scan**, and Tablo settings (recording quality, padding, and so on).
 - **Manual (time-based) recordings.**
 - **Every `skip_reason` value**, and every recording `error` value.
