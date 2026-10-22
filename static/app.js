@@ -2243,7 +2243,7 @@ function scheduledRow(g) {
 // ---------------------------------------------------------------------------
 const EPG = { CH_W: 232, PPM: 7, HOURS: 6 };
 const EPG_CATS = [
-  ['ota', 'Local'], ['fast', 'Streaming'], ['all', 'All'],
+  ['ota', 'Antenna'], ['fast', 'Streaming'], ['all', 'All'],
   ['news', 'News'], ['sports', 'Sports'], ['entertainment', 'Entertainment'],
 ];
 
@@ -2786,8 +2786,8 @@ const antenna = {
     const recent = hist.filter(([ago]) => ago >= -60);
     const pts = recent.map(([ago, s]) => `${((60 + ago) / 60 * 300).toFixed(1)},${(58 - s * 0.56).toFixed(1)}`).join(' ');
     big.innerHTML = `
-      <div class="ant-chan">${this.channel ? esc(this.label(this.channel)) : 'Antenna helper'}</div>
-      <div class="ant-score">${esc(score) || (state_ === 'starting' ? '…' : '—')}</div>
+      ${this.channel ? `<div class="ant-chan">${esc(this.label(this.channel))}</div>` : ''}
+      ${state_ === 'idle' ? '' : `<div class="ant-score">${esc(score) || (state_ === 'starting' ? '…' : '—')}</div>`}
       <div class="ant-label">${esc(LABELS[state_] || '')}</div>
       ${d && d.worst ? `<div class="ant-worst">Worst in the last 5 min: ${d.worst.score}% · ${plural(d.dropouts, 'dropout')}</div>` : ''}
       ${pts ? `<svg class="ant-spark" viewBox="0 0 300 60" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/></svg>
@@ -2869,7 +2869,7 @@ PAGES.antenna = async (r, token) => {
   paint(`<div class="page ant-page">
     <div class="page-head">
       <div><h1 class="page-title">Antenna helper</h1>
-        <div class="page-sub">Live picture quality from your Tablo while you adjust your antenna. Open TabloView on your phone and take it with you.</div></div>
+        <div class="page-sub">Live picture quality from your Tablo while you adjust your antenna.</div></div>
     </div>
     <div class="ant-controls">
       <select class="select" id="antChannel" data-change="ant-channel"><option>Loading channels…</option></select>
@@ -2918,7 +2918,7 @@ function renderDownloads(jobs) {
   box.innerHTML = `<div class="list">${jobs.map(j => {
     const pct = Math.round(j.progress || 0);
     return `<div class="list-row dl-row">
-      <div style="min-width:0"><div class="row-title">${esc(j.filename)}</div><div class="row-sub">${esc(fmt.bytes(j.file_size))}${j.created_at ? ` · started ${esc(fmt.ago(j.created_at))}` : ''}${j.error ? ` · ${esc(j.error.slice(-140))}` : ''}</div></div>
+      <div style="min-width:0"><div class="row-title">${esc(j.filename)}</div><div class="row-sub" ${j.error ? `title="${esc(j.error)}"` : ''}>${esc([fmt.bytes(j.file_size), j.created_at ? `started ${fmt.ago(j.created_at)}` : '', j.error ? (j.error.length > 160 ? `${j.error.slice(0, 160)}…` : j.error) : ''].filter(Boolean).join(' · '))}</div></div>
       <div>${j.status === 'downloading' ? `<div class="progress"><div style="width:${pct}%"></div></div><div class="row-sub" style="margin-top:4px">${pct}%</div>` : ''}</div>
       <span class="status-text ${esc(j.status)}">${esc({ downloading: 'Exporting', pending: 'Waiting' }[j.status] || j.status)}</span>
       <div>${j.status === 'completed' ? `<a class="btn btn-sm" href="/downloads/${encodeURIComponent(j.filename)}" download>${icon('download', 15)}Save</a>`
@@ -2960,7 +2960,7 @@ PAGES.device = async (r, token) => {
           <button class="btn btn-sm" data-action="set-pin">${info.lan_pin_set ? 'Change PIN' : 'Set PIN'}</button>
           ${info.lan_pin_set ? '<button class="btn btn-sm btn-ghost" data-action="pin-signout">Sign out other devices</button>' : ''}
         </div>`
-      : '<p class="dim" style="font-size:13px">Running from source: network access follows the <code>--host</code> option in the start command.</p>'}
+      : '<p class="dim" style="font-size:13px">When TabloView is started with its start script, only this computer can open it.</p>'}
       ${info.listening_on_network && info.network_url ? `<p style="margin-top:12px">On other devices, open <b>${esc(info.network_url)}</b></p>` : ''}
     </div>`;
 
@@ -3097,7 +3097,7 @@ PAGES.device = async (r, token) => {
 `;
   const exportsPanel = `
       <div class="panel">
-        <h3>Exports</h3><div class="panel-sub">Recordings saved as MP4 files from the Downloads page.</div>
+        <h3>Exports</h3><div class="panel-sub">Recordings saved as MP4 files (Export MP4 on a recording’s ⋯ menu), listed under Downloads.</div>
         <label class="switch-row" style="font-weight:400;cursor:default">
           <span>Format</span>
           <select class="select" data-change="export-format" style="height:32px">
