@@ -75,6 +75,27 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+
+class TextGZip:
+    """Compress the page, scripts and data (the Live TV guide is ~600 KB of JSON, about a tenth of that
+    compressed: it matters over Wi-Fi to other devices), but not video, images or downloads, which are
+    compressed already and would only cost CPU."""
+    SKIP = ("/api/transcoded/", "/api/hls/", "/api/export-relay/", "/api/images/", "/downloads/")
+
+    def __init__(self, app):
+        from starlette.middleware.gzip import GZipMiddleware
+        self.app = app
+        self.gzip = GZipMiddleware(app, minimum_size=1024)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and not scope["path"].startswith(self.SKIP)                 and not scope["path"].endswith((".ts", ".m3u8", ".jpg", ".png")):
+            await self.gzip(scope, receive, send)
+        else:
+            await self.app(scope, receive, send)
+
+
+app.add_middleware(TextGZip)
+
 # No CORS middleware: the UI is served from this same origin, and allowing any
 # origin would let arbitrary websites drive the API (e.g. delete recordings).
 

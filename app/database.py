@@ -8,14 +8,18 @@ from .config import DB_FILE
 
 
 def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=15)
     conn.row_factory = sqlite3.Row
+    # With the WAL journal (set in init_db) this is still safe against power loss, and much faster
+    conn.execute("PRAGMA synchronous=NORMAL")
     return conn
 
 
 def init_db():
     with get_connection() as conn:
         cursor = conn.cursor()
+        # Write-ahead log: pages keep reading while a sync writes (they waited 1-4 s for it before)
+        cursor.execute("PRAGMA journal_mode=WAL")
         
         # Shows table
         cursor.execute("""
@@ -225,6 +229,10 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_ga_air_datetime ON guide_airings(air_datetime)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_ga_primetime_new ON guide_airings(is_new, is_primetime)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_ga_premiere ON guide_airings(is_premiere)")
+        # What's on a channel now (tuner list), what will record (Scheduled), a streaming show's airings
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_ga_channel ON guide_airings(channel_identifier, air_datetime)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_ga_state ON guide_airings(schedule_state)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_sa_show ON stream_airings(show_id)")
         conn.commit()
 
 

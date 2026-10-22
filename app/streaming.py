@@ -194,13 +194,14 @@ async def worker_loop() -> None:
         await asyncio.sleep(WORKER_INTERVAL)
 
 
-def _future_airings() -> List[Dict[str, Any]]:
+def _future_airings(where: str = "", params: tuple = ()) -> List[Dict[str, Any]]:
+    """Airings that haven't finished, optionally narrowed (reading all ~20,000 took half a second)."""
     with get_connection() as conn:
-        rows = conn.execute("""
+        rows = conn.execute(f"""
             SELECT * FROM stream_airings
-            WHERE datetime(air_datetime, '+' || duration || ' seconds') > datetime('now')
+            WHERE datetime(air_datetime, '+' || duration || ' seconds') > datetime('now') {where}
             ORDER BY air_datetime
-        """).fetchall()
+        """, params).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -289,9 +290,10 @@ def upcoming_recordings(ids: set) -> List[Dict[str, Any]]:
     if not ids:
         return []
     out = []
-    for a in _future_airings():
-        if a["id"] not in ids:
-            continue
+    ids = sorted(ids)
+    found = [a for n in range(0, len(ids), 500)
+             for a in _future_airings(f"AND id IN ({','.join('?' * len(ids[n:n + 500]))})", tuple(ids[n:n + 500]))]
+    for a in sorted(found, key=lambda a: a["air_datetime"]):
         tags = json.loads(a["tags"] or "[]")
         out.append({
             "path": a["id"], "airing_id": a["id"], "streaming": True, "show_id": a["show_id"],
@@ -314,4 +316,4 @@ def airing(airing_id: str) -> Optional[Dict[str, Any]]:
 
 
 def airings_for(show_id: str) -> List[Dict[str, Any]]:
-    return [a for a in _future_airings() if a["show_id"] == show_id]
+    return _future_airings("AND show_id = ?", (show_id,))
