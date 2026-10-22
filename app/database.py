@@ -558,18 +558,24 @@ def get_storage_by_show() -> List[Dict[str, Any]]:
     return sorted(shows.values(), key=lambda s: s["bytes"], reverse=True)
 
 
+# The player and episode pages only offer to resume past this (static/app.js: position > 30)
+RESUME_MIN_SECONDS = 30
+
+
 def get_in_progress_episodes(limit: int = 20) -> List[Dict[str, Any]]:
     """Partly watched recordings (resume point saved, not finished), newest airing first.
-    (The Tablo doesn't record when something was last watched, so air date is the best order.)"""
+    (The Tablo doesn't record when something was last watched, so air date is the best order.)
+    A resume point counts from RESUME_MIN_SECONDS, as everywhere else: a recording started and
+    stopped at once (2 s) showed here as "1h left" while its own page said Unwatched."""
     with get_connection() as conn:
         rows = conn.execute("""
             SELECT e.id, e.show_id, e.show_title, e.title, e.season_number, e.episode_number,
                    e.duration, e.position, e.air_date, e.raw_json, s.cover_url, s.backdrop_url
             FROM episodes e LEFT JOIN shows s ON s.id = e.show_id
-            WHERE e.position > 0 AND e.status != 'Watched'
+            WHERE e.position > ? AND e.status != 'Watched'
             ORDER BY e.air_date DESC
             LIMIT ?
-        """, (limit,)).fetchall()
+        """, (RESUME_MIN_SECONDS, limit)).fetchall()
         result = []
         for r in rows:
             d = dict(r)

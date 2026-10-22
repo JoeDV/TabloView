@@ -94,6 +94,13 @@ class DatabaseTests(unittest.TestCase):
         db.set_episode_progress("ep_2", position=1200)  # saving a position marks it unwatched again (as on the Tablo)
         self.assertEqual(db.get_show_by_id("show-1")["unwatched_count"], 2)
 
+    def test_a_few_seconds_in_isnt_continue_watching(self):
+        # Started and stopped at once (2 s): its page says Unwatched with nothing to resume
+        db.set_episode_progress("ep_2", position=2)
+        self.assertEqual(db.get_in_progress_episodes(), [])
+        db.set_episode_progress("ep_2", position=31)
+        self.assertEqual([e["id"] for e in db.get_in_progress_episodes()], ["ep_2"])
+
 
 if __name__ == "__main__":
     unittest.main()
