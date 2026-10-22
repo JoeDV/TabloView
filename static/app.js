@@ -259,6 +259,18 @@ function toast(message, type = 'info') {
   setTimeout(() => { el.classList.add('leaving'); setTimeout(() => el.remove(), 260); }, 4200);
 }
 
+// A message that stays up and can be updated (e.g. a percentage), until it's closed
+function stickyToast(message, type = 'info') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = message;
+  $('#toasts').appendChild(el);
+  return {
+    update: text => { el.textContent = text; },
+    close: () => { el.classList.add('leaving'); setTimeout(() => el.remove(), 260); },
+  };
+}
+
 let openMenuEl = null;
 function closeMenu() { if (openMenuEl) { openMenuEl.remove(); openMenuEl = null; } }
 
@@ -1920,18 +1932,21 @@ async function toggleAiring(btn) {
 async function syncGuide() {
   try {
     await api('/api/guide/sync', { method: 'POST' });
-    toast('Your Tablo is downloading the latest guide. TabloView updates when it’s done, in a few minutes.');
   } catch (err) {
     toast(`Guide refresh failed: ${err.message}`, 'error');
     return;
   }
-  let said = false;
+  const note = stickyToast('Your Tablo is downloading the latest guide…');
   for (let i = 0; i < 120; i++) {
     await new Promise(r => setTimeout(r, 5000));
     let s;
     try { s = await api('/api/guide/sync/status'); } catch { continue; }
-    if (s.stage === 'syncing' && !said) { said = true; toast('Your Tablo has the new guide. Reading it now…'); }
+    if (s.stage === 'tablo' && typeof s.progress === 'number') {
+      note.update(`Your Tablo is downloading the latest guide… ${Math.min(99, Math.round(s.progress * 100))}%`);
+    }
+    if (s.stage === 'syncing') note.update('Your Tablo has the new guide. Reading it now…');
     if (s.stage === 'done' || s.stage === 'failed') {
+      note.close();
       if (s.stage === 'failed') toast(`Guide refresh failed: ${s.error || 'unknown error'}`, 'error');
       else toast('Guide updated', 'success');
       state.scheduled.items = null;
@@ -1940,6 +1955,7 @@ async function syncGuide() {
       return;
     }
   }
+  note.close();  // ten minutes without an answer: stop saying it's downloading
 }
 
 // ---------------------------------------------------------------------------

@@ -393,7 +393,7 @@ async def tablo_guide_status() -> Dict[str, Any]:
 
 async def refresh_guide_from_tablo() -> None:
     try:
-        guide_refresh.update(stage="tablo", started=time.time())
+        guide_refresh.update(stage="tablo", started=time.time(), progress=None)
         before = (await tablo_guide_status()).get("last_update")
         resp = await tablo_manager.request_local("POST", "/server/guide/refresh?lh")
         if resp.status_code in (200, 201, 202, 204):
@@ -401,6 +401,8 @@ async def refresh_guide_from_tablo() -> None:
             while time.time() < deadline:
                 await asyncio.sleep(GUIDE_STATUS_EVERY)
                 status = await tablo_guide_status()
+                # A fraction (0.96...) while the Tablo downloads; empty when idle
+                guide_refresh["progress"] = status.get("download_progress")
                 if status.get("last_update") != before and status.get("download_progress") in (None, 1, 100):
                     break
         else:
@@ -426,4 +428,5 @@ async def trigger_guide_sync():
 
 @router.get("/sync/status")
 async def guide_sync_status():
-    return {"stage": guide_refresh.get("stage"), "error": guide_refresh.get("error")}
+    return {"stage": guide_refresh.get("stage"), "progress": guide_refresh.get("progress"),
+            "error": guide_refresh.get("error")}
