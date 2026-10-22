@@ -107,6 +107,7 @@ class StreamSession:
         self.encoder: Optional[str] = None  # what converted it, e.g. "Intel Quick Sync" or "copy"
         self.stopped = False  # set when the player closes it, so the supervisor doesn't restart it
         self.tablo_token: Optional[str] = None  # the Tablo's watch session, ended when this stops
+        self.channel_id: Optional[str] = None  # live TV: the channel (to tell TabloView's own tuners apart)
         self.supervisor: Optional[asyncio.Task] = None
         self.reception = None  # live antenna channels: picture quality meter (app/reception.py)
         self.reception_task: Optional[asyncio.Task] = None
@@ -119,6 +120,9 @@ class TranscodeManager:
         # Exports run one at a time (created on first use, inside the event loop)
         self._export_slot: Optional[asyncio.Semaphore] = None
         self.export_procs: Dict[str, subprocess.Popen] = {}  # running exports' FFmpeg, by job
+        # Live channels TabloView stopped, and when: the Tablo keeps the channel on the tuner a little
+        # longer, and the tuner list shouldn't call that "another app"
+        self.recently_closed: Dict[str, float] = {}
         self.cancelled_exports: set = set()
         # Watch sessions being ended on the Tablo; tuning waits for these so the old channel's
         # tuner is given back before the new channel asks for one
@@ -195,6 +199,8 @@ class TranscodeManager:
         sess = self.sessions.pop(session_id, None)
         if sess:
             sess.stopped = True
+            if sess.channel_id:
+                self.recently_closed[sess.channel_id] = time.time()
             if sess.supervisor:
                 sess.supervisor.cancel()
             if sess.reception_task:

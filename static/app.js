@@ -32,6 +32,7 @@ const ICONS = {
   external: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  queue: '<path d="M3 6h13M3 12h9M3 18h9"/><path d="M16 12.5v6.8a.5.5 0 0 0 .77.42l5-3.4a.5.5 0 0 0 0-.84l-5-3.4a.5.5 0 0 0-.77.42z" fill="currentColor" stroke="none"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   tv: '<rect width="20" height="15" x="2" y="7" rx="2"/><path d="m17 2-5 5-5-5"/>',
   antenna: '<path d="M12 12 6 2M12 12l6-10"/><circle cx="12" cy="13" r="1.6"/><path d="M12 15v6M8 21h8"/>',
@@ -223,6 +224,8 @@ const state = {
   guideCache: new Map(),
   library: { q: '', sort: store('tv_lib_sort', 'recent'), filter: 'all', layout: store('tv_lib_layout', 'wide') },
   guide: { q: '', highlight: '', category: 'all', sport: '', rule: '', sort: 'primetime', items: [], offset: 0, hasMore: false, highlights: {} },
+  // The Guide's Streaming tab
+  fast: { q: '', category: 'all', recordable: false, data: null },
   scheduled: { items: null, filter: 'all', q: '' },
   show: null,
   episodes: [],
@@ -850,14 +853,14 @@ PAGES.home = async (r, token) => {
         const onNow = new Date(a.air_datetime).getTime() <= Date.now() && !a.wont_record && !a.missed_new;
         const art = imgUrl(a.cover_url || a.backdrop_url);
         return `
-          <div class="list-row upnext-row clickable ${a.conflict ? 'conflict' : ''}" data-action="open-series" data-path="${esc(a.series_path)}">
+          <div class="list-row upnext-row clickable ${a.conflict ? 'conflict' : ''}" ${rowOpen(a)}>
             <div class="upnext-when">${onNow ? '<span class="tag tag-rec-live"><span class="rec-pulse"></span>REC</span>' : esc(fmt.time(a.air_datetime))}<span class="dim">${esc(fmt.dayLabel(a.air_datetime))}</span></div>
             ${art ? `<img class="thumb" src="${esc(art)}" alt="" loading="lazy">` : '<div class="thumb"></div>'}
             <div style="min-width:0">
               <div class="row-title">${esc(a.show_title)}</div>
               <div class="row-sub">${se ? `${se} · ` : ''}${esc(a.episode_title || '')}</div>
             </div>
-            <div class="row-sub upnext-ch">${esc(a.channel_network || '')}${a.channel_call_sign ? ` · ${esc(a.channel_call_sign)}` : ''}</div>
+            <div class="row-sub upnext-ch ch-cell">${channelCell(a)}</div>
             ${conflictTag(a) || (a.is_new ? '<span class="tag tag-new">NEW</span>' : '<span></span>')}
           </div>`;
       }).join('')}</div>`,
@@ -880,7 +883,7 @@ PAGES.home = async (r, token) => {
   if (premList.length) {
     parts.push(section({
       title: 'Season premieres',
-      sub: 'Upcoming on your channels',
+      sub: 'Upcoming on your antenna channels',
       link: '#/guide?highlight=premieres',
       rowId: 'rowPrem',
       body: `<div class="card-row" id="rowPrem">${premList.map(guideCard).join('')}</div>`,
@@ -1488,26 +1491,27 @@ async function exportEpisode(id) {
 // ---------------------------------------------------------------------------
 const GUIDE_PAGE = 120;
 
+function guideTabs(streamingTab) {
+  const tab = (href, label, active) => `<a href="${href}" class="${active ? 'active' : ''}" style="display:inline-flex;align-items:center;height:28px;padding:0 12px;border-radius:7px;font-weight:500;font-size:13px">${label}</a>`;
+  return `<div class="segmented tabs">${tab('#/guide', 'Antenna channels', !streamingTab)}${tab('#/guide?tab=streaming', 'Streaming channels', streamingTab)}</div>`;
+}
+
 PAGES.guide = async (r, token) => {
+  if (r.query.get('tab') === 'streaming') return streamingGuide(token);
   const G = state.guide;
   if (r.query.has('q')) G.q = r.query.get('q');
   if (r.query.has('highlight')) { G.highlight = r.query.get('highlight'); G.sort = 'soonest'; }
 
   paint(`<div class="page">
     <div class="page-head">
-      <div><h1 class="page-title">Guide</h1><div class="page-sub">Everything airing on your channels over the next two weeks</div></div>
+      <div><h1 class="page-title">Guide</h1><div class="page-sub">Shows on your antenna channels over the next two weeks</div></div>
       <div class="page-head-actions"><button class="btn btn-ghost btn-sm" data-action="sync-guide">${icon('refresh', 15)}Refresh guide</button></div>
     </div>
+    <div class="toolbar">${guideTabs(false)}</div>
     <div class="toolbar">
       <div class="input-search">${icon('search', 15)}<input class="input" data-input="guide-q" placeholder="Search the guide" value="${esc(G.q)}"></div>
       <div class="segmented" id="guideHighlights">${guideHighlightButtons()}</div>
       <div class="grow"></div>
-      <select class="select" data-change="guide-category">
-        <option value="all">All types</option>
-        <option value="series" ${G.category === 'series' ? 'selected' : ''}>TV shows</option>
-        <option value="movies" ${G.category === 'movies' ? 'selected' : ''}>Movies</option>
-        <option value="sports" ${G.category === 'sports' ? 'selected' : ''}>Sports</option>
-      </select>
       <select class="select" data-change="guide-rule">
         <option value="">Any status</option>
         <option value="scheduled" ${G.rule === 'scheduled' ? 'selected' : ''}>Recording</option>
@@ -1521,10 +1525,18 @@ PAGES.guide = async (r, token) => {
         <option value="recent" ${G.sort === 'recent' ? 'selected' : ''}>Newest series</option>
       </select>
     </div>
+    <div class="chip-row" id="guideTypes">${guideTypeChips()}</div>
     <div id="guideGrid">${skeletonGrid(10)}</div>
   </div>`);
   await loadGuide(token);
 };
+
+// The same chips as the Streaming tab's categories
+function guideTypeChips() {
+  const G = state.guide;
+  return [['all', 'All'], ['series', 'TV shows'], ['movies', 'Movies'], ['sports', 'Sports']]
+    .map(([v, label]) => `<button class="chip ${G.category === v ? 'active' : ''}" data-action="guide-type" data-value="${v}">${label}</button>`).join('');
+}
 
 function guideHighlightButtons() {
   const G = state.guide, h = G.highlights || {};
@@ -1616,6 +1628,141 @@ function sportsGrid(items) {
 }
 
 const reloadGuide = debounce(() => loadGuide(routeToken), 220);
+
+// ---------------------------------------------------------------------------
+// Guide → Streaming channels: Tablo's online guide for the free streaming channels, by category
+// ---------------------------------------------------------------------------
+async function streamingGuide(token) {
+  const F = state.fast;
+  paint(`<div class="page">
+    <div class="page-head">
+      <div><h1 class="page-title">Guide</h1><div class="page-sub">Shows on the free streaming channels over the next week</div></div>
+    </div>
+    <div class="toolbar">${guideTabs(true)}</div>
+    <div class="toolbar">
+      <div class="input-search">${icon('search', 15)}<input class="input" data-input="fast-q" placeholder="Search streaming channels" value="${esc(F.q)}"></div>
+      <label class="switch-row" style="margin:0" title="Channels whose shows your Tablo is allowed to record">
+        <input type="checkbox" class="switch" data-change="fast-recordable" ${F.recordable ? 'checked' : ''}>
+        <span>Recordable channels only</span>
+      </label>
+    </div>
+    <div class="chip-row" id="fastCategories"></div>
+    <div id="fastGrid">${skeletonGrid(10)}</div>
+  </div>`);
+  await loadStreaming(token);
+}
+
+async function loadStreaming(token) {
+  const F = state.fast;
+  const params = new URLSearchParams({ category: F.category, recordable: F.recordable ? 'true' : 'false' });
+  if (F.q.trim()) params.set('q', F.q.trim());
+  try {
+    const res = await api(`/api/streaming/shows?${params}`);
+    if (token !== undefined && stale(token)) return;
+    F.data = res;
+    renderStreaming();
+    // First visit: the listings are still loading (about ten seconds); look again shortly
+    if (res.loading && !res.shows.length) setTimeout(() => { if (parseRoute().name === 'guide' && !stale(token)) loadStreaming(token); }, 3000);
+  } catch (err) {
+    const grid = $('#fastGrid');
+    if (grid) { grid.innerHTML = errorState(err, 'fast-reload'); hydrateIcons(grid); }
+  }
+}
+
+const reloadStreaming = debounce(() => loadStreaming(routeToken), 220);
+
+function renderStreaming() {
+  const F = state.fast, d = F.data;
+  const grid = $('#fastGrid'), chips = $('#fastCategories');
+  if (!grid || !d) return;
+  const total = d.categories.reduce((n, c) => n + c.count, 0);
+  const chip = (id, label, n) => `<button class="chip ${F.category === id ? 'active' : ''}" data-action="fast-category" data-value="${id}">${esc(label)} <span class="count">${n}</span></button>`;
+  chips.innerHTML = d.categories.length ? chip('all', 'All', total) + d.categories.map(c => chip(c.id, c.label, c.count)).join('') : '';
+  if (!d.shows.length) {
+    grid.innerHTML = d.loading
+      ? '<div class="loading-line" style="padding:28px"><span class="spinner"></span>Loading the streaming channels’ listings…</div>'
+      : emptyState('Nothing found', d.error ? `Couldn’t load the streaming listings: ${d.error}` : F.q ? `No streaming show matches “${F.q}”.` : 'Try a different category.');
+    return;
+  }
+  grid.innerHTML = `<div class="card-grid">${d.shows.map(streamCard).join('')}</div>`;
+}
+
+function streamCard(s) {
+  const n = s.next_airing;
+  const when = s.on_now ? '<span class="hl">On now</span>' : `<span class="hl">${esc(fmt.when(n.datetime))}</span>`;
+  return `
+    <div class="media-card" data-action="fast-show" data-id="${esc(s.show_id)}" title="${esc(s.title)}">
+      <div class="media-art">${artImg(s.image, s.title)}${s.on_now ? '<span class="art-badge art-badge-left" style="background:var(--rec)">On now</span>' : ''}</div>
+      <div class="media-meta">
+        <div class="media-title">${esc(s.title)}</div>
+        <div class="media-sub">${when} · ${esc(n.channel_name)}${s.channels.length > 1 ? ` +${s.channels.length - 1}` : ''}</div>
+        <div class="media-foot fast-foot">
+          ${n.channel_logo ? `<img class="fast-logo" src="${esc(n.channel_logo)}" alt="" loading="lazy">` : ''}
+          ${s.can_record ? '<span class="tag" title="Your Tablo is allowed to record this channel">Recordable</span>' : ''}
+        </div>
+      </div>
+    </div>`;
+}
+
+// Record, or stop recording, a streaming airing on the Tablo; then show the airings again
+async function recordStreaming(el) {
+  const on = el.dataset.on === '1';
+  el.disabled = true;
+  try {
+    const res = await api('/api/streaming/record', { method: 'POST', body: JSON.stringify({ airing_id: el.dataset.id, scheduled: on }) });
+    const ok = on ? res.schedule_state === 'scheduled' || res.schedule_state === 'recording' : res.schedule_state !== 'scheduled';
+    toast(on ? (ok ? 'Your Tablo will record it' : 'Your Tablo didn’t confirm the recording; check Scheduled')
+             : (ok ? 'Recording cancelled' : 'Your Tablo still has it set to record'), ok ? 'success' : 'error');
+    state.upcoming = null;
+    const item = el.dataset.key && state.epgItems[el.dataset.key];
+    if (item && ok) {
+      item.airing.schedule_state = on ? 'scheduled' : 'none';
+      if (!on) item.airing.recording_now = false;
+      renderEpg();
+    }
+  } catch (err) {
+    toast(`Couldn't ${on ? 'record' : 'cancel'} it: ${err.message}`, 'error');
+  }
+  if (el.dataset.key) openAiringModal(el.dataset.key);
+  else openStreamShow(el.dataset.show);
+}
+
+// A streaming show's upcoming airings, with Watch for the one on now
+async function openStreamShow(showId) {
+  const s = ((state.fast.data && state.fast.data.shows) || []).find(x => x.show_id === showId);
+  let airings = [];
+  try { airings = (await api(`/api/streaming/shows/${encodeURIComponent(showId)}/airings`)).airings; } catch { /* shown empty */ }
+  const now = Date.now();
+  const rows = airings.slice(0, 40).map(a => {
+    const start = new Date(a.air_datetime).getTime(), end = start + (a.duration || 0) * 1000;
+    const onNow = start <= now && now < end;
+    const se = fmt.se(a.season_number, a.episode_number);
+    const ep = [se, a.title && a.title !== a.show_title ? a.title : ''].filter(Boolean).join(' · ');
+    return `<div class="fast-airing">
+      <div class="upnext-when">${onNow ? '<span class="tag tag-rec-live"><span class="rec-pulse"></span>ON NOW</span>' : esc(fmt.when(a.air_datetime))}<span class="dim">until ${esc(fmt.time(new Date(end).toISOString()))}</span></div>
+      <div style="min-width:0">
+        <div class="row-title" style="font-weight:600">${esc(ep || a.show_title)}</div>
+        ${a.description ? `<div class="row-sub" title="${esc(a.description)}">${esc(a.description)}</div>` : ''}
+      </div>
+      <div class="ch-cell">${a.channel_logo ? `<img class="ch-logo" src="${esc(a.channel_logo)}" alt="" loading="lazy">` : ''}<span class="ch-label">${esc(a.channel_name)}</span></div>
+      <div class="fast-acts">
+        ${onNow ? `<button class="btn btn-sm btn-primary" data-action="modal-watch-live" data-id="${esc(a.channel_identifier)}" data-name="${esc(a.channel_name)}" data-kind="fast">${icon('play', 13)}Watch</button>` : ''}
+        ${!a.can_record ? '' : ['scheduled', 'recording'].includes(a.schedule_state)
+          ? `<button class="btn btn-sm rec-set" data-action="fast-record" data-id="${esc(a.id)}" data-show="${esc(showId)}" data-on="0" title="Your Tablo will record this. Click to cancel.">${icon('check', 13)}Recording</button>`
+          : `<button class="btn btn-sm" data-action="fast-record" data-id="${esc(a.id)}" data-show="${esc(showId)}" data-on="1" title="Record this on your Tablo">${onNow ? 'Record from now' : 'Record'}</button>`}
+      </div>
+    </div>`;
+  }).join('');
+  const recordable = airings.some(a => a.can_record);
+  await openModal(`
+    <div class="dialog-body scroll">
+      <div class="dialog-title">${esc((s && s.title) || (airings[0] && airings[0].show_title) || 'Show')}</div>
+      <div class="dialog-text">${airings.length ? `${plural(airings.length, 'airing')} on the streaming channels this week.` : 'No more airings this week.'}
+        ${recordable ? ' Choose Record to have your Tablo record one.' : ''}</div>
+      <div class="fast-airings">${rows}</div>
+    </div>
+    <div class="dialog-foot"><button class="btn" data-action="modal-ok" data-autofocus>Close</button></div>`, { wide: true });
+}
 
 // ---------------------------------------------------------------------------
 // Series (guide show detail + upcoming airings)
@@ -1968,6 +2115,19 @@ const WONT_RECORD_TAG = `<span class="tag tag-rec" title="Your Tablo has no tune
 
 const MISSED_NEW_TAG = `<span class="tag tag-rec" title="The guide marks this episode New, but your Tablo decided it isn't, so the series' Record New rule skips it. Click Record to record it anyway.">Won't record</span>`;
 
+// Logo, number and call sign, e.g. [NBC logo] 13.1 WTHR; the network's name when there's no logo
+// Where a recording row leads: its antenna series, or for streaming recordings the show's airings
+function rowOpen(a) {
+  return a.streaming ? `data-action="fast-show" data-id="${esc(a.show_id)}"` : `data-action="open-series" data-path="${esc(a.series_path)}"`;
+}
+
+function channelCell(a) {
+  const logo = a.channel_logo
+    ? `<img class="ch-logo" src="${esc(a.channel_logo)}" alt="${esc(a.channel_network || '')}" title="${esc(a.channel_network || '')}" loading="lazy">`
+    : `<span class="ch-logo">${esc(a.channel_network || '')}</span>`;
+  return `${logo}<span class="ch-label">${a.channel_number ? `<b>${esc(a.channel_number)}</b> ` : ''}${esc(a.channel_call_sign || '')}</span>`;
+}
+
 function conflictTag(a) {
   return a.missed_new ? MISSED_NEW_TAG : a.wont_record ? WONT_RECORD_TAG : a.conflict ? '<span class="tag tag-warn">Conflict</span>' : '';
 }
@@ -1978,19 +2138,19 @@ function upcomingRow(a) {
   const se = fmt.se(a.season_number, a.episode_number);
   const art = imgUrl(a.cover_url || a.backdrop_url);
   return `
-    <div class="list-row upcoming-row clickable ${a.conflict ? 'conflict' : ''}" data-action="open-series" data-path="${esc(a.series_path)}">
+    <div class="list-row upcoming-row clickable ${a.conflict ? 'conflict' : ''}" ${rowOpen(a)}>
       <div class="upnext-when">${onNow ? '<span class="tag tag-rec-live"><span class="rec-pulse"></span>REC</span>' : esc(fmt.time(a.air_datetime))}<span class="dim">until ${esc(fmt.time(end))}</span></div>
       ${art ? `<img class="thumb" src="${esc(art)}" alt="" loading="lazy">` : '<div class="thumb"></div>'}
       <div style="min-width:0">
         <div class="row-title">${esc(a.show_title)}</div>
         <div class="row-sub">${se ? `${se} · ` : ''}${esc(a.episode_title || '')}</div>
       </div>
-      <div class="row-sub">${esc(a.channel_network || '')}${a.channel_call_sign ? ` · ${esc(a.channel_call_sign)}` : ''}</div>
+      <div class="row-sub ch-cell">${channelCell(a)}</div>
       <div class="hero-kicker" style="margin:0;flex-wrap:nowrap">
         ${conflictTag(a)}${a.is_premiere ? '<span class="tag tag-premiere">PREMIERE</span>' : ''}${a.is_new ? '<span class="tag tag-new">NEW</span>' : ''}
       </div>
       ${a.missed_new ? `<button class="btn btn-sm btn-primary" data-action="record-missed-new" data-path="${esc(a.path)}">Record</button>`
-        : onNow ? '<span></span>' : `<button class="btn btn-sm" data-action="cancel-recording" data-path="${esc(a.path)}" data-title="${esc(a.show_title)}">Skip</button>`}
+        : onNow ? '<span></span>' : `<button class="btn btn-sm" data-action="cancel-recording" data-path="${esc(a.path)}" data-title="${esc(a.show_title)}" ${a.streaming ? 'data-streaming="1"' : ''}>Skip</button>`}
     </div>`;
 }
 
@@ -2035,8 +2195,9 @@ function scheduledRow(g) {
       ${imgUrl(g.cover_url || g.backdrop_url) ? `<img class="thumb" src="${esc(imgUrl(g.cover_url || g.backdrop_url))}" alt="" loading="lazy">` : '<div class="thumb"></div>'}
       <div style="min-width:0"><div class="row-title">${esc(g.title)}</div><div class="row-sub">${esc(genres)}</div></div>
       <div class="sched-col-next" style="min-width:0">
-        ${n ? `<div class="row-title" style="font-weight:500">${esc(fmt.when(n.datetime))}</div><div class="row-sub">${esc(n.network || n.call_sign || '')}${n.title ? ` · ${esc(n.title)}` : ''}</div>` : '<span class="dim">Waiting for new episodes</span>'}
+        ${n ? `<div class="row-title" style="font-weight:500">${esc(fmt.when(n.datetime))}</div><div class="row-sub">${esc(n.title || '')}</div>` : '<span class="dim">Waiting for new episodes</span>'}
       </div>
+      <div class="row-sub ch-cell">${n ? channelCell(n) : ''}</div>
       <div data-rule-control="${esc(g.path)}" class="segmented rule">
         <button data-action="set-rule" data-path="${esc(g.path)}" data-rule="new" class="${g.schedule_rule === 'new' ? 'active' : ''}">New</button>
         <button data-action="set-rule" data-path="${esc(g.path)}" data-rule="all" class="${g.schedule_rule === 'all' ? 'active' : ''}">All</button>
@@ -2066,7 +2227,6 @@ PAGES.live = async (r, token) => {
       <span class="muted" id="epgDate"></span>
       <div class="grow"></div>
       <div class="input-search live-search">${icon('search', 15)}<input class="input" data-input="epg-q" placeholder="Find a channel or show" value="${esc(state.epgQuery)}"></div>
-      <span class="tuner-pill" id="tunerPill" title="Tablo tuners"><span class="dot"></span><span id="tunerText">Tuners</span></span>
       <span class="clock" id="epgClock"></span>
     </div>
     <div class="epg-scroll" id="epgScroll"><div class="loading-line" style="padding:28px"><span class="spinner"></span>Loading the channel guide…</div></div>
@@ -2284,8 +2444,11 @@ function stickEpgTitles() {
 async function checkTuners() {
   try {
     const t = await api('/api/live/tuners');
+    state.tuners = t;
     const pill = $('#tunerPill'), text = $('#tunerText');
     if (!pill) return;
+    pill.classList.remove('hidden');
+    if (!$('#tunerPanel').classList.contains('hidden')) renderTunerPanel();
     const total = t.total || 0, used = t.in_use || 0, held = t.held || 0, rec = t.recording || 0;
     const streams = t.streams_in_use || 0, streamsTotal = t.streams_total || 0;
     pill.classList.toggle('busy', used > 0 || streams > 0);
@@ -2297,13 +2460,39 @@ async function checkTuners() {
         : "Couldn't read tuner status from the Tablo";
       return;
     }
-    text.textContent = `OTA ${used}/${total}` + (held ? ` · ${held} releasing` : '') + (streamsTotal ? ` · Stream ${streams}/${streamsTotal}` : '');
-    pill.title = [
-      `Antenna (OTA) tuners in use: ${used} of ${total}` + (rec ? ` (${rec} recording)` : ''),
-      held ? `${held} still held from live TV you closed recently; the Tablo frees these on its own, usually within 10 to 30 minutes` : '',
-      streamsTotal ? `Streaming slots in use: ${streams} of ${streamsTotal} (FAST channels; these don't use the antenna)` : '',
-    ].filter(Boolean).join('\n');
+    text.textContent = `Tuners ${used}/${total}` + (rec ? ` · ${rec} recording` : '');
+    pill.title = 'What your Tablo’s tuners are doing';
   } catch { /* optional */ }
+}
+
+// The header's tuner list: what each antenna tuner is doing right now
+function renderTunerPanel() {
+  const t = state.tuners;
+  const box = $('#tunerPanel');
+  if (!t || !t.total) {
+    box.innerHTML = `<div class="tuner-row"><span class="dim">${t && t.unreachable ? 'TabloView can’t reach your Tablo right now. This usually clears up on its own: wait a minute.' : 'Couldn’t read the tuners from your Tablo.'}</span></div>`;
+    return;
+  }
+  const what = s => {
+    const ch = s.channel || {};
+    const chName = [ch.number, ch.call_sign].filter(Boolean).join(' ');
+    const on = s.on_now ? [s.on_now.show_title, s.on_now.episode_title && s.on_now.episode_title !== s.on_now.show_title ? s.on_now.episode_title : ''].filter(Boolean).join(' · ') : '';
+    if (s.state === 'recording') return `<span class="tuner-state rec"><span class="rec-pulse"></span>Recording</span><span class="tuner-what"><b>${esc(on || chName || 'a show')}</b>${on && chName ? `<span class="dim">${esc(chName)}</span>` : ''}</span>`;
+    if (s.state === 'watching') return `<span class="tuner-state live">Watching</span><span class="tuner-what"><b>${esc(chName || 'Live TV')}</b><span class="dim">${esc(s.closing ? 'Closed in TabloView; your Tablo lets go of it shortly' : [on, s.tabloview ? 'in TabloView' : 'in another app'].filter(Boolean).join(' · '))}</span></span>`;
+    if (s.state === 'releasing') return `<span class="tuner-state held">Releasing</span><span class="tuner-what"><span class="dim">From live TV closed recently. Your Tablo frees it on its own, usually within 10–30 minutes.</span></span>`;
+    return '<span class="tuner-state free">Free</span><span class="tuner-what"></span>';
+  };
+  box.innerHTML = `
+    <div class="tuner-head">Antenna tuners <span class="dim">${t.in_use} of ${t.total} in use</span></div>
+    ${(t.slots || []).map(s => `<div class="tuner-row"><span class="tuner-num">${s.tuner}</span>${what(s)}</div>`).join('')}
+    ${t.streams_total ? `<div class="tuner-foot dim">Streaming channels: ${t.streams_in_use} of ${t.streams_total} in use (these don’t use the antenna tuners)</div>` : ''}`;
+}
+
+function toggleTunerPanel(show) {
+  const box = $('#tunerPanel');
+  const open = show ?? box.classList.contains('hidden');
+  box.classList.toggle('hidden', !open);
+  if (open) { renderTunerPanel(); checkTuners(); }
 }
 
 function openAiringModal(key) {
@@ -2332,6 +2521,11 @@ function openAiringModal(key) {
     </div>
     <div class="dialog-foot">
       ${a.series_path ? `<button class="btn" data-action="modal-series" data-path="${esc(a.series_path)}">Series &amp; recording</button>` : ''}
+      ${a.airing_id && c.can_record && Date.now() < new Date(end).getTime()
+        ? (a.schedule_state === 'scheduled' || a.recording_now
+          ? `<button class="btn rec-set" data-action="fast-record" data-id="${esc(a.airing_id)}" data-key="${esc(key)}" data-on="0" title="Your Tablo will record this. Click to cancel.">${icon('check', 14)}Recording</button>`
+          : `<button class="btn" data-action="fast-record" data-id="${esc(a.airing_id)}" data-key="${esc(key)}" data-on="1" title="Record this on your Tablo">${onAir ? 'Record from now' : 'Record'}</button>`)
+        : ''}
       <button class="btn" data-action="modal-live-vlc" data-id="${esc(c.channel_id)}">${icon('external', 15)}VLC</button>
       <button class="btn btn-primary" data-action="modal-watch-live" data-id="${esc(c.channel_id)}" data-name="${esc(c.name)}" data-kind="${esc(c.kind)}" data-autofocus>${icon('play', 14)}Watch ${esc(c.name)}</button>
     </div>`);
@@ -3074,7 +3268,11 @@ const player = {
       programEnd: ep && ep.duration ? (ep.program_start || 0) + ep.duration : 0,
       nextEp: null, upNextOffered: false,
     });
-    if (ep) this.findNext(ep).then(next => { if (state.stream.episodeId === id) state.stream.nextEp = next; });
+    // Playing something other than the run's current recording ends the run
+    const inRun = state.run && runEpisode() && runEpisode().id === id;
+    if (state.run && !inRun) state.run = null;
+    if (inRun) state.stream.nextEp = state.run.eps[state.run.index + 1] || null;
+    else if (ep) this.findNext(ep).then(next => { if (state.stream.episodeId === id) state.stream.nextEp = next; });
     this.showTimeline(true);
     // A restart of the same recording (a jump past what's converted, a stall) keeps its breaks;
     // showTimeline(false) in finishEpisode cleared the marks, so draw them again
@@ -3142,7 +3340,7 @@ const player = {
       await api('/api/guide/episodes/schedule', { method: 'POST', body: JSON.stringify({ path: hit.a.path, scheduled: true }) });
       hit.a.schedule_state = 'scheduled';
       state.upcoming = null;
-      toast(`Recording ${hit.a.title} on your Tablo. It'll be in your Library.`, 'success');
+      toast(`Recording ${hit.a.title} on your Tablo from now until it ends. It'll be in your Library.`, 'success');
     } catch (err) {
       toast(`Couldn't record it: ${err.message}`, 'error');
     }
@@ -3256,7 +3454,7 @@ const player = {
     const keys = [['Space or K', 'Play / pause'], ['← or J', 'Back 10 seconds'], ['→ or L', 'Ahead 30 seconds'],
       ['↑ ↓', 'Volume'], ['M', 'Mute'], ['F', 'Full screen'], ['P', 'Picture in picture'],
       ['&lt; &gt;', 'Slower / faster (recordings)'], ['Home', 'Back to live (live TV)'],
-      ['Page Up / Down', 'Previous / next channel (live TV)'], ['S', 'Skip a commercial break'], ['T', 'Captions on / off'], ['2', 'Watch a live channel alongside'], ['Tab', 'Hear the other channel'], ['L', 'Layout of two channels'], ['C', 'Channel list (live TV)'], ['Esc', 'Close the player']];
+      ['Page Up / Down', 'Previous / next channel (live TV)'], ['S', 'Skip a commercial break'], ['T', 'Captions on / off'], ['2', 'Watch a live channel alongside'], ['Tab', 'Hear the other channel'], ['L', 'Layout of two channels'], ['C', 'Channel list (live TV)'], ['↑ ↓ / Page Up / Down', 'In the channel list: move through it (Enter picks)'], ['Esc', 'Close the player']];
     openModal(`<div class="dialog-body"><div class="dialog-title">Keyboard shortcuts</div>
       <div class="kbd-list">${keys.map(([k, d]) => `<kbd>${k}</kbd><span>${d}</span>`).join('')}</div></div>
       <div class="dialog-foot"><button class="btn btn-primary" data-action="modal-ok" data-autofocus>Got it</button></div>`);
@@ -3441,7 +3639,7 @@ const player = {
 
   offerUpNext() {
     const s = state.stream;
-    if (!state.autoplay || s.upNextOffered || !s.nextEp || !s.episodeId || (state.sleep && state.sleep.endOfShow)) return;
+    if ((!state.autoplay && !state.run) || s.upNextOffered || !s.nextEp || !s.episodeId || (state.sleep && state.sleep.endOfShow)) return;
     s.upNextOffered = true;
     const n = s.nextEp;
     let left = 10;
@@ -3450,8 +3648,8 @@ const player = {
     box.innerHTML = `
       ${thumb ? `<img class="upnext-thumb" src="${esc(thumb)}" alt="">` : ''}
       <div class="upnext-body">
-        <div class="upnext-label">Up next · <span id="upNextCount">${left}</span>s</div>
-        <div class="upnext-title">${esc([fmt.se(n.season_number, n.episode_number), episodeTitle(n)].filter(Boolean).join(' · '))}</div>
+        <div class="upnext-label">Up next${state.run ? ` · ${state.run.index + 2} of ${state.run.eps.length}` : ''} · <span id="upNextCount">${left}</span>s</div>
+        <div class="upnext-title">${esc([state.run ? n.show_title : '', fmt.se(n.season_number, n.episode_number), episodeTitle(n)].filter(Boolean).join(' · '))}</div>
         <div class="upnext-actions">
           <button class="btn btn-primary btn-sm" data-action="upnext-play">${icon('play', 13)}Play now</button>
           <button class="btn btn-sm" data-action="upnext-cancel">Cancel</button>
@@ -3469,7 +3667,37 @@ const player = {
   playNext() {
     const n = state.stream.nextEp;
     this.hideUpNext();
+    if (n && state.run) {
+      this.runFinished();
+      state.run.index += 1;
+    }
     if (n) this.playEpisode(n.id, (n.position || 0) > 30 ? 'resume' : 'start');
+  },
+
+  // The run's current recording, if it was watched to the end (as for marking it Watched): it comes
+  // off the Watch list and, with "watch and delete", is deleted (the server keeps protected ones).
+  // Only on moving on or closing, so rewinding over the ending never loses it.
+  runFinished() {
+    const s = state.stream, ep = runEpisode();
+    if (!ep || ep.id !== s.episodeId) return;
+    this.saveProgress();
+    if (!s.markedWatched) return;
+    const name = [ep.show_title, fmt.se(ep.season_number, ep.episode_number)].filter(Boolean).join(' ');
+    api(`/api/watchlist/${encodeURIComponent(ep.id)}/finished`, { method: 'POST', body: JSON.stringify({ delete: state.run.deleteAfter }) })
+      .then(res => {
+        if (res.deleted) {
+          state.episodes = state.episodes.filter(e => e.id !== ep.id);
+          state.shows = null;
+          loadStorage();
+          toast(`Deleted ${name} from your Tablo`, 'success');
+        } else if (res.protected && state.run && state.run.deleteAfter) {
+          toast(`Kept ${name}: it's protected on your Tablo`);
+        } else if (res.error) {
+          toast(`Couldn't delete ${name}: ${res.error}`, 'error');
+        }
+        loadWatchCount({ redraw: true });
+      })
+      .catch(() => {});
   },
 
   hideUpNext() {
@@ -3584,10 +3812,14 @@ const player = {
     const now = Date.now();
     const scroll = panel.querySelector('.chan-list');
     const top = scroll ? scroll.scrollTop : null;
-    panel.innerHTML = `<div class="chan-head">
-        <span>${dual.picking ? 'Pick a second channel' : dual.on ? `Change ${esc(dual.active === 'second' ? dual.s.name : state.stream.channelName)}` : 'Channels'}</span>
+    const focused = document.activeElement && document.activeElement.closest('.chan-row');
+    const focusedId = focused && panel.contains(focused) ? focused.dataset.id : null;
+    // The surf buttons change the main channel: not while picking the second one
+    const surfButtons = dual.picking ? '' : `
         <button class="pb-btn" data-action="pb-surf" data-dir="-1" title="Previous channel (Page Up)">${icon('up', 16)}</button>
-        <button class="pb-btn" data-action="pb-surf" data-dir="1" title="Next channel (Page Down)">${icon('down', 16)}</button>
+        <button class="pb-btn" data-action="pb-surf" data-dir="1" title="Next channel (Page Down)">${icon('down', 16)}</button>`;
+    panel.innerHTML = `<div class="chan-head">
+        <span>${dual.picking ? 'Pick a second channel' : dual.on ? `Change ${esc(dual.active === 'second' ? dual.s.name : state.stream.channelName)}` : 'Channels'}</span>${surfButtons}
         <button class="pb-btn" data-action="pb-channels" title="Close (C)">${icon('x', 16)}</button>
       </div>
       <div class="chan-list">${list.length ? list.map(c => {
@@ -3607,6 +3839,30 @@ const player = {
       }).join('') : '<div class="dim" style="padding:20px">No channels in the guide yet.</div>'}</div>`;
     hydrateIcons(panel);
     if (top !== null) panel.querySelector('.chan-list').scrollTop = top;
+    if (focusedId) {
+      const row = [...panel.querySelectorAll('.chan-row')].find(r => r.dataset.id === focusedId);
+      if (row) row.focus({ preventScroll: true });
+    }
+  },
+
+  // Keys while the channel list is open move through it (they'd otherwise change the channel or the
+  // volume, and picking a second channel couldn't page through the list). True if the key was used.
+  moveInChannels(key) {
+    const rows = [...$$('#chanPanel .chan-row')];
+    if (!rows.length) return false;
+    const at = rows.indexOf(document.activeElement);
+    if ((key === 'Enter' || key === ' ') && at >= 0) { rows[at].click(); return true; }
+    const list = $('#chanPanel .chan-list');
+    const page = Math.max(1, Math.floor(list.clientHeight / (rows[0].offsetHeight || 60)) - 1);
+    const from = at >= 0 ? at : Math.max(0, rows.findIndex(r => r.classList.contains('current')));
+    const to = { ArrowDown: from + 1, ArrowUp: from - 1, PageDown: from + page, PageUp: from - page,
+                 Home: 0, End: rows.length - 1 }[key];
+    if (to === undefined) return false;
+    // First press: start on the channel that's playing
+    const target = rows[at >= 0 ? Math.max(0, Math.min(rows.length - 1, to)) : from];
+    target.focus({ preventScroll: true });
+    target.scrollIntoView({ block: 'nearest' });
+    return true;
   },
 
   // Channel up/down: show where you're headed, and tune once the presses stop, so flipping past
@@ -3837,6 +4093,10 @@ const player = {
 
   close() {
     const hadEpisode = !!state.stream.episodeId;
+    if (state.run) {
+      this.runFinished();
+      state.run = null;
+    }
     this.hideUpNext();
     this.clearMessage();
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
@@ -3875,9 +4135,108 @@ function fmtClock(sec) {
   return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
 }
 
+// ---------------------------------------------------------------------------
+// Watch list, and runs: recordings played one after another (from the list, or ticked on a show page)
+// ---------------------------------------------------------------------------
+function runEpisode() {
+  return state.run ? state.run.eps[state.run.index] : null;
+}
+
+// Watch and keep, or watch and delete? null if cancelled
+function chooseRun(count) {
+  return openModal(`
+    <div class="dialog-body">
+      <div class="dialog-title">Watch ${count === 1 ? 'this recording' : `${count} recordings in a row`}</div>
+      <div class="dialog-text">${count === 1 ? 'It plays' : 'They play one after another'}, picking up where you left off. With <b>Watch and delete</b>, each one is deleted from your Tablo once you’ve watched it to the end. Ones you stop partway, and protected recordings, are kept.</div>
+    </div>
+    <div class="dialog-foot">
+      <button class="btn" data-action="modal-cancel">Cancel</button>
+      <button class="btn btn-danger" data-action="modal-value" data-value="delete">${icon('trash', 14)}Watch and delete</button>
+      <button class="btn btn-primary" data-action="modal-value" data-value="keep" data-autofocus>${icon('play', 14)}Watch and keep</button>
+    </div>`).then(v => (v === 'keep' || v === 'delete' ? v : null));
+}
+
+async function startRun(eps, fromList) {
+  eps = eps.filter(e => e && e.recording_state !== 'recording');
+  if (!eps.length) return;
+  const how = await chooseRun(eps.length);
+  if (!how) return;
+  state.run = { eps, index: 0, deleteAfter: how === 'delete', fromList };
+  const first = eps[0];
+  player.playEpisode(first.id, first.status !== 'Watched' && (first.position || 0) > 30 ? 'resume' : 'start');
+}
+
+async function loadWatchCount({ redraw = false } = {}) {
+  try {
+    const { count } = await api('/api/watchlist');
+    $('#navWatchCount').textContent = count || '';
+    // A recording just finished in a run: show the list without it (once the player is closed)
+    if (redraw && parseRoute().name === 'watchlist' && !player.isOpen()) route();
+  } catch { /* not important */ }
+}
+
+async function addToWatchList(ids) {
+  try {
+    const res = await api('/api/watchlist', { method: 'POST', body: JSON.stringify({ episode_ids: ids }) });
+    $('#navWatchCount').textContent = res.count || '';
+    toast(res.added ? `Added ${plural(res.added, 'recording')} to your Watch list` : 'Already on your Watch list', 'success');
+  } catch (err) {
+    toast(`Couldn't add to the Watch list: ${err.message}`, 'error');
+  }
+}
+
+async function saveWatchList(ids) {
+  try {
+    const res = await api('/api/watchlist', { method: 'PUT', body: JSON.stringify({ episode_ids: ids }) });
+    $('#navWatchCount').textContent = res.count || '';
+  } catch (err) {
+    toast(`Couldn't change the Watch list: ${err.message}`, 'error');
+  }
+  route();
+}
+
+PAGES.watchlist = async (r, token) => {
+  const { episodes } = await api('/api/watchlist');
+  if (stale(token)) return;
+  state.watchList = episodes;
+  $('#navWatchCount').textContent = episodes.length || '';
+  const total = episodes.reduce((n, e) => n + Math.max(0, (e.duration || 0) - (e.status !== 'Watched' ? e.position || 0 : 0)), 0);
+  const row = (ep, i) => {
+    const partway = ep.status !== 'Watched' && (ep.position || 0) > 30;
+    const thumb = imgUrl(ep.snapshot_url || ep.show_art);
+    return `
+      <div class="list-row watch-row clickable" data-action="watchlist-play-from" data-index="${i}" title="Play from here">
+        <div class="watch-num">${i + 1}</div>
+        ${thumb ? `<img class="thumb" src="${esc(thumb)}" alt="" loading="lazy">` : '<div class="thumb"></div>'}
+        <div style="min-width:0">
+          <div class="row-title">${ep.protected ? `<span class="ep-lock" title="Protected on your Tablo: never deleted by Watch and delete">${icon('lock', 13)}</span>` : ''}${esc(ep.show_title || '')}</div>
+          <div class="row-sub">${esc([fmt.se(ep.season_number, ep.episode_number), episodeTitle(ep)].filter(Boolean).join(' · '))}</div>
+        </div>
+        <div class="row-sub">${partway ? `${esc(fmt.dur(ep.duration - ep.position))} left` : esc(fmt.dur(ep.duration))}</div>
+        <div class="watch-acts">
+          <button class="icon-btn" data-action="watchlist-move" data-index="${i}" data-dir="-1" title="Move up" ${i === 0 ? 'disabled' : ''}>${icon('up', 16)}</button>
+          <button class="icon-btn" data-action="watchlist-move" data-index="${i}" data-dir="1" title="Move down" ${i === episodes.length - 1 ? 'disabled' : ''}>${icon('down', 16)}</button>
+          <button class="icon-btn" data-action="watchlist-remove" data-index="${i}" title="Take off the list">${icon('x', 16)}</button>
+        </div>
+      </div>`;
+  };
+  paint(`<div class="page">
+    <div class="page-head">
+      <div><h1 class="page-title">Watch list</h1><div class="page-sub">${episodes.length ? `${plural(episodes.length, 'recording')} · about ${esc(fmt.dur(total))} to watch, one after another` : 'Recordings to watch one after another'}</div></div>
+      ${episodes.length ? `<div class="page-head-actions">
+        <button class="btn btn-ghost btn-sm" data-action="watchlist-clear">Clear list</button>
+        <button class="btn btn-primary" data-action="watchlist-play">${icon('play', 15)}Play all</button>
+      </div>` : ''}
+    </div>
+    ${episodes.length ? `<div class="list">${episodes.map(row).join('')}</div>
+      <p class="dim" style="margin-top:12px;font-size:12.5px">Click a recording to start from there. Ones you watch to the end come off the list.</p>`
+      : emptyState('Your Watch list is empty', 'On a show’s page, tick the episodes you want and choose Add to watch list. Add from as many shows as you like, then play them one after another.', '<a class="btn btn-primary" href="#/library">Go to the Library</a>')}
+  </div>`);
+};
+
 function findEpisode(id) {
   return state.episodes.find(e => e.id === id) || (state.inProgress || []).find(e => e.id === id)
-    || (state.stream.list || []).find(e => e.id === id) || null;
+    || (state.stream.list || []).find(e => e.id === id) || ((state.run && state.run.eps) || []).find(e => e.id === id) || null;
 }
 
 function chooseResume(ep) {
@@ -3952,6 +4311,8 @@ function rerenderAfterProgress() {
     view().scrollTop = scroll;
   } else if (name === 'home') {
     refreshCurrentPageQuietly();
+  } else if (name === 'watchlist') {
+    route();
   }
 }
 
@@ -4378,6 +4739,7 @@ const ACTIONS = {
         : { label: 'Mark as watched', icon: 'check', run: () => setWatched(id, true) },
       // Partly watched: start over (clears the resume point, on the Tablo too)
       ...(inProgress ? [{ label: 'Mark as unwatched', icon: 'x', run: () => setWatched(id, false) }] : []),
+      { label: 'Add to watch list', icon: 'queue', run: () => addToWatchList([id]) },
       { label: 'Open in VLC', icon: 'external', run: () => openVlc(`/api/episodes/${encodeURIComponent(id)}/playlist.m3u`) },
       { label: 'Export MP4', icon: 'download', run: () => exportEpisode(id) },
       ...(ep.incomplete ? [{ label: 'Record again…', icon: 'refresh', run: () => rerecordDialog(id) }] : []),
@@ -4393,6 +4755,21 @@ const ACTIONS = {
   'delete-watched': () => deleteWatched(),
   'bulk-delete': () => bulkDelete(),
   'bulk-export': () => bulkExport(),
+  // Ticked episodes in the order they're listed on the page
+  'bulk-watch': () => startRun(state.episodes.filter(e => state.selected.has(e.id)), false),
+  'bulk-watchlist': () => { addToWatchList(state.episodes.filter(e => state.selected.has(e.id)).map(e => e.id)); ACTIONS['bulk-clear'](); },
+  'watchlist-play': () => startRun(state.watchList || [], true),
+  'watchlist-play-from': el => startRun((state.watchList || []).slice(Number(el.dataset.index)), true),
+  'watchlist-move': el => {
+    const ids = (state.watchList || []).map(e => e.id), i = Number(el.dataset.index), j = i + Number(el.dataset.dir);
+    if (j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    saveWatchList(ids);
+  },
+  'watchlist-remove': el => saveWatchList((state.watchList || []).filter((_, i) => i !== Number(el.dataset.index)).map(e => e.id)),
+  'watchlist-clear': async () => {
+    if (await confirmDialog({ title: 'Clear your Watch list?', text: 'The recordings stay on your Tablo; they just come off the list.', confirm: 'Clear list' })) saveWatchList([]);
+  },
   'bulk-clear': () => { state.selected.clear(); $$('.ep-row').forEach(r => r.classList.remove('selected')); $$('[data-change="ep-select"], [data-change="ep-select-all"]').forEach(c => { c.checked = false; }); updateBulkBar(); },
 
   'rec-menu': el => recMenu(el, el.dataset.path),
@@ -4405,12 +4782,13 @@ const ACTIONS = {
   'cancel-recording': async el => {
     const ok = await confirmDialog({
       title: `Skip this recording of ${el.dataset.title}?`,
-      text: 'Only this airing is skipped. The series stays scheduled.',
+      text: el.dataset.streaming ? 'Your Tablo won’t record this airing.' : 'Only this airing is skipped. The series stays scheduled.',
       confirm: 'Skip recording', danger: true,
     });
     if (!ok) return;
     try {
-      await api('/api/guide/episodes/schedule', { method: 'POST', body: JSON.stringify({ path: el.dataset.path, scheduled: false }) });
+      if (el.dataset.streaming) await api('/api/streaming/record', { method: 'POST', body: JSON.stringify({ airing_id: el.dataset.path, scheduled: false }) });
+      else await api('/api/guide/episodes/schedule', { method: 'POST', body: JSON.stringify({ path: el.dataset.path, scheduled: false }) });
       toast('Recording skipped', 'success');
       await loadUpcoming();
       if (parseRoute().name === 'scheduled') {
@@ -4476,6 +4854,16 @@ const ACTIONS = {
   'modal-series': el => { closeModal(false); location.hash = `#/series/${encodeURIComponent(el.dataset.path)}`; },
 
   'close-player': () => player.close(),
+  'tuner-panel': () => toggleTunerPanel(),
+  'guide-type': el => {
+    state.guide.category = el.dataset.value;
+    $('#guideTypes').innerHTML = guideTypeChips();
+    loadGuide(routeToken);
+  },
+  'fast-category': el => { state.fast.category = el.dataset.value; loadStreaming(routeToken); },
+  'fast-show': el => openStreamShow(el.dataset.id),
+  'fast-record': el => recordStreaming(el),
+  'fast-reload': () => loadStreaming(routeToken),
   'player-vlc': () => player.openInVlc(),
   'space-delete-watched': el => deleteWatchedForShow(el),
   'fix-conflicts': () => fixConflicts(),
@@ -4595,6 +4983,7 @@ const ACTIONS = {
 const INPUTS = {
   'library-q': el => { state.library.q = el.value; renderLibraryGrid(); },
   'guide-q': el => { state.guide.q = el.value; reloadGuide(); },
+  'fast-q': el => { state.fast.q = el.value; reloadStreaming(); },
   'scheduled-q': el => { state.scheduled.q = el.value; renderScheduledList(); },
   'epg-q': debounce(el => { state.epgQuery = el.value.trim().toLowerCase(); renderEpg(); }, 180),
 };
@@ -4607,6 +4996,7 @@ const CHANGES = {
   },
   'library-sort': el => { state.library.sort = el.value; save('tv_lib_sort', el.value); renderLibraryGrid(); },
   'guide-category': el => { state.guide.category = el.value; loadGuide(routeToken); },
+  'fast-recordable': el => { state.fast.recordable = el.checked; loadStreaming(routeToken); },
   'guide-rule': el => { state.guide.rule = el.value; loadGuide(routeToken); },
   'guide-sort': el => { state.guide.sort = el.value; loadGuide(routeToken); },
   'ep-select': el => {
@@ -4826,6 +5216,11 @@ function wireEvents() {
     }
     // Player shortcuts
     if (!player.isOpen() || openOverlay || (typing && document.activeElement.id !== 'pbVolume') || e.ctrlKey || e.altKey || e.metaKey) return;
+    if (!$('#chanPanel').classList.contains('hidden') && player.moveInChannels(e.key)) {
+      e.preventDefault();
+      player.wake();
+      return;
+    }
     const v = $('#video');
     const keys = {
       ' ': () => player.togglePlay(), k: () => player.togglePlay(),
@@ -4941,6 +5336,14 @@ async function init() {
   loadStorage();
   loadShows().catch(() => {});  // the Library count in the sidebar, whichever page opened first
   loadScheduled().catch(() => {});
+  loadWatchCount();
+  if (state.status && state.status.authenticated) checkTuners();
+  setInterval(() => { if (!document.hidden && state.status && state.status.authenticated) checkTuners(); }, 30000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && state.status && state.status.authenticated) checkTuners(); });
+  // Click anywhere else: close the tuner list
+  document.addEventListener('mousedown', e => {
+    if (!e.target.closest('#tunerPanel, #tunerPill')) $('#tunerPanel').classList.add('hidden');
+  });
   api('/api/exports').then(({ jobs }) => setActiveExports(jobs.filter(j => j.status === 'downloading' || j.status === 'pending').length)).catch(() => {});
   setInterval(pollStatus, 5000);
   setInterval(() => setSyncState(state.isSyncing), 60000);

@@ -179,6 +179,17 @@ class TabloManager:
             self.note_auth("device", ok=True)
         return resp
 
+    async def request_recording(self, method: str, path: str, body: str = "") -> httpx.Response:
+        """request_local for a recording. Recordings of streaming channels only exist for requests
+        ending in ?lh (as Tablo's own app sends them): asked plainly, the Tablo says "not found". So
+        a "not found" is asked again with ?lh, and antenna recordings are asked exactly as before."""
+        resp = await self.request_local(method, path, body)
+        if resp.status_code == 404 and "?" not in path:
+            retry = await self.request_local(method, path + "?lh", body)
+            if retry.status_code != 404:
+                return retry
+        return resp
+
     async def get_storage_info(self) -> Dict[str, Any]:
         """Fetch hard drive usage and capacity from /server/harddrives."""
         if not self.device:
@@ -260,7 +271,7 @@ class TabloManager:
         # 1. POST {airing_path}/watch
         # 2. POST /watch with path in body
         watch_path = f"{airing_path}/watch"
-        resp = await self.request_local("POST", watch_path, body)
+        resp = await self.request_recording("POST", watch_path, body)
 
         if resp.status_code in (404, 400):
             # Try alternate watch endpoint:
@@ -307,8 +318,8 @@ class TabloManager:
         if not airing_path.startswith("/"):
             airing_path = "/" + airing_path
 
-        resp = await self.request_local("DELETE", airing_path)
-        # 404 means the recording is already gone from the device
+        resp = await self.request_recording("DELETE", airing_path)
+        # 404 (asked both ways) means the recording is already gone from the device
         return resp.status_code in (200, 204, 404)
 
 

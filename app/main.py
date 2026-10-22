@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, Response, JSONResponse
 from .config import (
     APP_NAME, APP_VERSION, STATIC_DIR, TRANSCODE_DIR, DOWNLOADS_DIR, IMAGE_CACHE_DIR, HOST, PORT,
 )
-from . import commercials, dropouts, encoders, lanauth, whatsnew
+from . import commercials, dropouts, encoders, lanauth, streaming, whatsnew
 from .settings import exports_dir
 from .database import get_export_jobs, fail_interrupted_exports
 from .database import init_db
@@ -23,7 +23,8 @@ from .tablo_client import tablo_manager
 from .sync_service import sync_service, auto_sync_loop
 from .transcode import transcode_manager
 
-from .routes import auth, shows, episodes, system, debug, guide, live
+from .routes import auth, shows, episodes, system, debug, guide, live, watchlist
+from .routes import streaming as streaming_routes
 
 
 @asynccontextmanager
@@ -53,12 +54,14 @@ async def lifespan(app: FastAPI):
     auto_sync = asyncio.create_task(auto_sync_loop(sync_service))
     ad_finder = asyncio.create_task(commercials.worker_loop())
     dropout_finder = asyncio.create_task(dropouts.worker_loop())
+    streaming_guide = asyncio.create_task(streaming.worker_loop())
 
     yield
 
     auto_sync.cancel()
     ad_finder.cancel()
     dropout_finder.cancel()
+    streaming_guide.cancel()
     # Shutdown: clean up transcode sessions
     print("[Shutdown] Cleaning up stream sessions...")
     for sid in list(transcode_manager.sessions.keys()):
@@ -142,6 +145,8 @@ app.include_router(guide.router)
 app.include_router(live.router)
 app.include_router(system.router)
 app.include_router(debug.router)
+app.include_router(watchlist.router)
+app.include_router(streaming_routes.router)
 
 
 # ---------------------------------------------------------------------------

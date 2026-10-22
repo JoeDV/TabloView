@@ -52,7 +52,7 @@ async def save_progress(episode_id: str, req: ProgressRequest):
     ep = get_episode_by_id(episode_id)
     if not ep:
         raise HTTPException(status_code=404, detail="Episode not found")
-    resp = await tablo_manager.request_local("PATCH", ep["path"], json.dumps({"position": req.position}))
+    resp = await tablo_manager.request_recording("PATCH", ep["path"], json.dumps({"position": req.position}))
     if resp.status_code not in (200, 204):
         raise HTTPException(status_code=502, detail=f"Tablo error {resp.status_code}")
     set_episode_progress(ep["id"], position=req.position)
@@ -67,7 +67,7 @@ async def set_watched(episode_id: str, req: WatchedRequest):
         raise HTTPException(status_code=404, detail="Episode not found")
     # Clear the resume point either way: finished, or explicitly reset to unwatched
     body = {"watched": True} if req.watched else {"watched": False, "position": 0}
-    resp = await tablo_manager.request_local("PATCH", ep["path"], json.dumps(body))
+    resp = await tablo_manager.request_recording("PATCH", ep["path"], json.dumps(body))
     if resp.status_code not in (200, 204):
         raise HTTPException(status_code=502, detail=f"Tablo error {resp.status_code}")
     if not req.watched:
@@ -141,7 +141,7 @@ async def set_protected(episode_id: str, req: ProtectRequest):
     ep = get_episode_by_id(episode_id)
     if not ep:
         raise HTTPException(status_code=404, detail="Episode not found")
-    resp = await tablo_manager.request_local("PATCH", ep["path"], json.dumps({"protected": req.protected}))
+    resp = await tablo_manager.request_recording("PATCH", ep["path"], json.dumps({"protected": req.protected}))
     if resp.status_code not in (200, 204):
         raise HTTPException(status_code=502, detail=f"Tablo error {resp.status_code}")
     # The Tablo answers with the updated recording; make sure it took the change

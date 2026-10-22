@@ -1,6 +1,7 @@
 """Guide search, discovery, and series recording management routes."""
 
 import json
+from datetime import datetime
 import asyncio
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, HTTPException, Query, Body
@@ -59,6 +60,10 @@ async def list_guide_shows(
         limit=limit,
         offset=offset
     )
+    if rule == "scheduled":
+        # The Scheduled page shows each series' next airing with its channel's logo and number
+        from .live import add_channel_details
+        await add_channel_details([s["next_airing"] for s in shows if s.get("next_airing")])
     scheduled_shows = get_scheduled_guide_shows()
     highlight_counts = get_guide_highlight_counts()
     return {
@@ -76,14 +81,27 @@ async def upcoming_recordings():
     'wont_record' (the Tablo's apps list them too), and New airings of Record New series the Tablo
     skipped as not new with 'missed_new'. Built from the cached guide; no extra requests to the Tablo
     beyond the (cached) tuner count."""
-    from .live import model_tuner_count
+    from .live import add_channel_details, model_tuner_count, pick_logo
+    from .. import streaming
     recordings = get_upcoming_recordings(include_conflicted=True, include_missed_new=True)
+    await add_channel_details(recordings)
+    # Streaming recordings, from the Tablo's own upcoming list and the streaming listings
+    for r in streaming.upcoming_recordings(await streaming.scheduled_airing_ids()):
+        r["channel_logo"] = pick_logo(r.pop("channel_logos"))
+        recordings.append(r)
+    def starts(r):  # antenna times are like ...T20:00Z, streaming ones ...T20:00:00Z
+        try:
+            return datetime.fromisoformat(str(r.get("air_datetime")).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return 0.0
+    recordings.sort(key=lambda r: (starts(r), r.get("show_title") or ""))
     for r in recordings:
         r["missed_new"] = r.get("schedule_state") == "skipped"
         r["conflict"] = False
     tuners = (await model_tuner_count()) if tablo_manager.is_authenticated else None
-    # Missed ones use no tuner, so they can't be part of a conflict
-    conflicts = find_conflicts([r for r in recordings if not r["missed_new"]], tuners) if tuners else []
+    # Missed ones use no tuner, and streaming ones use the Tablo's separate streaming slots,
+    # so neither can be part of an antenna tuner conflict
+    conflicts = find_conflicts([r for r in recordings if not r["missed_new"] and not r.get("streaming")], tuners) if tuners else []
     for r in recordings:
         r["wont_record"] = r.get("schedule_state") == "conflicted"
         if r["wont_record"]:
@@ -97,8 +115,9 @@ async def upcoming_recordings():
 async def upcoming_calendar():
     """Upcoming recordings as a calendar file to import (Google Calendar, Outlook, Apple Calendar)."""
     from fastapi.responses import Response
-    from .. import calendar_feed
-    return Response(calendar_feed.build(get_upcoming_recordings()), media_type="text/calendar; charset=utf-8",
+    from .. import calendar_feed, streaming
+    recordings = get_upcoming_recordings() + streaming.upcoming_recordings(await streaming.scheduled_airing_ids())
+    return Response(calendar_feed.build(recordings), media_type="text/calendar; charset=utf-8",
                     headers={"Content-Disposition": 'attachment; filename="TabloView recordings.ics"'})
 
 
@@ -192,6 +211,9 @@ async def get_guide_series_details(path: str = Query(..., description="Guide ser
 def airings_list_path(path: str) -> str:
     """The Tablo's list of upcoming airings for a guide entry: a sports league lists its games as
     /events (/episodes is "not found" there); series list /episodes."""
+    # Movies list theirs as airings (episodes is a 404 for them), sports leagues as events
+    if path.startswith("/guide/movies/"):
+        return f"{path}/airings"
     return f"{path}/events" if path.startswith("/guide/sports/") else f"{path}/episodes"
 
 

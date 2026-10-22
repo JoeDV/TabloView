@@ -41,6 +41,13 @@ class SportsGuideTests(unittest.TestCase):
         self.assertEqual(airings_list_path("/guide/sports/298970"), "/guide/sports/298970/events")
         self.assertEqual(airings_list_path("/guide/series/25778"), "/guide/series/25778/episodes")
 
+    def test_movies_are_linked_and_list_their_airings(self):
+        # The Guide's Movies filter was always empty: movie airings name their movie as movie_path
+        movie = {"path": "/guide/movies/airings/335303", "movie_path": "/guide/movies/335299",
+                 "airing_details": {"show_title": "The Bucket List", "datetime": "2026-10-22T00:00Z", "duration": 7200}}
+        self.assertEqual(guide_airing_row(movie["path"], movie)["series_path"], "/guide/movies/335299")
+        self.assertEqual(airings_list_path("/guide/movies/335299"), "/guide/movies/335299/airings")
+
 
 if __name__ == "__main__":
     unittest.main()

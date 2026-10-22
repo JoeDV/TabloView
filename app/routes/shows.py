@@ -117,7 +117,7 @@ async def mark_show_watched(show_id: str = Query(...), watched: bool = Query(Tru
         if (ep.get("status") == "Watched") == watched:
             continue
         try:
-            resp = await tablo_manager.request_local("PATCH", ep["path"], body)
+            resp = await tablo_manager.request_recording("PATCH", ep["path"], body)
             if resp.status_code not in (200, 204):
                 raise RuntimeError(f"Tablo error {resp.status_code}")
             if not watched:

@@ -1,13 +1,29 @@
 """Debug and endpoint probe inspector helper route."""
 
+import platform
 import time
 import httpx
 from fastapi import APIRouter
 from typing import Dict, Any
 
+from ..config import APP_VERSION, IS_PACKAGED, IS_STORE
 from ..tablo_client import tablo_manager
 
 router = APIRouter(prefix="/api/debug", tags=["debug"])
+
+
+def mask(secret: str) -> str:
+    """The first and last 4 characters, so people can tell tokens apart without sharing them."""
+    return f"{secret[:4]}…{secret[-4:]}" if secret and len(secret) > 12 else "…"
+
+
+def _hide_tokens(text: str, *secrets: str) -> str:
+    """The output is made to be pasted into forum posts and issues: no sign-in tokens in it
+    (the cloud path, and error messages that repeat the URL, contain the Lighthouse token)."""
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, mask(secret))
+    return text
 
 
 @router.get("/endpoints")
@@ -33,11 +49,17 @@ async def probe_endpoints():
     ]
 
     results: Dict[str, Any] = {
+        # Which TabloView sent this: the first question when someone shares it
+        "tabloview": {
+            "version": APP_VERSION,
+            "edition": "Microsoft Store" if IS_STORE else "installer" if IS_PACKAGED else "source",
+            "os": f"{platform.system()} {platform.release()}",
+        },
         "device": {
             "name": dev.name,
             "sid": dev.sid,
             "local_url": dev.local_url,
-            "client_id": dev.client_id
+            "client_id": mask(dev.client_id)
         },
         "probes": []
     }
@@ -81,7 +103,7 @@ async def probe_endpoints():
                 "path": path,
                 "status_code": None,
                 "elapsed_ms": elapsed_ms,
-                "error": str(e),
+                "error": _hide_tokens(str(e), dev.lighthouse_token, dev.account_token),
                 "success": False
             })
 
@@ -105,7 +127,7 @@ async def probe_endpoints():
         results["probes"].append({
             "target": "cloud",
             "method": "GET",
-            "path": cloud_path,
+            "path": _hide_tokens(cloud_path, dev.lighthouse_token),
             "status_code": c_resp.status_code,
             "elapsed_ms": elapsed_ms,
             "item_count": len(data) if isinstance(data, list) else None,
@@ -116,10 +138,10 @@ async def probe_endpoints():
         results["probes"].append({
             "target": "cloud",
             "method": "GET",
-            "path": cloud_path,
+            "path": _hide_tokens(cloud_path, dev.lighthouse_token),
             "status_code": None,
             "elapsed_ms": round((time.monotonic() - start_t) * 1000, 1),
-            "error": str(e),
+            "error": _hide_tokens(str(e), dev.lighthouse_token, dev.account_token),
             "success": False
         })
 

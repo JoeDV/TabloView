@@ -146,7 +146,8 @@ def guide_airing_row(p: str, d: Dict[str, Any]) -> Dict[str, Any]:
         ep_title = f"Episode {ep_num}" if ep_num else (ad.get('show_title') or "Episode")
     return {
         "path": p,
-        "series_path": d.get('series_path') or d.get('sport_path') or '',
+        # Games name their league as sport_path, movie airings their movie as movie_path
+        "series_path": d.get('series_path') or d.get('sport_path') or d.get('movie_path') or '',
         "show_title": ad.get('show_title') or 'Unknown',
         "episode_title": ep_title,
         "season_number": season_num,
@@ -194,7 +195,8 @@ class LibrarySyncService:
             # 1. Fetch series definitions first
             series_map: Dict[str, Dict[str, Any]] = {}
             try:
-                series_resp = await tablo_manager.request_bulk("GET", "/recordings/series")
+                # ?lh: the lists then include recordings of streaming channels too (the Tablo hides them otherwise)
+                series_resp = await tablo_manager.request_bulk("GET", "/recordings/series?lh")
                 if series_resp.status_code == 200:
                     series_paths = series_resp.json()
                     if isinstance(series_paths, list):
@@ -216,7 +218,7 @@ class LibrarySyncService:
                 print(f"[LibrarySync] Error fetching series paths: {e}")
 
             # 2. Fetch all recorded airings
-            airings_resp = await tablo_manager.request_bulk("GET", "/recordings/airings")
+            airings_resp = await tablo_manager.request_bulk("GET", "/recordings/airings?lh")
             if airings_resp.status_code != 200:
                 raise RuntimeError(f"Failed to fetch airings: HTTP {airings_resp.status_code}")
 

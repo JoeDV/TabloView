@@ -5,7 +5,7 @@ import json
 import time
 import asyncio
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 
 import httpx
 import requests
@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from ..tablo_client import tablo_manager
 from ..transcode import transcode_manager
-from ..database import get_live_airings_for_channels, get_epg_schedule, get_upcoming_recordings
+from ..database import airing_on_now, get_live_airings_for_channels, get_epg_schedule, get_upcoming_recordings
 from ..schedule_check import live_tv_check
 from ..settings import load_settings
 from tablo_api import TabloClient, TabloAuth
@@ -22,64 +22,68 @@ import tablo_api.client as tc
 
 router = APIRouter(prefix="/api/live", tags=["Live TV"])
 
-# In-memory cache for cloud FAST channel schedule grid (15-minute TTL)
-_cloud_grid_cache: Dict[str, Any] = {
-    "timestamp": 0,
-    "day": "",
-    "grid_by_identifier": {},
-    "channel_info_by_identifier": {}
-}
+# Cloud guide grid (the streaming channels' listings), one entry per day asked for, 15 minutes each
+_cloud_grid_days: Dict[str, Dict[str, Any]] = {}
+CLOUD_GRID_SECONDS = 900
 
 
-async def get_cached_cloud_grid(day_str: str) -> Dict[str, Any]:
-    """Retrieve full 108-channel cloud grid from Scripps Lighthouse, cached in memory."""
-    global _cloud_grid_cache
-    now = time.time()
-    if (
-        _cloud_grid_cache["grid_by_identifier"]
-        and _cloud_grid_cache["day"] == day_str
-        and (now - _cloud_grid_cache["timestamp"]) < 900
-    ):
-        return _cloud_grid_cache
-
+async def _cloud_grid_day(day_str: str) -> Optional[Dict[str, Any]]:
+    """One day of the cloud guide grid: {"by_ident": {channel ID: airings}, "ch_info": {...}}."""
+    cached = _cloud_grid_days.get(day_str)
+    if cached and time.time() - cached["at"] < CLOUD_GRID_SECONDS:
+        return cached
     dev = tablo_manager.device
     if not dev or not dev.lighthouse_token:
-        return _cloud_grid_cache
-
+        return cached
     url = f"{tc._CLOUD_HOST}/api/v2/account/{dev.lighthouse_token}/guide/grid/?day={day_str}&limit=200"
-    headers = {
-        "Authorization": f"Bearer {dev.account_token}",
-        "Lighthouse": dev.lighthouse_token,
-        "User-Agent": tc._CLOUD_USER_AGENT
-    }
-
+    headers = {"Authorization": f"Bearer {dev.account_token}", "Lighthouse": dev.lighthouse_token,
+               "User-Agent": tc._CLOUD_USER_AGENT}
     try:
-        loop = asyncio.get_event_loop()
-        r = await loop.run_in_executor(None, lambda: requests.get(url, headers=headers, timeout=15))
+        r = await asyncio.to_thread(requests.get, url, headers=headers, timeout=15)
         if r.status_code in (401, 403):
             tablo_manager.note_auth("cloud", ok=False)
         if r.status_code == 200:
             tablo_manager.note_auth("cloud", ok=True)
-            grid_list = r.json().get("grid", [])
             by_ident: Dict[str, List[Dict[str, Any]]] = {}
             ch_info: Dict[str, Dict[str, Any]] = {}
-            for item in grid_list:
+            for item in r.json().get("grid", []):
                 ch = item.get("channel", {})
-                ident = ch.get("identifier")
-                if ident:
-                    by_ident[ident] = item.get("airings", [])
-                    ch_info[ident] = ch
-            _cloud_grid_cache = {
-                "timestamp": now,
-                "day": day_str,
-                "grid_by_identifier": by_ident,
-                "channel_info_by_identifier": ch_info
-            }
-            print(f"[LiveTV] Successfully cached cloud grid for {day_str} ({len(by_ident)} channels)")
+                if ch.get("identifier"):
+                    by_ident[ch["identifier"]] = item.get("airings", [])
+                    ch_info[ch["identifier"]] = ch
+            cached = _cloud_grid_days[day_str] = {"at": time.time(), "by_ident": by_ident, "ch_info": ch_info}
+            for old in [d for d in _cloud_grid_days if d < (date.today() - timedelta(days=2)).isoformat()]:
+                del _cloud_grid_days[old]
     except Exception as e:
-        print(f"[LiveTV] Error fetching cloud grid: {e}")
+        print(f"[LiveTV] Error fetching cloud grid for {day_str}: {e}")
+    return cached
 
-    return _cloud_grid_cache
+
+async def get_cloud_grid(start: datetime, end: datetime) -> Dict[str, Any]:
+    """The cloud guide grid for a time window. A cloud "day" doesn't end at local midnight (asking
+    for one day left Live TV's streaming rows empty after about 9 PM Eastern), so every day the
+    window touches is asked for, from the day before it starts (a cloud day runs from about 9 PM
+    to 9 PM Eastern, 01:00 UTC), and the airings merged."""
+    days, d = [], (start - timedelta(days=1)).date()
+    while d <= end.date():
+        days.append(d.isoformat())
+        d += timedelta(days=1)
+    by_ident: Dict[str, List[Dict[str, Any]]] = {}
+    ch_info: Dict[str, Dict[str, Any]] = {}
+    seen = set()
+    for got in await asyncio.gather(*(_cloud_grid_day(day) for day in days)):
+        if not got:
+            continue
+        ch_info.update(got["ch_info"])
+        for ident, airings in got["by_ident"].items():
+            for a in airings:
+                key = a.get("identifier") or (ident, a.get("datetime"))
+                if key not in seen:
+                    seen.add(key)
+                    by_ident.setdefault(ident, []).append(a)
+    for airings in by_ident.values():
+        airings.sort(key=lambda a: a.get("datetime") or "")
+    return {"grid_by_identifier": by_ident, "channel_info_by_identifier": ch_info}
 
 
 async def fetch_local_ota_map() -> Dict[str, Dict[str, Any]]:
@@ -121,11 +125,14 @@ async def recording_channel_identifiers(local_ota_map: Dict[str, Dict[str, Any]]
         resp = await tablo_manager.request_local("GET", "/server/tuners")
         if resp.status_code != 200:
             return set()
-        busy_paths = {t.get("channel") for t in resp.json() if t.get("in_use") and t.get("recording") and t.get("channel")}
+        recording = [t for t in resp.json() if t.get("in_use") and t.get("recording")]
     except Exception as e:
         print(f"[LiveTV] Couldn't read tuners for recording badges: {e}")
         return set()
-    return {ident for ident, info in local_ota_map.items() if info.get("_path") in busy_paths}
+    # Tuners name the channel's ID (streaming slots too); older answers only had the channel's path
+    busy_paths = {t.get("channel") for t in recording if t.get("channel")}
+    return ({t["channel_identifier"] for t in recording if t.get("channel_identifier")}
+            | {ident for ident, info in local_ota_map.items() if info.get("_path") in busy_paths})
 
 
 def mark_recording_now(airings: List[Dict[str, Any]], now_utc: datetime):
@@ -242,6 +249,70 @@ class StopRequest(BaseModel):
 _model_tuner_count: Dict[str, int] = {}
 
 
+_ota_map_cache: Dict[str, Any] = {"sid": None, "at": 0.0, "map": {}}
+OTA_MAP_SECONDS = 3600  # the channel list rarely changes (a channel scan); the tuner list is polled often
+
+
+async def ota_map_cached() -> Dict[str, Dict[str, Any]]:
+    """fetch_local_ota_map, kept for an hour: the header's tuner list asks every half minute."""
+    sid = tablo_manager.device.sid
+    if _ota_map_cache["sid"] != sid or time.time() - _ota_map_cache["at"] > OTA_MAP_SECONDS or not _ota_map_cache["map"]:
+        found = await fetch_local_ota_map()
+        if found:
+            _ota_map_cache.update(sid=sid, at=time.time(), map=found)
+    return _ota_map_cache["map"]
+
+
+async def add_channel_details(airings: List[Dict[str, Any]]) -> None:
+    """Add each airing's channel number (e.g. 13.1) and logo, from the Tablo's channel list
+    (cached for an hour). Left out when the list can't be read."""
+    if not tablo_manager.is_authenticated:
+        return
+    try:
+        channels = await ota_map_cached()
+    except Exception:
+        return
+    for a in airings:
+        info = channels.get(a.get("channel_identifier") or "")
+        if not info:
+            continue
+        if info.get("major"):
+            a["channel_number"] = f"{info['major']}.{info.get('minor') or 0}"
+        a["channel_logo"] = pick_logo(info.get("logos", []))
+
+
+RECENTLY_CLOSED_SECONDS = 300
+
+
+def tuner_slots(ota: List[Dict[str, Any]], channels: Dict[str, Dict[str, Any]], ours: set,
+                closed: Optional[set] = None) -> List[Dict[str, Any]]:
+    """One entry per antenna tuner: 'recording', 'watching', 'releasing' (live TV closed recently;
+    the Tablo frees it on its own) or 'free', with the channel and what's on it."""
+    by_path = {info.get("_path"): ident for ident, info in channels.items()}
+    slots = []
+    for n, t in enumerate(ota, start=1):
+        path = t.get("channel")
+        state = ("free" if not t.get("in_use") else "recording" if t.get("recording")
+                 else "watching" if path else "releasing")
+        slot: Dict[str, Any] = {"tuner": n, "state": state}
+        # Tuners name their channel's ID too; older answers only had the channel's path
+        ident = t.get("channel_identifier") or by_path.get(path)
+        info = channels.get(ident or "")
+        if state in ("recording", "watching") and info:
+            major, minor = info.get("major"), info.get("minor")
+            slot["channel"] = {
+                "number": f"{major}.{minor}" if major else "",
+                "call_sign": info.get("call_sign") or "",
+                "network": info.get("network") or "",
+            }
+            slot["on_now"] = airing_on_now(ident)
+            slot["tabloview"] = state == "watching" and ident in ours
+            # Stopped in TabloView moments ago; the Tablo lets go of the channel shortly
+            slot["closing"] = state == "watching" and ident not in ours and ident in (closed or set())
+        slots.append(slot)
+    return slots
+
+
 async def model_tuner_count() -> Optional[int]:
     """Antenna tuners per the device model (e.g. 4 for a QUAD), cached per device.
     /server/tuners lists twice that on a 4G QUAD: the first N slots are the antenna (OTA) tuners,
@@ -276,8 +347,12 @@ async def get_tuner_status():
             held = sum(1 for t in ota if t.get("in_use") and not t.get("channel") and not t.get("recording"))
             recording = sum(1 for t in ota if t.get("in_use") and t.get("recording"))
             streams_in_use = sum(1 for t in tuners[total:] if t.get("in_use"))
+            ours = {s.channel_id for s in transcode_manager.sessions.values() if s.channel_id and not s.stopped}
+            closed = {c for c, at in transcode_manager.recently_closed.items() if time.time() - at < RECENTLY_CLOSED_SECONDS}
+            slots = tuner_slots(ota, await ota_map_cached() if in_use else {}, ours, closed)
             return {
                 "tuners": tuners,
+                "slots": slots,
                 "total": total,
                 "in_use": in_use,
                 "held": held,
@@ -310,8 +385,7 @@ async def get_live_channels(kind: str = Query("all", description="all, ota, fast
 
     # Pre-fetch cloud grid for FAST logos and current airings
     now_utc = datetime.now(timezone.utc)
-    day_str = now_utc.strftime("%Y-%m-%d")
-    cloud_cache = await get_cached_cloud_grid(day_str)
+    cloud_cache = await get_cloud_grid(now_utc, now_utc + timedelta(hours=1))
     cloud_grid_by_id = cloud_cache.get("grid_by_identifier", {})
     cloud_ch_info = cloud_cache.get("channel_info_by_identifier", {})
 
@@ -420,10 +494,9 @@ async def get_live_epg(
 
     window_start_dt = datetime.fromisoformat(epg_data["window_start"].replace("Z", "+00:00"))
     window_end_dt = datetime.fromisoformat(epg_data["window_end"].replace("Z", "+00:00"))
-    day_str = window_start_dt.strftime("%Y-%m-%d")
 
-    # 2. Fetch/cache cloud FAST channel schedule grid from Scripps Lighthouse
-    cloud_cache = await get_cached_cloud_grid(day_str)
+    # 2. The streaming channels' listings for the window, from Tablo's cloud guide
+    cloud_cache = await get_cloud_grid(window_start_dt, window_end_dt)
     cloud_grid_by_id = cloud_cache.get("grid_by_identifier", {})
     cloud_ch_info = cloud_cache.get("channel_info_by_identifier", {})
 
@@ -435,6 +508,8 @@ async def get_live_epg(
     )
 
     recording_now = await recording_channel_identifiers(local_ota_map)
+    from ..streaming import scheduled_airing_ids
+    scheduled_streaming = await scheduled_airing_ids() if include_ott else set()
     now_utc = datetime.now(timezone.utc)
 
     channel_rows: List[Dict[str, Any]] = []
@@ -446,6 +521,8 @@ async def get_live_epg(
 
         c_dict = base_channel_dict(ch, cloud_ch_info, local_ota_map)
         c_dict["airings"] = []
+        if ch.kind != "ota":  # streaming: the Tablo may record it (Live TV's Record button)
+            c_dict["can_record"] = bool(((cloud_ch_info.get(ch.identifier) or {}).get("ott") or {}).get("canRecord"))
 
         # Match airings by the channel's stable identifier; fall back to call-sign variants for
         # guide data synced before identifiers were stored
@@ -480,6 +557,8 @@ async def get_live_epg(
 
                         cloud_airings.append({
                             "path": f"/cloud/airing/{a.get('identifier')}",
+                            "airing_id": a.get("identifier"),
+                            "schedule_state": "scheduled" if a.get("identifier") in scheduled_streaming else "none",
                             "series_path": None,
                             "title": show_title,
                             "show_title": show_title,
@@ -502,6 +581,9 @@ async def get_live_epg(
 
             if cloud_airings:
                 c_dict["airings"] = cloud_airings
+                if ch.identifier in recording_now:
+                    c_dict["recording_now"] = True
+                    mark_recording_now(cloud_airings, now_utc)
             else:
                 c_dict["airings"] = [
                     {
@@ -584,6 +666,7 @@ async def tune_live_channel(req: TuneRequest):
             passthrough = req.kind == "fast" and (await transcode_manager.probe_video_codec(stream.playlist_url)) == "h264"
             sess = transcode_manager.create_session(stream.playlist_url)
             sess.tablo_token = stream.token
+            sess.channel_id = channel_id
             stream_url = await transcode_manager.start_browser_transcode(sess.session_id, stream.playlist_url,
                                                                          passthrough=passthrough)
             if req.kind != "fast":
@@ -708,6 +791,7 @@ async def measure_channel(req: MeasureRequest):
         raise HTTPException(status_code=500, detail=f"Couldn't tune this channel: {e}")
     sess = transcode_manager.create_session(stream.playlist_url)
     sess.tablo_token = stream.token
+    sess.channel_id = req.channel_id  # so the tuner list shows it as TabloView's (it said "another app")
     transcode_manager.start_measure(sess, stream.playlist_url)
     return {"session_id": sess.session_id, "channel_id": req.channel_id}
 

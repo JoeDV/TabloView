@@ -26,9 +26,9 @@ class Tablo:
         self.paths = [f"/recordings/series/episodes/{n}" for n in range(1, count + 1)]
 
     async def __call__(self, method, path, body=""):
-        if path == "/recordings/series":
+        if path == "/recordings/series?lh":
             return httpx.Response(200, json=[])
-        if path == "/recordings/airings":
+        if path == "/recordings/airings?lh":  # with streaming recordings
             return httpx.Response(200, json=self.paths)
         if path == "/batch":
             wanted = json.loads(body)

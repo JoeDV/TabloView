@@ -137,6 +137,38 @@ def init_db():
             )
         """)
 
+        # Streaming (FAST) channels' airings for the next week, from Tablo's cloud (app/streaming.py)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS stream_airings (
+                id TEXT PRIMARY KEY,
+                show_id TEXT,
+                show_title TEXT,
+                title TEXT,
+                kind TEXT,
+                season_number INTEGER DEFAULT 0,
+                episode_number INTEGER DEFAULT 0,
+                air_datetime TEXT,
+                duration INTEGER DEFAULT 0,
+                description TEXT,
+                genres TEXT,
+                image TEXT,
+                tags TEXT,
+                channel_identifier TEXT,
+                channel_name TEXT,
+                channel_logos TEXT,
+                can_record INTEGER DEFAULT 0,
+                partner TEXT
+            )
+        """)
+
+        # Recordings to watch one after another, in order (Watch list page)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS watch_list (
+                episode_id TEXT PRIMARY KEY,
+                sort_order INTEGER NOT NULL
+            )
+        """)
+
         # Signal dropouts found in recordings the Tablo flagged as not clean (app/dropouts.py)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS dropouts (
@@ -173,6 +205,9 @@ def init_db():
         if "skip_reason" not in ga_cols:
             # Why the Tablo won't record it (schedule.skip_reason), e.g. not_new for a Record New series
             cursor.execute("ALTER TABLE guide_airings ADD COLUMN skip_reason TEXT")
+        st_cols = {r[1] for r in cursor.execute("PRAGMA table_info(stream_airings)").fetchall()}
+        if "channel_number" not in st_cols:
+            cursor.execute("ALTER TABLE stream_airings ADD COLUMN channel_number TEXT")
         ep_cols = {r[1] for r in cursor.execute("PRAGMA table_info(episodes)").fetchall()}
         if "position" not in ep_cols:
             # Resume point in seconds, as stored on the Tablo (user_info.position)
@@ -535,6 +570,60 @@ def get_in_progress_episodes(limit: int = 20) -> List[Dict[str, Any]]:
         return result
 
 
+def airing_on_now(channel_identifier: str) -> Optional[Dict[str, Any]]:
+    """The guide's airing on this antenna channel right now: show and episode title."""
+    with get_connection() as conn:
+        row = conn.execute("""
+            SELECT show_title, episode_title, season_number, episode_number FROM guide_airings
+            WHERE channel_identifier = ? AND datetime(air_datetime) <= datetime('now')
+              AND datetime(air_datetime, '+' || duration || ' seconds') > datetime('now')
+            ORDER BY air_datetime DESC LIMIT 1
+        """, (channel_identifier,)).fetchone()
+    return dict(row) if row else None
+
+
+def get_watch_list() -> List[Dict[str, Any]]:
+    """The Watch list's recordings in order. Ones deleted since they were added drop off."""
+    with get_connection() as conn:
+        conn.execute("DELETE FROM watch_list WHERE episode_id NOT IN (SELECT id FROM episodes)")
+        conn.commit()
+        rows = conn.execute("""
+            SELECT e.*, COALESCE(s.backdrop_url, s.cover_url) AS show_art FROM watch_list w
+            JOIN episodes e ON e.id = w.episode_id LEFT JOIN shows s ON s.id = e.show_id
+            ORDER BY w.sort_order
+        """).fetchall()
+    return [{**dict(r), **recording_details(r["raw_json"])} for r in rows]
+
+
+def add_to_watch_list(episode_ids: List[str]) -> int:
+    """Add recordings to the end of the Watch list (ones already on it stay where they are).
+    Returns how many were added."""
+    with get_connection() as conn:
+        known = {r[0] for r in conn.execute("SELECT id FROM episodes").fetchall()}
+        listed = {r[0] for r in conn.execute("SELECT episode_id FROM watch_list").fetchall()}
+        last = conn.execute("SELECT COALESCE(MAX(sort_order), 0) FROM watch_list").fetchone()[0]
+        new = [i for i in dict.fromkeys(episode_ids) if i in known and i not in listed]
+        conn.executemany("INSERT INTO watch_list (episode_id, sort_order) VALUES (?, ?)",
+                         [(i, last + n + 1) for n, i in enumerate(new)])
+        conn.commit()
+    return len(new)
+
+
+def set_watch_list(episode_ids: List[str]) -> None:
+    """Replace the Watch list with these recordings, in this order (reordering, removing)."""
+    with get_connection() as conn:
+        conn.execute("DELETE FROM watch_list")
+        conn.executemany("INSERT INTO watch_list (episode_id, sort_order) VALUES (?, ?)",
+                         [(i, n) for n, i in enumerate(dict.fromkeys(episode_ids), start=1)])
+        conn.commit()
+
+
+def remove_from_watch_list(episode_id: str) -> None:
+    with get_connection() as conn:
+        conn.execute("DELETE FROM watch_list WHERE episode_id = ?", (episode_id,))
+        conn.commit()
+
+
 def delete_episode(episode_id: str) -> Optional[str]:
     """Delete episode from db and return its show_id to recalculate stats."""
     with get_connection() as conn:
@@ -810,7 +899,8 @@ def get_upcoming_recordings(within_hours: Optional[float] = None, include_confli
     query = f"""
         SELECT ga.path, ga.series_path, ga.show_title, ga.episode_title, ga.season_number, ga.episode_number,
                ga.air_datetime, ga.duration, ga.channel_call_sign, ga.channel_network, ga.qualifiers,
-               ga.is_new, ga.is_premiere, ga.schedule_state, ga.skip_reason, g.cover_url, g.backdrop_url, g.schedule_rule
+               ga.is_new, ga.is_premiere, ga.schedule_state, ga.skip_reason, ga.channel_identifier,
+               g.cover_url, g.backdrop_url, g.schedule_rule
         FROM guide_airings ga
         LEFT JOIN guide_shows g ON g.path = ga.series_path
         WHERE (ga.schedule_state IN {states} {missed})
@@ -873,7 +963,7 @@ def get_guide_shows(
         ),
         next_ga AS (
             SELECT
-                series_path, air_datetime, channel_network, channel_call_sign,
+                series_path, air_datetime, channel_network, channel_call_sign, channel_identifier,
                 episode_title, season_number, episode_number,
                 ROW_NUMBER() OVER (PARTITION BY series_path ORDER BY air_datetime ASC) AS rn
             FROM guide_airings
@@ -887,6 +977,7 @@ def get_guide_shows(
             n.air_datetime AS next_air_datetime,
             n.channel_network AS next_channel_network,
             n.channel_call_sign AS next_channel_call_sign,
+            n.channel_identifier AS next_channel_identifier,
             n.episode_title AS next_episode_title,
             n.season_number AS next_season_number,
             n.episode_number AS next_episode_number
@@ -961,6 +1052,9 @@ def get_guide_shows(
                     "datetime": d.get("next_air_datetime"),
                     "network": d.get("next_channel_network"),
                     "call_sign": d.get("next_channel_call_sign"),
+                    "channel_network": d.get("next_channel_network"),
+                    "channel_call_sign": d.get("next_channel_call_sign"),
+                    "channel_identifier": d.get("next_channel_identifier"),
                     "title": d.get("next_episode_title"),
                     "season_number": d.get("next_season_number"),
                     "episode_number": d.get("next_episode_number"),
