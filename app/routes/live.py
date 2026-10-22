@@ -106,11 +106,22 @@ async def fetch_local_ota_map() -> Dict[str, Dict[str, Any]]:
     return local_ota_map
 
 
+_cloud_channels: Dict[Any, Any] = {}
+CLOUD_CHANNELS_SECONDS = 900  # the lineup rarely changes; Live TV asks on every guide page
+
+
 async def fetch_cloud_channels(client: TabloClient, include_ott: bool) -> list:
-    """Fetch the cloud channel lineup (OTA + FAST). TabloClient is synchronous, so run it in a thread."""
+    """The cloud channel lineup (OTA + FAST), kept for CLOUD_CHANNELS_SECONDS. TabloClient is
+    synchronous, so it runs in a thread."""
+    key = (client.device.sid, include_ott)
+    cached = _cloud_channels.get(key)
+    if cached and time.time() - cached[0] < CLOUD_CHANNELS_SECONDS:
+        return cached[1]
     try:
         channels = await asyncio.to_thread(client.channels, include_ott=include_ott)
         tablo_manager.note_auth("cloud", ok=True)
+        if channels:
+            _cloud_channels[key] = (time.time(), channels)
         return channels
     except Exception as e:
         if re.search(r"\b40[13]\b", str(e)):
@@ -391,8 +402,9 @@ async def get_live_channels(kind: str = Query("all", description="all, ota, fast
 
     # Fetch local OTA channel details and the full cloud lineup (OTA + FAST) concurrently
     include_ott = kind in ("all", "fast")
+    # The Tablo's channel list only changes with a channel scan: kept for an hour (ota_map_cached)
     local_ota_map, raw_channels = await asyncio.gather(
-        fetch_local_ota_map(),
+        ota_map_cached(),
         fetch_cloud_channels(client, include_ott)
     )
 
@@ -502,8 +514,9 @@ async def get_live_epg(
 
     # 3 & 4. Local OTA channel details and cloud channel lineup, fetched concurrently
     include_ott = kind in ("all", "fast")
+    # The Tablo's channel list only changes with a channel scan: kept for an hour (ota_map_cached)
     local_ota_map, raw_channels = await asyncio.gather(
-        fetch_local_ota_map(),
+        ota_map_cached(),
         fetch_cloud_channels(client, include_ott)
     )
 

@@ -29,6 +29,11 @@ NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 HLS_SEGMENT_SECONDS = 3
 # How many times one stream's FFmpeg is restarted after dying mid-stream (see _supervise)
 MAX_STREAM_RESTARTS = 4
+# FFmpeg that's still running but hasn't written any video for this long is stuck waiting on the Tablo
+# (it waits rather than exiting when the Tablo stops sending): restart it on the same Tablo session.
+STREAM_STALL_SECONDS = 10
+# Restarts allowed again after this long without one (an evening of live TV can have a few hiccups)
+RESTARTS_RESET_SECONDS = 600
 # Live TV keeps this much behind the live point, for pause and rewind (about 1-1.5 GB on disk)
 LIVE_REWIND_MINUTES = 30
 # Recordings: a small preview frame every this many seconds, for the timeline. Named by position in
@@ -475,10 +480,25 @@ class TranscodeManager:
         restarted where it stopped, adding to the same playlist, so the player (which has several
         seconds buffered) carries on. A second failure of a hardware encoder switches this stream to
         the CPU's fastest setting."""
-        restarts = 0
+        restarts, last_restart = 0, time.monotonic()
         while restarts < MAX_STREAM_RESTARTS:
+            started = last_size = None
+            last_change = time.monotonic()
             while sess.proc.poll() is None:
                 await asyncio.sleep(1)
+                now = time.monotonic()
+                started = started or now
+                if restarts and now - last_restart > RESTARTS_RESET_SECONDS:
+                    restarts = 0
+                size = self._playlist_size(session_dir)
+                if size != last_size:
+                    last_size, last_change = size, now
+                elif now - last_change > STREAM_STALL_SECONDS and now - started > STREAM_STALL_SECONDS:
+                    print(f"[Transcode] Session {sess.session_id[:8]}: no video from the Tablo for "
+                          f"{STREAM_STALL_SECONDS} s; restarting FFmpeg")
+                    sess.proc.kill()
+                    sess.proc.wait(timeout=5)
+                    break
                 if live and plan["smooth"] and self._falling_behind(session_dir):
                     # Live TV arrives in real time; converting slower than that means the picture falls
                     # further and further behind (WTHR with Smooth motion: 0.5x, 29 of 60 frames a
@@ -496,6 +516,7 @@ class TranscodeManager:
                     self._end_playlist(session_dir)
                 return
             restarts += 1
+            last_restart = time.monotonic()
             enc = plan["encoder"]
             if enc is not None and enc["hardware"] and restarts >= 2:
                 plan = {**plan, "encoder": encoders.choose("fastest"), "smooth": False}
@@ -515,6 +536,16 @@ class TranscodeManager:
             sess.encoder = "copy" if plan["encoder"] is None else plan["encoder"]["label"]
             # A restart that dies straight away counts against the limit too
             await asyncio.sleep(3)
+
+    @staticmethod
+    def _playlist_size(session_dir: Path) -> Tuple[int, int]:
+        """When the playlist last changed, and its size. (A full live playlist can keep the same size:
+        each new piece replaces the oldest.)"""
+        try:
+            st = (session_dir / "playlist.m3u8").stat()
+            return st.st_mtime_ns, st.st_size
+        except OSError:
+            return 0, -1
 
     @staticmethod
     def _falling_behind(session_dir: Path) -> bool:

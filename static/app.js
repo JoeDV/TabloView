@@ -2255,7 +2255,7 @@ PAGES.live = async (r, token) => {
   };
   tick();
   pageTimers.push(setInterval(tick, 15000));
-  pageTimers.push(setInterval(checkTuners, 5000));
+  pageTimers.push(setInterval(checkTuners, 15000));  // and straight after tuning or closing a channel
   checkTuners();
   await loadEpg(token, true);
 };
@@ -3506,7 +3506,9 @@ const player = {
       s.stallShown = true;
       this.message('<span class="spinner"></span>Waiting for your Tablo…');
     }
-    if (secs < 15) return;
+    // TabloView restarts a stuck stream itself after 10 s (on the same Tablo session); give that time
+    // to work before starting over (recordings) or asking to tune again (live TV)
+    if (secs < (s.channelId ? 30 : 25)) return;
     s.stallSince = 0;
     s.stallShown = false;
     if (s.episodeId && (s.recoveries || 0) < 3) {
