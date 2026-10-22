@@ -177,21 +177,36 @@ async def pick_folder(request: Request):
     if sys.platform != "win32":
         raise HTTPException(status_code=400, detail="The folder picker is only available on Windows")
     start = str(exports_dir()).replace("'", "''")
+    # The owner is an invisible window that's shown and activated first: an owner that was never shown
+    # left the picker opening behind other windows (or not visibly at all), and nothing said so.
+    # PICKED:/CANCELLED tell a choice from a PowerShell that failed (blocked by security software,
+    # for one), which used to look exactly like Cancel.
     script = (
         "[Console]::OutputEncoding = [Text.Encoding]::UTF8; Add-Type -AssemblyName System.Windows.Forms; "
         "$d = New-Object System.Windows.Forms.FolderBrowserDialog; "
         "$d.Description = 'Where should TabloView save MP4 exports?'; $d.ShowNewFolderButton = $true; "
         f"$d.SelectedPath = '{start}'; "
-        "$owner = New-Object System.Windows.Forms.Form -Property @{TopMost = $true}; "
-        "if ($d.ShowDialog($owner) -eq 'OK') { $d.SelectedPath }"
+        "$owner = New-Object System.Windows.Forms.Form -Property @{TopMost = $true; ShowInTaskbar = $false; "
+        "Opacity = 0; FormBorderStyle = 'None'; StartPosition = 'CenterScreen'; Width = 1; Height = 1}; "
+        "$owner.Show(); $owner.Activate(); "
+        "if ($d.ShowDialog($owner) -eq 'OK') { 'PICKED:' + $d.SelectedPath } else { 'CANCELLED' }; $owner.Close()"
     )
     try:
         r = await asyncio.to_thread(subprocess.run, ["powershell", "-NoProfile", "-STA", "-Command", script],
                                     capture_output=True, timeout=600, creationflags=subprocess.CREATE_NO_WINDOW)
     except subprocess.TimeoutExpired:
         return {"path": None}
-    chosen = r.stdout.decode("utf-8", errors="replace").strip()
-    return {"path": chosen or None}
+    except OSError as e:
+        print(f"[Exports] Folder picker didn't start: {e}")
+        raise HTTPException(status_code=500, detail="The folder picker didn't open")
+    out = r.stdout.decode("utf-8", errors="replace").strip()
+    if out.startswith("PICKED:"):
+        return {"path": out[len("PICKED:"):].strip() or None}
+    if out == "CANCELLED":
+        return {"path": None}
+    err = r.stderr.decode("utf-8", errors="replace").strip()
+    print(f"[Exports] Folder picker failed (exit {r.returncode}): {err[:300]}")
+    raise HTTPException(status_code=500, detail="The folder picker didn't open")
 
 
 @router.get("/system/update")

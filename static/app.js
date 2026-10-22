@@ -1189,8 +1189,10 @@ async function chooseExportFolder(btn) {
     toast('Choose a folder in the window that opened (it may be behind the browser)');
     path = (await api('/api/system/pick_folder', { method: 'POST' })).path;
     if (!path) return;
-  } catch {
-    path = await promptExportFolder();
+  } catch (err) {
+    // No picker here (Mac, Linux, another device) or it couldn't open: type the path instead
+    const current = btn.parentElement.querySelector('.path-box')?.title || '';
+    path = await promptExportFolder(err.status === 500 ? 'The folder window couldn’t open on this PC. ' : '', current);
     if (!path) return;
   } finally {
     btn.disabled = false;
@@ -1202,13 +1204,14 @@ async function chooseExportFolder(btn) {
   } catch (err) { toast(err.message, 'error'); }
 }
 
-function promptExportFolder() {
+function promptExportFolder(why = '', current = '') {
   let value = null;
+  const example = /Win/.test(navigator.platform) ? 'D:\\Videos\\Tablo' : '/home/you/Videos/Tablo';
   return openModal(`
     <form class="dialog-body" id="folderForm">
       <div class="dialog-title">Save exports to</div>
-      <div class="dialog-text">Type the full path of a folder on this computer, for example <code>/home/you/Videos/Tablo</code>. It's created if it doesn't exist.</div>
-      <input class="input" id="folderInput" style="width:100%;margin-top:12px" data-autofocus>
+      <div class="dialog-text">${esc(why)}Type the full path of a folder on this computer, for example <code>${esc(example)}</code>. It's created if it doesn't exist.</div>
+      <input class="input" id="folderInput" style="width:100%;margin-top:12px" value="${esc(current)}" data-autofocus>
     </form>
     <div class="dialog-foot">
       <button class="btn" data-action="modal-cancel">Cancel</button>
