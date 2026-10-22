@@ -86,7 +86,7 @@ class CancelExportTests(unittest.TestCase):
 class ExportSpeedTests(unittest.TestCase):
     """Exports read faster when nothing else is playing from the Tablo."""
 
-    def test_twice_real_time_while_something_plays_four_times_otherwise(self):
+    def test_twice_real_time_while_something_plays_faster_otherwise(self):
         from app import transcode
         from unittest import mock
         m = transcode.TranscodeManager.__new__(transcode.TranscodeManager)

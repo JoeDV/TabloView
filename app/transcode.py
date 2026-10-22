@@ -38,10 +38,11 @@ PREVIEW_SECONDS = 5
 # past this share of the recording, what arrived is kept rather than thrown away
 EXPORT_STALL_SECONDS = 60
 # Exports read the recording at twice real time while something is playing (faster starves live TV and
-# playback sharing the Tablo: unthrottled is about 6.5x), and at 4x when nothing is, set when the export
-# starts. A 2-hour recording: about an hour, or half an hour.
+# playback sharing the Tablo: unthrottled is about 6.5x), and at 3x when nothing is. It's set when the
+# export starts and kept to the end, so 3x leaves room for someone starting to watch partway through.
+# A 2-hour recording: about an hour, or 40 minutes.
 EXPORT_READRATE = 2
-EXPORT_IDLE_READRATE = 4
+EXPORT_IDLE_READRATE = 3
 EXPORT_NEAR_END = 0.9
 
 
