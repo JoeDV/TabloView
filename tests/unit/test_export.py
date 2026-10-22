@@ -84,21 +84,11 @@ class CancelExportTests(unittest.TestCase):
 
 
 class ExportSpeedTests(unittest.TestCase):
-    """Exports read faster when nothing else is playing from the Tablo."""
-
-    def test_twice_real_time_while_something_plays_faster_otherwise(self):
-        from app import transcode
-        from unittest import mock
-        m = transcode.TranscodeManager.__new__(transcode.TranscodeManager)
-        m.sessions = {}
-        self.assertEqual(m.export_readrate(), transcode.EXPORT_IDLE_READRATE)
-        m.sessions = {"s": mock.Mock(stopped=False)}
-        self.assertEqual(m.export_readrate(), transcode.EXPORT_READRATE)
-        m.sessions = {"s": mock.Mock(stopped=True)}
-        self.assertEqual(m.export_readrate(), transcode.EXPORT_IDLE_READRATE)
-        cmd = transcode.TranscodeManager.export_cmd("http://tablo/p.m3u8", Path("out.part.ts"), None, 4)
-        self.assertEqual(cmd[cmd.index("-readrate") + 1], "4")
-
+    def test_paced_exports_have_no_fixed_speed_limit(self):
+        cmd = TranscodeManager.export_cmd("http://127.0.0.1:7070/api/export-relay/x/playlist.m3u8", Path("o.part.ts"), None, None)
+        self.assertNotIn("-readrate", cmd)
+        cmd = TranscodeManager.export_cmd("http://tablo/p.m3u8", Path("o.part.ts"), None)
+        self.assertEqual(cmd[cmd.index("-readrate") + 1], "2")  # reading directly: twice real time
 
 if __name__ == "__main__":
     unittest.main()

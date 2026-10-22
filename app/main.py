@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, Response, JSONResponse
 from .config import (
     APP_NAME, APP_VERSION, STATIC_DIR, TRANSCODE_DIR, DOWNLOADS_DIR, IMAGE_CACHE_DIR, HOST, PORT,
 )
-from . import commercials, dropouts, encoders, lanauth, streaming, whatsnew
+from . import commercials, dropouts, encoders, export_pace, lanauth, streaming, whatsnew
 from .settings import exports_dir
 from .database import get_export_jobs, fail_interrupted_exports
 from .database import init_db
@@ -108,6 +108,7 @@ def _host_allowed(host_header: str) -> bool:
 
 @app.middleware("http")
 async def request_guard(request: Request, call_next):
+    export_pace.note_port(request.scope.get("server"))  # exports fetch through TabloView's own port
     if not _host_allowed(request.headers.get("host", "")):
         return JSONResponse({"detail": "Host not allowed"}, status_code=403)
     # State-changing calls must carry a custom header. Browsers won't let another website add it
@@ -202,6 +203,12 @@ async def get_tablo_image(image_id: str):
 # ---------------------------------------------------------------------------
 # HLS Direct Proxy & Transcoded Streaming Routes
 # ---------------------------------------------------------------------------
+
+@app.get("/api/export-relay/{relay_id}/{name}")
+async def export_relay(relay_id: str, name: str):
+    """An export's recording, handed to its FFmpeg at the pace that suits the moment (app/export_pace.py)."""
+    return await export_pace.serve(relay_id, name)
+
 
 @app.get("/api/hls/{session_id}/{subpath:path}")
 async def proxy_hls_stream(session_id: str, subpath: str, request: Request):
