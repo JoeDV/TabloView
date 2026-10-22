@@ -13,6 +13,16 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.2.3": [
+        "Streaming channels in the Guide: a new Streaming channels tab with a week of shows, sorted into categories (News, Sports, Movies and more), with search.",
+        "Record streaming shows: on the many streaming channels your Tablo is allowed to record, choose Record in the Guide or in Live TV. They show in Recording soon, Scheduled, Live TV and your Library like any other recording.",
+        "Watch list: add recordings from any show and play them one after another. Choose Watch and delete to clear each one out once you've watched it to the end (protected recordings are always kept).",
+        "See what your tuners are doing: click Tuners at the top of any page to see what each one is recording or playing, and which are free.",
+        "Channel logos and numbers in Recording soon and Scheduled.",
+        "Scheduled shows New episodes your Tablo won't record because it decided they aren't new, with a Record button.",
+        "A tidier Device page, in tabs.",
+        "Fixes: the Guide's Movies filter now shows movies, Live TV's streaming channels no longer go blank after 9 PM, and Check now for updates works in the Microsoft Store version.",
+    ],
     "1.2.2": [
         "Signal dropouts in recordings: when your Tablo says a recording didn't come in cleanly, TabloView finds the parts where a weak signal broke up the picture and marks them in red on the timeline. Skip them with the Skip dropout button (or S), or have TabloView skip them for you (Device → Playback). Episodes with dropouts are tagged on the show's page.",
         "Record from the live player: a Record button records the show you're watching.",
