@@ -77,7 +77,29 @@ async def system_info(request: Request):
         "data_dir": str(HOME_DIR),
         "downloads_dir": str(exports_dir()),
         "default_downloads_dir": str(DOWNLOADS_DIR),
+        # The page is open on the computer running TabloView (only that one may stop it)
+        "this_computer": lanauth.is_local(request.client.host if request.client else None),
     }
+
+
+@router.post("/system/stop")
+async def stop_tabloview(request: Request):
+    """Stop TabloView, as Ctrl+C in its window would: for copies run from a start script (Mac, Linux,
+    or from source), which have no tray icon to quit from. Only from the computer running it."""
+    if IS_PACKAGED:
+        raise HTTPException(status_code=400, detail="Quit TabloView from its icon in the system tray")
+    if not lanauth.is_local(request.client.host if request.client else None):
+        raise HTTPException(status_code=403, detail="TabloView can only be stopped on the computer running it")
+    print("[System] Stopping TabloView (Stop TabloView on the Device page)")
+    request_stop()
+    return {"stopping": True}
+
+
+def request_stop() -> None:
+    """Half a second from now (after answering): the same signal as Ctrl+C, so uvicorn shuts down
+    cleanly (streams stopped, FFmpeg ended) and the start script ends."""
+    import signal
+    asyncio.get_running_loop().call_later(0.5, signal.raise_signal, signal.SIGINT)
 
 
 @router.get("/lan/status")

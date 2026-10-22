@@ -2948,7 +2948,15 @@ PAGES.device = async (r, token) => {
       ${info.listening_on_network && info.network_url ? `<p style="margin-top:12px">On other devices, open <b>${esc(info.network_url)}</b></p>` : ''}
     </div>`;
 
-  const desktop = `
+  // Run from a start script (Mac, Linux, or from source): no tray icon, so stop it from here
+  const desktop = !info.packaged ? `
+    <div class="panel">
+      <h3>Running TabloView</h3><div class="panel-sub">TabloView runs in the window you started it from. Closing the browser doesn't stop it.</div>
+      ${info.this_computer
+        ? '<button class="btn btn-danger btn-sm" data-action="stop-app">Stop TabloView</button>'
+        : '<p class="dim" style="font-size:13px">It can be stopped on the computer running it.</p>'}
+      <p class="dim" style="margin-top:10px;font-size:12.5px">To start it again, run its start script as before (start-mac.sh on a Mac, start-linux.sh on Linux).</p>
+    </div>` : `
     <div class="panel">
       <h3>Desktop app</h3><div class="panel-sub">Run TabloView in the background so it can let you know when something needs attention.</div>
       ${boot.supported ? `
@@ -4875,6 +4883,23 @@ const ACTIONS = {
 
   'close-player': () => player.close(),
   'tuner-panel': () => toggleTunerPanel(),
+  'stop-app': async () => {
+    const ok = await confirmDialog({
+      title: 'Stop TabloView?',
+      text: 'It stops on this computer, along with anything playing or exporting. Your Tablo keeps recording as usual.',
+      confirm: 'Stop TabloView', danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api('/api/system/stop', { method: 'POST' });
+    } catch (err) {
+      toast(`Couldn't stop TabloView: ${err.message}`, 'error');
+      return;
+    }
+    player.close();
+    document.body.innerHTML = `<div class="empty" style="margin-top:20vh"><h3>TabloView has stopped</h3>
+      <p>You can close this tab. To use TabloView again, run its start script as before.</p></div>`;
+  },
   'guide-type': el => {
     state.guide.category = el.dataset.value;
     $('#guideTypes').innerHTML = guideTypeChips();
