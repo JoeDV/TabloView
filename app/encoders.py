@@ -36,7 +36,7 @@ HARDWARE = {
     "amf": ("AMD AMF",
             ["-c:v", "h264_amf", "-quality", "balanced", "-rc", "cqp", "-qp_i", "22", "-qp_p", "24"],
             ["-c:v", "h264_amf", "-quality", "quality", "-rc", "cqp", "-qp_i", "19", "-qp_p", "21"], "yuv420p"),
-    # Macs: Apple's encoder (Homebrew's FFmpeg has it). Until 1.2.3 Macs always encoded on the CPU;
+    # Macs: Apple's encoder (Homebrew's FFmpeg has it). Until 1.2.4 Macs always encoded on the CPU;
     # a 2-hour export took 30 minutes on an M2. A bitrate rather than -q:v, which only Apple Silicon
     # accepts; 8 Mb/s is about what Quick Sync's quality 22 gives for 1080 broadcast TV.
     "videotoolbox": ("Apple VideoToolbox",

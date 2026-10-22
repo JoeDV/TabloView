@@ -13,6 +13,16 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.2.4": [
+        "Refresh guide now asks your Tablo to download the latest guide first (like its own app's Update guide button), shows how far along it is, then loads it.",
+        "Faster exports: Original exports run several times faster than real time while nothing else is playing from your Tablo, and slow down by themselves when something starts, so watching isn't affected.",
+        "Record streaming shows from the live player, on the streaming channels your Tablo is allowed to record.",
+        "Playback and live TV recover by themselves when a stream gets stuck, instead of stopping with \"Live TV stopped responding\".",
+        "Faster pages, especially while TabloView is syncing or when used from another device at home.",
+        "Macs use Apple's graphics encoder for exports and Smaller quality, instead of the processor.",
+        "Mac and Linux: Stop TabloView on the Device page (Desktop & network), no need to close Terminal. Windows: the first time you close the last TabloView page, the tray says it's still running and how to quit it.",
+        "Fixed: Continue watching listed recordings you'd only started for a moment.",
+    ],
     "1.2.3": [
         "Streaming channels in the Guide: a new Streaming channels tab with a week of shows, sorted into categories (News, Sports, Movies and more), with search.",
         "Record streaming shows: on the many streaming channels your Tablo is allowed to record, choose Record in the Guide or in Live TV. They show in Recording soon, Scheduled, Live TV and your Library like any other recording.",
