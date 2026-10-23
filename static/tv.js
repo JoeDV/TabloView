@@ -537,14 +537,14 @@ const player = {
       $('#osdNow').textContent = fmt.clock(pos);
       $('#osdEnd').textContent = s.duration ? fmt.clock(s.duration) : '';
       $('#osdPlayed').style.width = s.duration ? `${Math.min(100, (pos / s.duration) * 100)}%` : '0';
-      $('#osdHint').textContent = v.paused ? 'Paused · OK for controls' : '◀ 10 s   OK controls   30 s ▶';
+      $('#osdHint').textContent = v.paused ? 'Paused' : '';
     } else {
       const w = this.liveWindow();
       const behind = w ? Math.max(0, w.end - v.currentTime) : 0;
       $('#osdNow').textContent = behind < 12 ? 'LIVE' : `−${fmt.clock(behind)}`;
       $('#osdEnd').textContent = '';
       $('#osdPlayed').style.width = w && w.end > w.start ? `${Math.min(100, ((v.currentTime - w.start) / (w.end - w.start)) * 100)}%` : '100%';
-      $('#osdHint').textContent = v.paused ? 'Paused · OK for controls' : '▲ ▼ channel   ◀ ▶ skip   OK controls';
+      $('#osdHint').textContent = v.paused ? 'Paused' : '';
     }
   },
 
