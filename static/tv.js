@@ -778,7 +778,13 @@ function init() {
   // A pointer (TV Bro's or Silk's cursor mode) moves the highlight too
   document.addEventListener('mouseover', e => { const el = e.target.closest('.f'); if (el && el !== document.activeElement) el.focus({ preventScroll: true }); });
   // Moving the mouse over the picture brings up the controls
-  document.addEventListener('mousemove', () => {
+  let lastPointer = '';
+  document.addEventListener('mousemove', e => {
+    // Only a pointer that really moved: browsers also send moves when what's under a resting
+    // pointer changes, which kept the controls and title up
+    const at = `${e.screenX},${e.screenY}`;
+    if (at === lastPointer) return;
+    lastPointer = at;
     if (!player.open || !$('#dialog').classList.contains('hidden')) return;
     if (!player.controls) { player.showControls(); return; }
     player.wake();
