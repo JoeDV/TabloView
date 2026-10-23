@@ -298,16 +298,69 @@ const player = {
     $('#osdTitle').textContent = title;
     $('#osdSub').textContent = sub || '';
     $('#player').classList.remove('hidden');
-    if (location.hash !== '#/play') location.hash = '#/play';
+    if (location.hash !== '#/play') { this.returnTo = location.hash || '#/'; location.hash = '#/play'; }
     this.open = true;
     this.wake();
+  },
+
+  // OK: Pause, skip, Back to live, Close
+  showControls() {
+    const live = this.s.kind === 'live';
+    this.controlList = live
+      ? [['pause', this.video().paused ? '▶ Play' : '❚❚ Pause'], ['live', 'Back to live'], ['close', '✕ Close']]
+      : [['pause', this.video().paused ? '▶ Play' : '❚❚ Pause'], ['back', '◀◀ 10 s'], ['fwd', '30 s ▶▶'], ['close', '✕ Close']];
+    this.controlIndex = 0;
+    this.controls = true;
+    this.renderControls();
+  },
+
+  renderControls() {
+    const box = $('#osdControls');
+    box.innerHTML = this.controlList.map(([, label], i) => `<span class="ctl ${i === this.controlIndex ? 'on' : ''}">${esc(label)}</span>`).join('');
+    box.classList.remove('hidden');
+    this.wake();
+    clearTimeout(this.controlsTimer);
+    this.controlsTimer = setTimeout(() => this.hideControls(), 8000);
+  },
+
+  moveControl(dir) {
+    this.controlIndex = Math.max(0, Math.min(this.controlList.length - 1, this.controlIndex + dir));
+    this.renderControls();
+  },
+
+  pressControl() {
+    const what = this.controlList[this.controlIndex][0];
+    if (what === 'close') { this.hideControls(); this.exit(); return; }
+    if (what === 'pause') this.togglePlay();
+    else if (what === 'back') this.skip(-10);
+    else if (what === 'fwd') this.skip(30);
+    else if (what === 'live') { const w = this.liveWindow(); if (w) this.video().currentTime = Math.max(w.start, w.end - 6); this.video().play().catch(() => {}); }
+    this.controlList[0][1] = this.video().paused ? '▶ Play' : '❚❚ Pause';
+    this.renderControls();
+  },
+
+  hideControls() {
+    this.controls = false;
+    clearTimeout(this.controlsTimer);
+    $('#osdControls').classList.add('hidden');
+  },
+
+  // Close the player and go back to the screen it was opened from
+  exit() {
+    if (location.hash === '#/play') history.back();
+    // Some TV browsers don't step back through #/ addresses: close it ourselves then
+    setTimeout(() => {
+      if (!this.open) return;
+      this.close();
+      location.replace(this.returnTo || '#/');
+    }, 400);
   },
 
   wake() {
     const p = $('#player');
     p.classList.remove('idle');
     clearTimeout(this.idleTimer);
-    this.idleTimer = setTimeout(() => { if (!this.video().paused) p.classList.add('idle'); }, 4000);
+    this.idleTimer = setTimeout(() => { if (!this.video().paused && !this.controls) p.classList.add('idle'); }, 4000);
   },
 
   message(text) {
@@ -453,14 +506,14 @@ const player = {
       $('#osdNow').textContent = fmt.clock(pos);
       $('#osdEnd').textContent = s.duration ? fmt.clock(s.duration) : '';
       $('#osdPlayed').style.width = s.duration ? `${Math.min(100, (pos / s.duration) * 100)}%` : '0';
-      $('#osdHint').textContent = v.paused ? 'Paused · OK to play' : '◀ 10 s   OK pause   30 s ▶';
+      $('#osdHint').textContent = v.paused ? 'Paused · OK for controls' : '◀ 10 s   OK controls   30 s ▶';
     } else {
       const w = this.liveWindow();
       const behind = w ? Math.max(0, w.end - v.currentTime) : 0;
       $('#osdNow').textContent = behind < 12 ? 'LIVE' : `−${fmt.clock(behind)}`;
       $('#osdEnd').textContent = '';
       $('#osdPlayed').style.width = w && w.end > w.start ? `${Math.min(100, ((v.currentTime - w.start) / (w.end - w.start)) * 100)}%` : '100%';
-      $('#osdHint').textContent = v.paused ? 'Paused · OK to play' : '▲ ▼ channel   ◀ ▶ skip   OK pause';
+      $('#osdHint').textContent = v.paused ? 'Paused · OK for controls' : '▲ ▼ channel   ◀ ▶ skip   OK controls';
     }
   },
 
@@ -567,6 +620,7 @@ const player = {
     state.run = null;
     clearInterval(this.upNext);
     this.upNext = null;
+    this.hideControls();
     clearInterval(this.progressTimer);
     clearTimeout(this.surfTimer);
     this.teardown();
@@ -595,19 +649,29 @@ function applyShape(video, key) {
 // Keys and clicks
 // ---------------------------------------------------------------------------
 const BACK_KEYS = ['Escape', 'Backspace', 'BrowserBack', 'GoBack'];
+// Android's Back (4), browsers' Back (166), LG webOS (461), Samsung Tizen (10009)
+const isBack = e => BACK_KEYS.includes(e.key) || [4, 8, 27, 166, 461, 10009].includes(e.keyCode);
 
 function onKey(e) {
   const k = e.key;
   // Typing the PIN: leave its keys alone, except moving off the box
   if (e.target.id === 'pinInput' && !['ArrowDown', 'ArrowUp', 'Enter'].includes(k)) return;
 
-  if (dialogDone && BACK_KEYS.includes(k)) { e.preventDefault(); dialogDone(null); return; }
+  if (dialogDone && isBack(e)) { e.preventDefault(); dialogDone(null); return; }
 
   if (player.open && $('#dialog').classList.contains('hidden')) {
     if (player.upNext && (k === 'Enter' || k === ' ')) { e.preventDefault(); player.playNext(); return; }
+    // The button row: arrows move along it, OK presses, Back/up/down put it away
+    if (player.controls) {
+      e.preventDefault();
+      if (k === 'ArrowLeft' || k === 'ArrowRight') player.moveControl(k === 'ArrowLeft' ? -1 : 1);
+      else if (k === 'Enter' || k === ' ') player.pressControl();
+      else if (isBack(e) || k === 'ArrowUp' || k === 'ArrowDown') player.hideControls();
+      return;
+    }
     const live = player.s.kind === 'live';
     const keys = {
-      Enter: () => player.togglePlay(), ' ': () => player.togglePlay(), MediaPlayPause: () => player.togglePlay(),
+      Enter: () => player.showControls(), ' ': () => player.togglePlay(), MediaPlayPause: () => player.togglePlay(),
       MediaPlay: () => player.video().play(), MediaPause: () => player.video().pause(),
       ArrowLeft: () => player.skip(-10), MediaRewind: () => player.skip(-10),
       ArrowRight: () => player.skip(30), MediaFastForward: () => player.skip(30),
@@ -616,20 +680,33 @@ function onKey(e) {
       PageUp: () => live && player.surf(-1), PageDown: () => live && player.surf(1),
     };
     if (keys[k]) { e.preventDefault(); keys[k](); player.wake(); return; }
-    if (k === 'Escape' || k === 'Backspace') { e.preventDefault(); history.back(); }
-    return;  // other keys (the browser's own Back) do what they normally do
+    if (isBack(e)) { e.preventDefault(); player.exit(); }
+    return;
   }
 
   const dirs = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
   if (dirs[k]) { e.preventDefault(); move(dirs[k]); return; }
-  if ((k === 'Escape' || k === 'Backspace') && (location.hash || '#/') !== '#/') { e.preventDefault(); history.back(); }
+  // OK presses what's highlighted, without relying on the browser to turn Enter into a click
+  const cur = document.activeElement;
+  if (k === 'Enter' && cur && cur.classList.contains('f') && cur.tagName === 'BUTTON' && !cur.closest('form')) {
+    e.preventDefault();
+    cur.click();
+    return;
+  }
+  // Back on a screen: to Continue watching; on Continue watching it's left to the browser (leaving)
+  if (isBack(e) && (location.hash || '#/') !== '#/') { e.preventDefault(); history.back(); }
 }
 
 function onClick(e) {
   const el = e.target.closest('[data-go], [data-act], [data-choice]');
   if (!el) return;
   if (el.dataset.choice !== undefined && dialogDone) return dialogDone(Number(el.dataset.choice));
-  if (el.dataset.go) { location.hash = el.dataset.go; return; }
+  if (el.dataset.go) {
+    const home = (location.hash || '#/') === '#/';
+    if (el.classList.contains('tab') && !home) location.replace(el.dataset.go === '#/' ? '#/' : el.dataset.go);
+    else location.hash = el.dataset.go;
+    return;
+  }
   const act = el.dataset.act;
   if (act === 'play') player.playEpisode(el.dataset.id);
   else if (act === 'tune') player.tune(el.dataset.id);
@@ -657,6 +734,9 @@ function init() {
   window.addEventListener('resize', () => player.open && applyShape(player.video(), player.s.shapeKey));
   // Leaving the page: save where the recording got to and free the stream (and its tuner)
   window.addEventListener('pagehide', () => player.close(true));
+  // Leaving the browser (the remote's Home button) while something plays: it kept playing unseen and
+  // was still going on coming back. Close it instead (place saved, live TV's tuner freed)
+  document.addEventListener('visibilitychange', () => { if (document.hidden && player.open) player.exit(); });
   // While something plays (paused too), tell TabloView every minute, so it isn't closed as unused
   setInterval(() => {
     if (player.s.sessionId) api('/api/live/alive', { method: 'POST', body: JSON.stringify({ session_ids: [player.s.sessionId] }) }).catch(() => {});
