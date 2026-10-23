@@ -371,6 +371,9 @@ const player = {
     this.shapeMenu = false;
     clearTimeout(this.controlsTimer);
     $('#osdControls').classList.add('hidden');
+    // The title bar's own timer ran out while the buttons were up: start it again, or the bar
+    // stayed on screen until the next key
+    if (this.open) this.wake();
   },
 
   // Close the player and go back to the screen it was opened from
