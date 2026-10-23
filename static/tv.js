@@ -684,6 +684,13 @@ function applyShape(video, key) {
 // ---------------------------------------------------------------------------
 // Keys and clicks
 // ---------------------------------------------------------------------------
+// A TV or streaming stick rather than a PC: Android TV, Fire TV, Chromecast, Tizen, webOS, Bravia, or
+// anything without a mouse
+const ON_A_TV = /Android|AFT|CrKey|SMART-TV|SmartTV|Tizen|Web0S|webOS|BRAVIA|GoogleTV/i.test(navigator.userAgent)
+  || !window.matchMedia('(any-pointer: fine)').matches;
+// Away from the TV's browser this long with something paused in it: close it
+const AWAY_CLOSE_SECONDS = 30;
+
 const BACK_KEYS = ['Escape', 'Backspace', 'BrowserBack', 'GoBack'];
 // Android's Back (4), browsers' Back (166), LG webOS (461), Samsung Tizen (10009)
 const isBack = e => BACK_KEYS.includes(e.key) || [4, 8, 27, 166, 461, 10009].includes(e.keyCode);
@@ -782,9 +789,16 @@ function init() {
   window.addEventListener('resize', () => player.open && applyShape(player.video(), player.s.shapeKey));
   // Leaving the page: save where the recording got to and free the stream (and its tuner)
   window.addEventListener('pagehide', () => player.close(true));
-  // Leaving the browser (the remote's Home button) while something plays: it kept playing unseen and
-  // was still going on coming back. Close it instead (place saved, live TV's tuner freed)
-  document.addEventListener('visibilitychange', () => { if (document.hidden && player.open) player.exit(); });
+  // Leaving the TV's browser (the remote's Home button) while something plays: it kept playing unseen
+  // and was still going on coming back. Pause at once, and close after a while away (place saved,
+  // live TV's tuner freed). Not on a PC: switching to another window counts as leaving there too,
+  // and TV view on a PC should keep playing like the PC view
+  document.addEventListener('visibilitychange', () => {
+    clearTimeout(player.awayTimer);
+    if (!document.hidden || !player.open || !ON_A_TV) return;
+    player.video().pause();
+    player.awayTimer = setTimeout(() => { if (document.hidden && player.open) player.exit(); }, AWAY_CLOSE_SECONDS * 1000);
+  });
   // While something plays (paused too), tell TabloView every minute, so it isn't closed as unused
   setInterval(() => {
     if (player.s.sessionId) api('/api/live/alive', { method: 'POST', body: JSON.stringify({ session_ids: [player.s.sessionId] }) }).catch(() => {});
