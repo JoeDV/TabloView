@@ -84,6 +84,8 @@ h2 { font-size: 1.7vw; margin: 2.4vw 0 1.2vw; color: var(--dim); font-weight: 60
 .osd-controls { display: flex; justify-content: center; gap: 1.4vw; margin-top: 1.6vw; }
 .ctl { padding: 1vw 2vw; border-radius: 3vw; background: rgba(255,255,255,0.12); font-weight: 600; font-size: 1.5vw; }
 .ctl.on { background: #fff; color: #000; }
+.ctl:hover { background: rgba(255,255,255,0.3); }
+.ctl.on:hover { background: #fff; }
 .osd-msg { position: absolute; left: 50%; top: 45%; transform: translate(-50%, -50%); max-width: 60vw; padding: 1.6vw 2.4vw; border-radius: var(--radius); background: rgba(0,0,0,0.75); font-size: 1.7vw; text-align: center; line-height: 1.45; }
 .chan-banner { position: absolute; left: 4vw; top: 3vw; padding: 1vw 1.6vw; border-radius: var(--radius); background: rgba(0,0,0,0.7); font-size: 1.8vw; font-weight: 700; }
 

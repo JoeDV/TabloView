@@ -341,7 +341,7 @@ const player = {
 
   renderControls() {
     const box = $('#osdControls');
-    box.innerHTML = this.controlList.map(([, label], i) => `<span class="ctl ${i === this.controlIndex ? 'on' : ''}">${esc(label)}</span>`).join('');
+    box.innerHTML = this.controlList.map(([, label], i) => `<button class="ctl ${i === this.controlIndex ? 'on' : ''}" data-ctl="${i}">${esc(label)}</button>`).join('');
     box.classList.remove('hidden');
     this.wake();
     clearTimeout(this.controlsTimer);
@@ -732,6 +732,10 @@ function onKey(e) {
 }
 
 function onClick(e) {
+  // A mouse in the player (TV view on a PC): the controls are buttons too
+  const ctl = e.target.closest('[data-ctl]');
+  if (ctl && player.controls) { player.controlIndex = Number(ctl.dataset.ctl); player.pressControl(); return; }
+  if (player.open && !player.controls && e.target.closest('#player')) { player.showControls(); return; }
   const el = e.target.closest('[data-go], [data-act], [data-choice]');
   if (!el) return;
   if (el.dataset.choice !== undefined && dialogDone) return dialogDone(Number(el.dataset.choice));
@@ -763,7 +767,14 @@ function init() {
   document.addEventListener('click', onClick);
   // A pointer (TV Bro's or Silk's cursor mode) moves the highlight too
   document.addEventListener('mouseover', e => { const el = e.target.closest('.f'); if (el && el !== document.activeElement) el.focus({ preventScroll: true }); });
-  document.addEventListener('mousemove', () => player.open && player.wake());
+  // Moving the mouse over the picture brings up the controls
+  document.addEventListener('mousemove', () => {
+    if (!player.open || !$('#dialog').classList.contains('hidden')) return;
+    if (!player.controls) { player.showControls(); return; }
+    player.wake();
+    clearTimeout(player.controlsTimer);  // still in use: keep them up
+    player.controlsTimer = setTimeout(() => player.hideControls(), 8000);
+  });
   window.addEventListener('hashchange', route);
   window.addEventListener('resize', () => player.open && applyShape(player.video(), player.s.shapeKey));
   // Leaving the page: save where the recording got to and free the stream (and its tuner)
