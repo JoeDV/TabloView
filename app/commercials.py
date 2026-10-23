@@ -1,10 +1,18 @@
 """Commercial detection for recordings, run on this PC in the background.
 
-One FFmpeg pass reads the recording from the Tablo (gently) and gives two things per recording: black
-frames (blackdetect; broadcasters put them at the edges of commercial breaks) and a tiny frame every
-second, turned into a colour histogram. A show looks like itself (Jeopardy's blue set, a sitcom's
-sets) while ads look like anything else, so each second is scored by how much it looks like the
-show; long runs that don't are breaks, with their edges snapped to nearby black frames.
+One FFmpeg pass reads the recording from the Tablo (gently) and gives, per recording: black frames
+(blackdetect) and silences (silencedetect), which together mark the edges of commercial breaks; the
+channel's corner, every second; and a tiny frame every second, turned into a colour histogram.
+
+The corner comes first. US networks keep their logo (the FOX, CBS or NBC "bug") in the bottom-right
+corner through the show and take it off for the ads, so a minute or more without it is a break, with
+its edges snapped to the black-and-silent moment where the show stops and starts. On a Hell's Kitchen
+recording this found all five breaks to within 10 s (3-4.5 minutes each), where the colour method
+below found 47 s of two of them: the kitchen looks too much like ads.
+
+Channels without a corner logo fall back to colour: a show looks like itself (Jeopardy's blue set, a
+sitcom's sets) while ads look like anything else, so each second is scored by how much it looks like
+the show; long runs that don't are breaks, with their edges snapped to nearby black frames.
 
 Built to skip too little rather than too much: on a Jeopardy recording, show parts scored 0.57-0.60 and
 every ad part 0.14-0.24, and all four breaks were found. On The Price Is Right (a colourful set that
@@ -38,6 +46,25 @@ SNAP_SECONDS = 8  # move a break edge to a black frame this close
 # ad than skipping any of the show (what Tablo's own commercial skip got wrong)
 UNANCHORED_TRIM = 3
 MIN_SEPARATION = 0.15  # show and ad scores must be at least this far apart to trust the result
+
+# The detector, saved with each result: results from an older one are redone (1: colour only;
+# 2: the channel logo, black frames and silences)
+METHOD = 2
+
+# The channel logo: the bottom-right corner of a 160x90 copy of each second's frame (the logo is a few
+# pixels of light text there, still clear at that size)
+FRAME_W, FRAME_H = 160, 90
+CORNER_W, CORNER_H = 36, 22
+LIGHTER = 12  # a logo pixel is this much lighter than the 5x5 around it, whatever the picture
+LOGO_MIN_PIXELS = 12  # fewer pixels than this that are lighter most of the time: no logo to go by
+LOGO_SEPARATION = 0.3  # seconds with and without the logo must score at least this far apart
+LOGO_SMOOTH_SECONDS = 9
+LOGO_MERGE_GAP = 35  # a network promo with the logo on (15-30 s), inside a break, doesn't split it
+LOGO_SNAP_SECONDS = 12  # move a break edge to a black-and-silent moment (or a black frame) this close
+# The logo comes back this long after the show does: Fox shows its TV rating badge instead for the
+# first seconds back (Hell's Kitchen: 15-16 s after each of four breaks). If a channel brings it back
+# at once, the cost is a few seconds of ad left in, not show skipped
+LOGO_RETURN_LAG = 15
 
 
 def histogram(frame: bytes) -> List[float]:
@@ -87,9 +114,104 @@ def _runs(flags: List[bool]) -> List[Tuple[int, int]]:
     return runs
 
 
-def find_breaks(hists: List[List[float]], blacks: List[float]) -> Optional[List[Dict[str, float]]]:
+def silences(ffmpeg_log: str) -> List[Tuple[float, float]]:
+    """(start, end) of the silences FFmpeg's silencedetect reported, in seconds."""
+    return [(float(a), float(b)) for a, b in
+            re.findall(r"silence_start: ([\d.]+)[\s\S]*?silence_end: ([\d.]+)", ffmpeg_log)]
+
+
+def lighter_pixels(corner: bytes) -> List[bool]:
+    """Which pixels of a grey CORNER_W x CORNER_H corner are clearly lighter than the 5x5 around them."""
+    w, h = CORNER_W, CORNER_H
+    # Sums of every rectangle from the top left, so each 5x5 average is four lookups
+    sat = [[0] * (w + 1) for _ in range(h + 1)]
+    for y in range(h):
+        row = 0
+        for x in range(w):
+            row += corner[y * w + x]
+            sat[y + 1][x + 1] = sat[y][x + 1] + row
+    out = []
+    for y in range(h):
+        y0, y1 = max(0, y - 2), min(h, y + 3)
+        for x in range(w):
+            x0, x1 = max(0, x - 2), min(w, x + 3)
+            total = sat[y1][x1] - sat[y0][x1] - sat[y1][x0] + sat[y0][x0]
+            out.append(corner[y * w + x] - total / ((y1 - y0) * (x1 - x0)) > LIGHTER)
+    return out
+
+
+def logo_scores(corners: List[bytes]) -> Optional[Tuple[List[float], float]]:
+    """Per second, how much the channel's logo is in the corner, and the score that separates "on"
+    from "off"; None if this channel shows no logo to go by."""
+    marks = [lighter_pixels(c) for c in corners]
+    n = len(marks)
+    if n < 120:
+        return None
+    freq = [sum(m[i] for m in marks) / n for i in range(len(marks[0]))]
+    logo = [i for i, f in enumerate(freq) if f > 0.5]  # light in most seconds: the logo
+    rest = [i for i, f in enumerate(freq) if f < 0.2]  # the picture
+    if len(logo) < LOGO_MIN_PIXELS or not rest:
+        return None
+    # Logo pixels lit, beyond what a busy picture lights everywhere anyway
+    scores = [sum(m[i] for i in logo) / len(logo) - sum(m[i] for i in rest) / len(rest) for m in marks]
+    t, lo, hi = _threshold(scores)
+    # A QR code in an ad's corner can pass for the logo (about two thirds of its pixels lit); a
+    # stricter cut-off would lose the logo over bright scenes too, so LOGO_MERGE_GAP bridges such ads
+    return (scores, t) if hi - lo >= LOGO_SEPARATION else None
+
+
+def _logo_breaks(scores: List[float], t: float, edges: List[float], blacks: List[float]) -> List[Dict[str, float]]:
+    """Breaks from the seconds without the logo; edges are the black-and-silent moments."""
+    n = len(scores)
+    on = [s >= t for s in scores]
+    half = LOGO_SMOOTH_SECONDS // 2
+    smooth = [sum(on[max(0, i - half):i + half + 1]) * 2 > len(on[max(0, i - half):i + half + 1]) for i in range(n)]
+    merged: List[List[int]] = []
+    for s, e in _runs([not x for x in smooth]):
+        if merged and s - merged[-1][1] <= LOGO_MERGE_GAP:
+            merged[-1][1] = e
+        else:
+            merged.append([s, e])
+
+    def snap(t: float, marks: List[float]) -> Optional[float]:
+        near = [b for b in marks if abs(b - t) <= LOGO_SNAP_SECONDS]
+        return min(near, key=lambda b: abs(b - t)) if near else None
+
+    breaks = []
+    for s, e in merged:
+        if e - s < MIN_BREAK_SECONDS:
+            continue
+        if s == 0 or e == n:
+            # At the start or end of the recording: the show's own opening and closing often run
+            # without the logo too, so only up to (from) the last (first) black-and-silent moment
+            inside = [b for b in edges if s <= b <= e]
+            if not inside:
+                continue
+            start, end = (0.0, max(inside)) if s == 0 else (min(inside), float(n))
+            if end - start >= 10:
+                breaks.append({"start": round(start, 1), "end": round(end, 1)})
+            continue
+        start = snap(float(s), edges) or snap(float(s), blacks)
+        start = float(s) + 1 if start is None else start
+        # The show was back LOGO_RETURN_LAG before the logo: end at the black frame there
+        back = float(e) - LOGO_RETURN_LAG
+        end = snap(back, blacks)
+        end = back if end is None else end
+        if end - start >= MIN_BREAK_SECONDS:
+            breaks.append({"start": round(start, 1), "end": round(end, 1)})
+    return breaks
+
+
+def find_breaks(hists: List[List[float]], blacks: List[float], corners: Optional[List[bytes]] = None,
+                quiet: Optional[List[Tuple[float, float]]] = None) -> Optional[List[Dict[str, float]]]:
     """Commercial breaks as [{'start', 'end'}] in seconds, or None if this recording's show and ads
-    can't be told apart reliably."""
+    can't be told apart reliably. corners and quiet (silences) are used when there are any: the
+    channel logo, edges at black frames that are also silent."""
+    if corners:
+        found = logo_scores(corners)
+        if found:
+            edges = [b for b in blacks if any(a - 1 <= b <= z + 1 for a, z in quiet)] if quiet else list(blacks)
+            return _logo_breaks(found[0], found[1], sorted(edges), sorted(blacks))
     n = len(hists)
     if n < 120:
         return None
@@ -184,7 +306,9 @@ def pending(shows: Optional[List[str]] = None) -> List[Dict[str, str]]:
             SELECT e.id, e.path, e.show_id, e.show_title, e.season_number, e.episode_number, e.duration, e.raw_json
             FROM episodes e
             LEFT JOIN commercials c ON c.episode_id = e.id
-            WHERE c.episode_id IS NULL
+            WHERE (c.episode_id IS NULL
+                   -- found by an older detector: again (it kept the old breaks meanwhile), unless watched
+                   OR (COALESCE(c.method, 1) < {METHOD} AND c.status IN ('done', 'unreliable') AND e.status != 'Watched'))
               AND (e.id IN ({qmarks}) OR (e.show_id IN ({marks}) AND e.status != 'Watched'))
             ORDER BY e.air_date DESC
         """, [*queued, *shows]).fetchall()
@@ -230,16 +354,35 @@ def _busy() -> bool:
     return bool(transcode_manager.sessions) or any(not t.done() for t in transcode_manager.export_tasks.values())
 
 
-def _analyze(url: str, log_path, stop: threading.Event, progress: Optional[Dict[str, object]] = None) -> Optional[List[List[float]]]:
-    """One FFmpeg pass: black frames to the log, a tiny frame per second to us. None if stopped."""
+# Each second FFmpeg sends one OUT_W x OUT_H rgb24 frame: the colour thumbnail on top (padded to the
+# corner's width) and the grey logo corner below it
+OUT_W, OUT_H = CORNER_W, THUMB_H + CORNER_H
+
+
+def _split_frame(frame: bytes) -> Tuple[bytes, bytes]:
+    """(the THUMB_W x THUMB_H rgb24 thumbnail, the grey corner) from one FFmpeg frame."""
+    row = OUT_W * 3
+    thumb = b"".join(frame[y * row:y * row + THUMB_W * 3] for y in range(THUMB_H))
+    corner = bytes(frame[(THUMB_H + y) * row + x * 3] for y in range(CORNER_H) for x in range(CORNER_W))
+    return thumb, corner
+
+
+def _analyze(url: str, log_path, stop: threading.Event, progress: Optional[Dict[str, object]] = None) -> Optional[Tuple[List[List[float]], List[bytes]]]:
+    """One FFmpeg pass: black frames and silences to the log, and per second a colour histogram and
+    the logo corner to us. None if stopped."""
     cmd = [FFMPEG_PATH, "-hide_banner", "-nostats", "-readrate", str(READ_RATE), "-i", url,
            "-filter_complex",
            f"[0:v]scale=320:-2,split[a][b];[a]blackdetect=d=0.05:pix_th=0.10[bd];"
-           f"[b]fps=1,scale={THUMB_W}:{THUMB_H},format=rgb24[t]",
+           f"[b]fps=1,scale={FRAME_W}:{FRAME_H},format=rgb24,split[p][q];"
+           f"[p]scale={THUMB_W}:{THUMB_H},pad={OUT_W}:{THUMB_H}[t];"
+           f"[q]crop={CORNER_W}:{CORNER_H}:{FRAME_W - CORNER_W}:{FRAME_H - CORNER_H},format=gray,format=rgb24[c];"
+           f"[t][c]vstack,format=rgb24[o];[0:a]silencedetect=n=-50dB:d=0.15[sd]",
            "-map", "[bd]", "-f", "null", "-",
-           "-map", "[t]", "-f", "rawvideo", "-"]
-    size = THUMB_W * THUMB_H * 3
+           "-map", "[sd]", "-f", "null", "-",
+           "-map", "[o]", "-f", "rawvideo", "-"]
+    size = OUT_W * OUT_H * 3
     hists: List[List[float]] = []
+    corners: List[bytes] = []
     with open(log_path, "w", encoding="utf-8") as log:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=log, creationflags=LOW_PRIORITY,
                                 **childproc.popen_kwargs(LOW_PRIORITY_POSIX))
@@ -251,7 +394,9 @@ def _analyze(url: str, log_path, stop: threading.Event, progress: Optional[Dict[
                 frame = proc.stdout.read(size)
                 if len(frame) < size:
                     break
-                hists.append(histogram(frame))
+                thumb, corner = _split_frame(frame)
+                hists.append(histogram(thumb))
+                corners.append(corner)
                 if progress is not None:
                     progress["done"] = len(hists)
             proc.wait()
@@ -259,7 +404,7 @@ def _analyze(url: str, log_path, stop: threading.Event, progress: Optional[Dict[
             stop.set()
     if proc.returncode != 0 and not hists:
         raise RuntimeError(f"FFmpeg exited with code {proc.returncode}")
-    return None if proc.returncode != 0 and len(hists) < 60 else hists
+    return None if proc.returncode != 0 and len(hists) < 60 else (hists, corners)
 
 
 async def analyze(ep: Dict[str, str]) -> Optional[str]:
@@ -278,15 +423,16 @@ async def analyze(ep: Dict[str, str]) -> Optional[str]:
             stop.set()
             await job
             return None
-    hists = await job
-    if hists is None:
+    result = await job
+    if result is None:
         return None
+    hists, corners = result
     try:
         log = log_path.read_text(encoding="utf-8", errors="replace")
     finally:
         log_path.unlink(missing_ok=True)
-    breaks = find_breaks(hists, black_frames(log))
-    save_commercials(ep["id"], "unreliable" if breaks is None else "done", breaks)
+    breaks = find_breaks(hists, black_frames(log), corners, silences(log))
+    save_commercials(ep["id"], "unreliable" if breaks is None else "done", breaks, method=METHOD)
     print(f"[Commercials] {ep['show_title']} {ep['id']}: "
           f"{'show and ads could not be told apart' if breaks is None else f'{len(breaks)} breaks'}")
     return "unreliable" if breaks is None else "done"

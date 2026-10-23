@@ -46,6 +46,15 @@ class CommercialQueueTests(unittest.TestCase):
         db.save_commercials("a3", "done", [])
         self.assertEqual(self.ids(), [])
 
+    def test_unwatched_ones_found_by_the_old_detector_are_done_again(self):
+        # Colour alone found 47 s of a 4-minute Hell's Kitchen break; the logo finds all of it
+        self.settings["commercial_shows"] = ["showa"]
+        db.save_commercials("a1", "done", [{"start": 10.0, "end": 57.0}])  # method 1
+        db.save_commercials("a2", "done", [], method=commercials.METHOD)
+        self.assertEqual(self.ids(), ["a1"])
+        db.save_commercials("a1", "done", [{"start": 10.0, "end": 250.0}], method=commercials.METHOD)
+        self.assertEqual(self.ids(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

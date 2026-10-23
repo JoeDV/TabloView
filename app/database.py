@@ -216,6 +216,10 @@ def init_db():
         if "position" not in ep_cols:
             # Resume point in seconds, as stored on the Tablo (user_info.position)
             cursor.execute("ALTER TABLE episodes ADD COLUMN position INTEGER DEFAULT 0")
+        cm_cols = {r[1] for r in cursor.execute("PRAGMA table_info(commercials)").fetchall()}
+        if "method" not in cm_cols:
+            # Which detector found the breaks (app/commercials.py METHOD); older ones are redone
+            cursor.execute("ALTER TABLE commercials ADD COLUMN method INTEGER DEFAULT 1")
 
         # Indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_episodes_show_id ON episodes(show_id)")
@@ -476,14 +480,14 @@ def set_show_keep(show_id: str, keep: Dict[str, Any]) -> None:
 
 
 def save_commercials(episode_id: str, status: str, breaks: Optional[List[Dict[str, float]]] = None,
-                     error: Optional[str] = None) -> None:
+                     error: Optional[str] = None, method: int = 1) -> None:
     with get_connection() as conn:
         conn.execute("""
-            INSERT INTO commercials (episode_id, status, breaks_json, error, analyzed_at) VALUES (?, ?, ?, ?, ?)
+            INSERT INTO commercials (episode_id, status, breaks_json, error, analyzed_at, method) VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(episode_id) DO UPDATE SET status = excluded.status, breaks_json = excluded.breaks_json,
-                error = excluded.error, analyzed_at = excluded.analyzed_at
+                error = excluded.error, analyzed_at = excluded.analyzed_at, method = excluded.method
         """, (episode_id, status, json.dumps(breaks) if breaks is not None else None, error,
-              datetime.now(timezone.utc).isoformat()))
+              datetime.now(timezone.utc).isoformat(), method))
         conn.commit()
 
 
