@@ -2964,7 +2964,8 @@ PAGES.device = async (r, token) => {
           ${info.lan_pin_set ? '<button class="btn btn-sm btn-ghost" data-action="pin-signout">Sign out other devices</button>' : ''}
         </div>`
       : '<p class="dim" style="font-size:13px">When TabloView is started with its start script, only this computer can open it.</p>'}
-      ${info.listening_on_network && info.network_url ? `<p style="margin-top:12px">On other devices, open <b>${esc(info.network_url)}</b></p>` : ''}
+      ${info.listening_on_network && info.network_url ? `<p style="margin-top:12px">On other devices, open <b>${esc(info.network_url)}</b></p>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">In a TV's browser (Silk on Fire TV, TV Bro on Google TV), open <b>${esc(info.network_url)}/tv</b> for big screens you can use with the remote.</p>` : ''}
     </div>`;
 
   // Run from a start script (Mac, Linux, or from source): no tray icon, so stop it from here

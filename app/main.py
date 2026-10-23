@@ -319,6 +319,12 @@ async def serve_index():
     )
 
 
+@app.get("/tv")
+async def serve_tv():
+    """TabloView for a TV's browser: a few big screens for a remote (static/tv.js)."""
+    return FileResponse(str(STATIC_DIR / "tv.html"), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app.main:app", host=HOST, port=PORT, reload=False)
