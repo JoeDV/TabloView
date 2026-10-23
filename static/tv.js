@@ -147,6 +147,46 @@ async function showShow(id) {
   }).join('')}</div>`, '#/recordings');
 }
 
+async function showWatchlist() {
+  loading('#/watchlist');
+  let eps;
+  try { eps = (await api('/api/watchlist')).episodes || []; } catch (err) { return failed(err, '#/watchlist'); }
+  eps = eps.filter(e => e.recording_state !== 'recording');
+  state.watchList = eps;
+  if (!eps.length) {
+    return setScreen(`<div class="empty">Your Watch list is empty.<br>Add recordings to it on the PC (a recording's … menu, or select several),<br>then play them here one after another.</div>`, '#/watchlist');
+  }
+  setScreen(`<h1>Watch list</h1>
+    <div class="subtabs">
+      <button class="btn primary f" data-act="run" data-how="keep" data-from="0" data-key="run-keep">▶ Watch and keep</button>
+      <button class="btn f" data-act="run" data-how="delete" data-from="0" data-key="run-delete">Watch and delete</button>
+    </div>
+    <div class="dim" style="margin-bottom:1.6vw">They play one after another, picking up where you left off. With Watch and delete, each one is deleted from your Tablo once you've watched it to the end; ones you stop partway, and protected recordings, are kept.</div>
+    <div class="rows">${eps.map((e, i) => {
+      const left = e.position > 30 && e.status !== 'Watched' && e.duration ? ` · ${fmt.mins(e.duration - e.position)} left` : '';
+      return `<button class="row f" data-act="run-from" data-from="${i}" data-key="wl-${esc(e.id)}">
+        <div class="ch-num">${i + 1}</div>
+        <div class="thumb" ${art(e.snapshot_url || e.cover_url)}>${progressBar(e.status === 'Watched' ? 0 : e.position, e.duration)}</div>
+        <div class="body"><div class="name">${esc(e.show_title || '')}</div>
+          <div class="meta">${esc([fmt.se(e.season_number, e.episode_number), e.title !== e.show_title ? e.title : ''].filter(Boolean).join(' · '))}${e.duration ? ` · ${fmt.mins(e.actual_duration || e.duration)}` : ''}${left}${e.protected ? ' · Protected' : ''}</div></div>
+      </button>`;
+    }).join('')}</div>`, '#/watchlist');
+}
+
+// Play the Watch list from one of its recordings: keep or delete each once it's watched to the end
+async function startRun(from, how) {
+  const eps = (state.watchList || []).slice(from);
+  if (!eps.length) return;
+  if (!how) {
+    how = await choose(`Watch ${eps.length === 1 ? 'this recording' : `${eps.length} recordings in a row`}`,
+      "With Watch and delete, each one is deleted from your Tablo once you've watched it to the end. Ones you stop partway, and protected recordings, are kept.",
+      [{ label: 'Watch and keep', value: 'keep' }, { label: 'Watch and delete', value: 'delete' }]);
+    if (!how) return;
+  }
+  state.run = { eps, index: 0, deleteAfter: how === 'delete' };
+  player.playEpisode(eps[0].id, { run: true });
+}
+
 function nowNext(c, now = Date.now()) {
   const list = c.airings || [];
   const i = list.findIndex(a => { const s = new Date(a.air_datetime).getTime(); return s <= now && now < s + (a.duration || 0) * 1000; });
@@ -195,6 +235,7 @@ function route() {
   if (h === '#/recordings') return showRecordings();
   if (h.startsWith('#/show/')) return showShow(decodeURIComponent(h.slice(7)));
   if (h === '#/live') return showLive();
+  if (h === '#/watchlist') return showWatchlist();
   return showHome();
 }
 
@@ -271,22 +312,30 @@ const player = {
 
   message(text) {
     const m = $('#osdMsg');
+    m.style.whiteSpace = 'pre-line';
     m.textContent = text || '';
     m.classList.toggle('hidden', !text);
   },
 
-  async playEpisode(id) {
-    const ep = (state.episodes || []).find(e => e.id === id);
+  // run: playing the Watch list (picks up where you left off, without asking)
+  async playEpisode(id, { run = false } = {}) {
+    const ep = (run ? state.run.eps : state.episodes || []).find(e => e.id === id);
     if (!ep) return;
+    if (!run) state.run = null;
     let start = ep.program_start || 0;
-    if (ep.status !== 'Watched' && ep.position > 30) {
+    if (run) {
+      if (ep.status !== 'Watched' && ep.position > 30) start = ep.position;
+    } else if (ep.status !== 'Watched' && ep.position > 30) {
       const pick = await choose(ep.show_title || 'Recording', `You stopped at ${fmt.clock(ep.position)}.`,
         [{ label: `Resume at ${fmt.clock(ep.position)}`, value: 'resume' }, { label: 'Start over', value: 'start' }]);
       if (!pick) return;
       if (pick === 'resume') start = ep.position;
     }
+    const previous = this.open ? this.s.sessionId : null;  // the Watch list's recording before this one
     this.s = { kind: 'rec', id, ep, duration: ep.actual_duration || ep.duration || 0, shapeKey: ep.channel_identifier || ep.channel_name };
-    this.show(ep.show_title || 'Recording', [fmt.se(ep.season_number, ep.episode_number), ep.title !== ep.show_title ? ep.title : ''].filter(Boolean).join(' · '));
+    if (previous) { this.teardown(); await this.stopById(previous); }
+    const counter = run && state.run.eps.length > 1 ? ` · ${state.run.index + 1} of ${state.run.eps.length}` : '';
+    this.show(ep.show_title || 'Recording', [fmt.se(ep.season_number, ep.episode_number), ep.title !== ep.show_title ? ep.title : ''].filter(Boolean).join(' · ') + counter);
     await this.startRecording(start);
   },
 
@@ -456,8 +505,38 @@ const player = {
   ended() {
     if (this.s.kind !== 'rec') return;
     this.saveProgress(true);
-    this.message('Finished');
-    setTimeout(() => { if (this.open && location.hash === '#/play') history.back(); }, 2500);
+    const next = state.run && state.run.eps[state.run.index + 1];
+    if (!next) {
+      if (state.run) this.runFinished();
+      this.message(state.run ? 'That was the last one on your Watch list' : 'Finished');
+      setTimeout(() => { if (this.open && location.hash === '#/play') history.back(); }, 3000);
+      return;
+    }
+    // Watch list: the next one starts by itself in a few seconds (OK starts it now, Back stops)
+    let left = 8;
+    const title = [next.show_title, fmt.se(next.season_number, next.episode_number)].filter(Boolean).join(' · ');
+    const say = () => this.message(`Up next: ${title} in ${left} s\nOK to play it now · Back to stop`);
+    say();
+    this.upNext = setInterval(() => { left -= 1; if (left <= 0) this.playNext(); else say(); }, 1000);
+  },
+
+  playNext() {
+    clearInterval(this.upNext);
+    this.upNext = null;
+    if (!state.run || !state.run.eps[state.run.index + 1]) return;
+    this.runFinished();
+    state.run.index += 1;
+    this.playEpisode(state.run.eps[state.run.index].id, { run: true });
+  },
+
+  // The Watch list's current recording, if it was watched to the end: it comes off the list and,
+  // with Watch and delete, is deleted from the Tablo (never when it's protected there). Only on
+  // moving on or closing, as on the PC.
+  runFinished() {
+    const ep = state.run && state.run.eps[state.run.index];
+    if (!ep || ep.id !== this.s.id || !this.s.markedWatched || ep.finished) return;
+    ep.finished = true;
+    api(`/api/watchlist/${encodeURIComponent(ep.id)}/finished`, { method: 'POST', body: JSON.stringify({ delete: state.run.deleteAfter }) }).catch(() => {});
   },
 
   teardown() {
@@ -484,6 +563,10 @@ const player = {
   close(keepalive = false) {
     if (!this.open) return;
     this.saveProgress(true);
+    this.runFinished();
+    state.run = null;
+    clearInterval(this.upNext);
+    this.upNext = null;
     clearInterval(this.progressTimer);
     clearTimeout(this.surfTimer);
     this.teardown();
@@ -521,6 +604,7 @@ function onKey(e) {
   if (dialogDone && BACK_KEYS.includes(k)) { e.preventDefault(); dialogDone(null); return; }
 
   if (player.open && $('#dialog').classList.contains('hidden')) {
+    if (player.upNext && (k === 'Enter' || k === ' ')) { e.preventDefault(); player.playNext(); return; }
     const live = player.s.kind === 'live';
     const keys = {
       Enter: () => player.togglePlay(), ' ': () => player.togglePlay(), MediaPlayPause: () => player.togglePlay(),
@@ -549,13 +633,21 @@ function onClick(e) {
   const act = el.dataset.act;
   if (act === 'play') player.playEpisode(el.dataset.id);
   else if (act === 'tune') player.tune(el.dataset.id);
+  else if (act === 'run') startRun(Number(el.dataset.from), el.dataset.how);
+  else if (act === 'run-from') startRun(Number(el.dataset.from));
   else if (act === 'live-tab') { state.liveTab = el.dataset.tab; state.focus['#/live'] = `lt-${el.dataset.tab}`; showLive(); }
   else if (act === 'reload') location.reload();
+  else if (act === 'pc-view') {
+    try { localStorage.setItem('tv_view', 'pc'); } catch { /* the PC page opens anyway */ }
+    location.href = '/';
+  }
 }
 
 function tickClock() { $('#clock').textContent = fmt.time(Date.now()); }
 
 function init() {
+  // TV view is now this browser's view: the plain address opens it from here on (PC view undoes it)
+  try { localStorage.setItem('tv_view', 'tv'); } catch { /* storage unavailable: /tv still works */ }
   document.addEventListener('keydown', onKey);
   document.addEventListener('click', onClick);
   // A pointer (TV Bro's or Silk's cursor mode) moves the highlight too

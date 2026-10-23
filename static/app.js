@@ -3137,6 +3137,14 @@ PAGES.device = async (r, token) => {
           </select>
         </label>
         <p class="dim" style="margin-top:6px;font-size:12.5px">The page you see when TabloView opens, on this computer.</p>
+        <label class="switch-row" style="font-weight:400;cursor:default;margin-top:14px">
+          <span>View on this device</span>
+          <select class="select" data-change="view-mode" style="height:32px">
+            <option value="pc" selected>PC (all of TabloView)</option>
+            <option value="tv">TV (big screens for a remote)</option>
+          </select>
+        </label>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">TV view is for a TV's browser: Continue watching, Recordings, Live TV and your Watch list, used with the remote's arrows, OK and Back. This browser keeps opening in the view you choose; TV view has a PC view button to come back.</p>
       </div>
 `;
   const diagnosticsPanel = `
@@ -5227,6 +5235,11 @@ const CHANGES = {
   'show-cleanup': el => setCleanup(el),
   'buffer': el => { state.bufferTarget = parseInt(el.value, 10) || 8; save('tablo_buffer_target', state.bufferTarget); toast(`Buffer set to ${state.bufferTarget} seconds`); },
   'autoplay': el => { state.autoplay = el.checked; save('tablo_autoplay', el.checked ? '1' : '0'); },
+  'view-mode': el => {
+    if (el.value !== 'tv') return;
+    save('tv_view', 'tv');
+    location.href = '/tv';
+  },
   'start-page': el => {
     save('tv_start_page', el.value);
     toast(`TabloView will open on ${START_PAGES.find(([v]) => v === el.value)[1]}`);
@@ -5497,6 +5510,8 @@ function wireEvents() {
 // Boot
 // ---------------------------------------------------------------------------
 async function init() {
+  // This browser chose TV view (Device → Appearance, or by opening /tv): go straight there
+  if (store('tv_view', 'pc') === 'tv') { location.replace('/tv'); return; }
   hydrateIcons();
   wireEvents();
   await loadStatus();
