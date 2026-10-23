@@ -35,6 +35,14 @@ class SettingsUpdate(BaseModel):
     skip_dropouts: Optional[bool] = None
 
 
+PRIVATE_SETTINGS = ("lan_pin", "lan_secret")
+
+
+class PictureShapeRequest(BaseModel):
+    channel: str = Field(min_length=1, max_length=80)  # the Tablo's channel identifier (or call sign)
+    shape: Literal["auto", "4:3", "16:9", "zoom"]
+
+
 class ExportFolderRequest(BaseModel):
     path: Optional[str] = None  # None = back to the default (Downloads\\TabloView)
 
@@ -215,9 +223,25 @@ async def update_status(force: bool = False):
     return await check_for_update(force=force)
 
 
+@router.post("/settings/picture_shape")
+async def set_picture_shape(req: PictureShapeRequest):
+    """The player's picture shape for one channel, for diginets that send the wrong shape (squeezed,
+    stretched, or boxed in black). Kept here rather than per browser, so a TV's browser gets it too."""
+    shapes = dict(load_settings().get("picture_shapes") or {})
+    if req.shape == "auto":
+        shapes.pop(req.channel, None)
+    else:
+        shapes[req.channel] = req.shape
+    save_settings({"picture_shapes": shapes})
+    return {"picture_shapes": shapes}
+
+
 @router.get("/settings")
 async def get_settings(request: Request):
-    return {**load_settings(), "can_apply_now": hasattr(request.app.state, "request_restart")}
+    # Never the PIN's hash or the secret that signs remembered devices: with those, a device could
+    # find the PIN or stay signed in after "sign out all devices"
+    settings = {k: v for k, v in load_settings().items() if k not in PRIVATE_SETTINGS}
+    return {**settings, "can_apply_now": hasattr(request.app.state, "request_restart")}
 
 
 @router.post("/settings")
@@ -234,6 +258,7 @@ async def update_settings(update: SettingsUpdate, request: Request):
     if restart:
         # Let this response go out first, then rebind
         asyncio.get_running_loop().call_later(0.5, restart)
+    saved = {k: v for k, v in saved.items() if k not in PRIVATE_SETTINGS}
     return {**saved, "restarting": bool(restart), "restart_required": needs_restart and not restart}
 
 

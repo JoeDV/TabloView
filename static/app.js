@@ -3257,6 +3257,101 @@ async function runInspector() {
 // ---------------------------------------------------------------------------
 // Player
 // ---------------------------------------------------------------------------
+// Picture shape, per channel: some diginets send 480i with the wrong shape (squeezed or stretched),
+// or a 16:9 show boxed in black inside a 4:3 picture. 4:3 and 16:9 force that shape; Zoom enlarges
+// the picture by a third, as a TV's Zoom does, cropping the black box. Kept in TabloView's settings so
+// a TV's browser gets the same choice. Done by sizing the video element, so it costs no conversion.
+const pictureShape = {
+  SHAPES: ['auto', '4:3', '16:9', 'zoom'],  // in the menu's order
+  NAMES: { auto: 'Auto', '4:3': '4:3', '16:9': '16:9', zoom: 'Zoom' },
+  shapes: null,  // channel -> shape, from /api/settings
+
+  async load() {
+    if (this.shapes) return;
+    try { this.shapes = (await api('/api/settings')).picture_shapes || {}; } catch { this.shapes = {}; }
+    this.layoutAll();
+  },
+
+  of: key => (key && pictureShape.shapes && pictureShape.shapes[key]) || 'auto',
+
+  // The picture you're looking at (with two channels, the one you're hearing)
+  target() {
+    if (dual.on && dual.active === 'second') return { video: $('#video2'), key: dual.s.channelId, name: dual.s.name };
+    const s = state.stream;
+    return { video: $('#video'), key: s.shapeKey, name: s.channelName || s.shapeName };
+  },
+
+  apply(video, key) {
+    video.dataset.shapeKey = key || '';
+    if (!this.observer && window.ResizeObserver) {
+      // Full screen, the two-channel layouts and window resizes change the pane's size
+      this.observer = new ResizeObserver(() => this.layoutAll());
+      this.observer.observe($('#paneMain'));
+      this.observer.observe($('#paneSecond'));
+    }
+    this.layout(video);
+    this.render();
+    this.load();
+  },
+
+  layoutAll() {
+    this.layout($('#video'));
+    this.layout($('#video2'));
+    this.render();
+  },
+
+  layout(video) {
+    const shape = this.of(video.dataset.shapeKey);
+    const st = video.style;
+    Object.assign(st, { position: '', left: '', top: '', width: '', height: '', objectFit: '', transform: '' });
+    if (shape === 'zoom') { st.transform = 'scale(1.3333)'; return; }
+    if (shape === 'auto') return;
+    // Stretch the picture into the biggest box of that shape that fits the pane
+    const pane = video.parentElement, W = pane.clientWidth, H = pane.clientHeight;
+    if (!W || !H) return;
+    const ratio = shape === '4:3' ? 4 / 3 : 16 / 9;
+    let w = W, h = W / ratio;
+    if (h > H) { h = H; w = H * ratio; }
+    Object.assign(st, { position: 'absolute', left: `${(W - w) / 2}px`, top: `${(H - h) / 2}px`,
+      width: `${w}px`, height: `${h}px`, objectFit: 'fill' });
+  },
+
+  render() {
+    const btn = $('#pbShape');
+    const { key } = this.target();
+    const shape = this.of(key);
+    btn.classList.toggle('hidden', !key);
+    btn.classList.toggle('on', shape !== 'auto');
+    btn.textContent = this.NAMES[shape];
+    btn.title = shape === 'auto' ? 'Picture shape: as the channel sends it (A)' : `Picture shape: ${this.NAMES[shape]} for this channel (A)`;
+  },
+
+  async menu(anchor) {
+    const { key } = this.target();
+    if (!key) return;
+    await this.load();
+    const now = this.of(key);
+    const labels = { auto: 'Auto (as the channel sends it)', '4:3': '4:3', '16:9': '16:9 (widescreen)', zoom: 'Zoom (crops black bars)' };
+    openMenu(anchor, [
+      { heading: 'Picture shape for this channel' },
+      ...this.SHAPES.map(shape => ({ label: labels[shape], checked: now === shape, run: () => this.set(shape) })),
+    ]);
+  },
+
+  async set(shape) {
+    const { video, key, name } = this.target();
+    if (!key) return;
+    if (shape === 'auto') delete this.shapes[key]; else this.shapes[key] = shape;
+    this.layout(video);
+    this.render();
+    toast(shape === 'auto' ? `${name || 'This channel'}: picture as the channel sends it`
+      : `${name || 'This channel'}: ${this.NAMES[shape]}, for this channel from now on`);
+    try {
+      this.shapes = (await api('/api/settings/picture_shape', { method: 'POST', body: JSON.stringify({ channel: key, shape }) })).picture_shapes;
+    } catch (err) { toast(`Couldn't save it: ${err.message}`, 'error'); }
+  },
+};
+
 const player = {
   el: () => $('#player'),
   video: () => $('#video'),
@@ -3305,6 +3400,7 @@ const player = {
       breaks: sameEpisode ? state.stream.breaks : [], skippedBreaks: sameEpisode ? state.stream.skippedBreaks : new Set(),
       dropouts: sameEpisode ? state.stream.dropouts : [], skippedDropouts: sameEpisode ? state.stream.skippedDropouts : new Set(),
       episodeId: id, channelId: null, offset: start,
+      shapeKey: ep ? ep.channel_identifier || ep.channel_name || null : null, shapeName: ep ? ep.channel_name : '',
       duration: ep ? ep.actual_duration || ep.duration || 0 : 0,
       lastSaved: start, markedWatched: false,
       // The show itself ends here; the recording runs on a little past it
@@ -3501,7 +3597,7 @@ const player = {
     const keys = [['Space or K', 'Play / pause'], ['← or J', 'Back 10 seconds'], ['→ or L', 'Ahead 30 seconds'],
       ['↑ ↓', 'Volume'], ['M', 'Mute'], ['F', 'Full screen'], ['P', 'Picture in picture'],
       ['&lt; &gt;', 'Slower / faster (recordings)'], ['Home', 'Back to live (live TV)'],
-      ['Page Up / Down', 'Previous / next channel (live TV)'], ['S', 'Skip a commercial break'], ['T', 'Captions on / off'], ['2', 'Watch a live channel alongside'], ['Tab', 'Hear the other channel'], ['L', 'Layout of two channels'], ['C', 'Channel list (live TV)'], ['↑ ↓ / Page Up / Down', 'In the channel list: move through it (Enter picks)'], ['Esc', 'Close the player']];
+      ['Page Up / Down', 'Previous / next channel (live TV)'], ['S', 'Skip a commercial break'], ['T', 'Captions on / off'], ['A', 'Picture shape for this channel'], ['2', 'Watch a live channel alongside'], ['Tab', 'Hear the other channel'], ['L', 'Layout of two channels'], ['C', 'Channel list (live TV)'], ['↑ ↓ / Page Up / Down', 'In the channel list: move through it (Enter picks)'], ['Esc', 'Close the player']];
     openModal(`<div class="dialog-body"><div class="dialog-title">Keyboard shortcuts</div>
       <div class="kbd-list">${keys.map(([k, d]) => `<kbd>${k}</kbd><span>${d}</span>`).join('')}</div></div>
       <div class="dialog-foot"><button class="btn btn-primary" data-action="modal-ok" data-autofocus>Got it</button></div>`);
@@ -3798,7 +3894,7 @@ const player = {
     this.hideUpNext();
     this.clearMessage();
     Object.assign(state.stream, { channelId, channelName: name, channelKind: kind, episodeId: null,
-                                  stallSince: 0, stallShown: false });
+                                  shapeKey: channelId, stallSince: 0, stallShown: false });
     this.showTimeline(true);
     this.open(`Live · ${name}`);
     this.setStatus(`<span class="wait">Tuning ${esc(name)}…</span>`);
@@ -4047,6 +4143,7 @@ const player = {
     const video = this.video();
     const target = state.bufferTarget;
     this.teardown();
+    pictureShape.apply(video, state.stream.shapeKey);
 
     if (window.Hls && Hls.isSupported()) {
       const hls = new Hls({
@@ -4522,6 +4619,7 @@ const dual = {
     try {
       const res = await api('/api/live/tune', { method: 'POST', body: JSON.stringify({ channel_id: channelId, transcode: true, kind }) });
       this.s = { channelId, name, kind, sessionId: res.session_id, url: res.stream_url };
+      pictureShape.apply(v, channelId);
     } catch (err) {
       toast(`Couldn't tune ${name}: ${err.message}`, 'error');
       return false;
@@ -4593,6 +4691,7 @@ const dual = {
     $('#paneSecond').classList.remove('active', 'buzz');
     this.applySound();
     player.applyCaptions();
+    pictureShape.render();
     if (player.isOpen()) player.showTimeline(true);
     setTimeout(checkTuners, 1000);
   },
@@ -4607,7 +4706,7 @@ const dual = {
     player.teardown();
     this.teardown();
     this.s = {};
-    Object.assign(state.stream, { episodeId: null, channelId: s.channelId, channelName: s.name, channelKind: s.kind, sessionId: s.sessionId });
+    Object.assign(state.stream, { episodeId: null, channelId: s.channelId, channelName: s.name, channelKind: s.kind, sessionId: s.sessionId, shapeKey: s.channelId });
     $('#playerTitle').textContent = `Live · ${s.name}`;
     this.end();
     player.start(s.url, 'Live');
@@ -4617,6 +4716,7 @@ const dual = {
     if (!this.on) return;
     this.active = this.active === 'main' ? 'second' : 'main';
     this.applySound();
+    pictureShape.render();
     player.renderChannels();
   },
 
@@ -4960,6 +5060,7 @@ const ACTIONS = {
   'pb-pip': () => player.togglePip(),
   'pb-live': () => player.goLive(),
   'pb-help': () => player.showHelp(),
+  'pb-shape': el => pictureShape.menu(el),
   'export-folder': el => chooseExportFolder(el),
   'export-folder-reset': async () => {
     try { await api('/api/system/export_folder', { method: 'POST', body: JSON.stringify({ path: null }) }); toast('Exports will be saved to Downloads\\TabloView again'); route(); }
@@ -5300,6 +5401,7 @@ function wireEvents() {
       c: () => { if (state.stream.channelId) player.toggleChannels(); },
       s: () => { if (!$('#skipBreak').classList.contains('hidden')) player.skipBreak(); },
       t: () => player.toggleCaptions(),
+      a: () => pictureShape.menu($('#pbShape')),
       2: () => dual.add(),
       l: () => dual.cycleLayout(),
       Tab: () => { if (dual.on) dual.swap(); },

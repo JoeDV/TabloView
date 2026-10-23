@@ -392,7 +392,10 @@ def recording_details(raw_json: Any) -> Dict[str, Any]:
     # recorded_offsets.end: seconds past the scheduled end (negative = stopped early)
     ended_early = -int((vd.get("recorded_offsets") or {}).get("end") or 0)
     snap = (raw.get("snapshot_image") or {}).get("image_id")
+    channel = ((raw.get("airing_details") or {}).get("channel") or {}).get("channel") or {}
     return {
+        # The same identifier live TV uses for the channel (the player's picture shape is per channel)
+        "channel_identifier": channel.get("channel_identifier"),
         "recording_state": state,
         "recording_error": vd.get("error"),
         "actual_duration": vd.get("duration"),

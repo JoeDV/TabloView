@@ -680,7 +680,7 @@ button.tuner-pill:hover { border-color: var(--border-strong); color: var(--text)
 .player video { width: 100%; height: 100%; object-fit: contain; background: #000; }
 /* Two channels at once: side by side, big and small, or one full screen (the other keeps playing) */
 .panes { position: absolute; inset: 0; display: flex; background: #000; }
-.pane { position: relative; flex: 1; min-width: 0; }
+.pane { position: relative; flex: 1; min-width: 0; overflow: hidden; }  /* Zoom crops at the pane's edges */
 .pane-label, .pane-close { display: none; }
 .player.dual .pane-label {
   display: flex; align-items: center; gap: 6px; position: absolute; left: 12px; top: 64px; z-index: 2; pointer-events: none;
@@ -723,7 +723,8 @@ button.tuner-pill:hover { border-color: var(--border-strong); color: var(--text)
 .pb-btn:hover { background: rgba(255,255,255,0.14); }
 .pb-main { width: 46px; height: 46px; }
 .pb-sleep { width: auto; min-width: 38px; padding: 0 9px; border-radius: 19px; gap: 5px; display: inline-flex; align-items: center; justify-content: center; font-size: 12.5px; font-weight: 600; }
-.pb-sleep.on, .pb-cc.on { background: rgba(91,140,255,0.28); }
+.pb-sleep.on, .pb-cc.on, .pb-shape.on { background: rgba(91,140,255,0.28); }
+.pb-shape { width: auto; min-width: 46px; padding: 0 10px; border-radius: 19px; font-size: 12.5px; font-weight: 600; }
 .pb-record { width: auto; min-width: 38px; padding: 0 11px; border-radius: 19px; gap: 6px; display: inline-flex; align-items: center; font-size: 12.5px; font-weight: 600; }
 .pb-record .rec-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--rec); flex-shrink: 0; }
 .pb-record.on { background: rgba(239, 76, 76, 0.22); color: #ff9b9b; cursor: default; opacity: 1; }
