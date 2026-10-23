@@ -3362,6 +3362,7 @@ const pictureShape = {
 };
 
 const player = {
+  startGen: 0,  // each recording stream asked for; a later one overtakes an earlier one still starting
   el: () => $('#player'),
   video: () => $('#video'),
   // With two channels open, play/pause and picture-in-picture act on the one you're hearing
@@ -3429,7 +3430,13 @@ const player = {
     this.open(title);
     this.setStatus(`<span class="wait">${resuming ? `Resuming at ${fmtClock(start)}…` : 'Starting stream…'}</span>`);
     try {
+      const gen = ++this.startGen;
       const res = await api(`/api/episodes/${encodeURIComponent(id)}/watch?transcode=true&start=${start}`, { method: 'POST' });
+      // Overtaken by a newer start (quick jumps) or closed meanwhile: stop this one, or it runs on unused
+      if (gen !== this.startGen || state.stream.episodeId !== id) {
+        fetch('/api/live/stop', { method: 'POST', headers: API_HEADERS, body: JSON.stringify({ session_id: res.session_id }) }).catch(() => {});
+        return;
+      }
       state.stream.sessionId = res.session_id;
       if (!sameEpisode || !(state.stream.previewTimes || []).length) this.loadPreviews(id);
       this.start(res.stream_url, start && (resuming || typeof mode === 'number') ? `Resumed at ${fmtClock(start)}` : 'Recording');

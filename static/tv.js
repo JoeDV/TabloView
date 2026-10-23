@@ -425,13 +425,19 @@ const player = {
 
   async startRecording(start) {
     const s = this.s;
+    // Each start overtakes the one before: a stream that arrives after a newer start was asked for
+    // is stopped at once (quick skips each left an FFmpeg running, seven at a time)
+    const gen = s.gen = (s.gen || 0) + 1;
+    clearTimeout(this.seekTimer);
+    this.pendingSeek = null;
+    this.teardown();
     await this.stopSession();
     s.offset = start;
     s.lastSaved = start;
     this.message('Starting…');
     try {
       const res = await api(`/api/episodes/${encodeURIComponent(s.id)}/watch?transcode=true&start=${Math.floor(start)}`, { method: 'POST' });
-      if (this.s !== s) return this.stopById(res.session_id);  // closed while it was starting
+      if (this.s !== s || s.gen !== gen) return this.stopById(res.session_id);  // closed, or overtaken
       s.sessionId = res.session_id;
       this.attach(res.stream_url);
       clearInterval(this.progressTimer);
@@ -523,7 +529,10 @@ const player = {
     this.tickTimer = setInterval(() => this.tick(), 500);
   },
 
-  position() { return Math.floor((this.s.offset || 0) + (this.video().currentTime || 0)); },
+  position() {
+    if (this.pendingSeek !== null && this.pendingSeek !== undefined) return this.pendingSeek;  // a jump about to start
+    return Math.floor((this.s.offset || 0) + (this.video().currentTime || 0));
+  },
 
   liveWindow() {
     const v = this.video();
@@ -567,8 +576,12 @@ const player = {
     const w = this.liveWindow();  // for a recording: what's converted so far
     // Within what's been converted: jump there; earlier than the stream starts or past what's
     // converted, start the stream again at that point
-    if (rel >= 0 && w && rel <= w.end - 1) v.currentTime = rel;
-    else this.startRecording(target);
+    if (this.pendingSeek == null && rel >= 0 && w && rel <= w.end - 1) { v.currentTime = rel; return; }
+    // Wait for the presses to stop, then start the stream once at the total (▶▶▶ = one 90 s jump)
+    this.pendingSeek = target;
+    this.tick();
+    clearTimeout(this.seekTimer);
+    this.seekTimer = setTimeout(() => this.startRecording(this.pendingSeek), 800);
   },
 
   // Save the resume point on the Tablo; near the end, mark the recording watched instead
@@ -646,6 +659,9 @@ const player = {
 
   close(keepalive = false) {
     if (!this.open) return;
+    clearTimeout(this.seekTimer);
+    this.pendingSeek = null;
+    if (this.s.kind === 'rec') this.s.gen = (this.s.gen || 0) + 1;  // a stream still starting is stopped when it arrives
     this.saveProgress(true);
     this.runFinished();
     state.run = null;
