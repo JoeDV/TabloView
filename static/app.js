@@ -3340,7 +3340,10 @@ const pictureShape = {
     if (!key) return;
     await this.load();
     const now = this.of(key);
-    const labels = { auto: 'Auto (as the channel sends it)', '4:3': '4:3', '16:9': '16:9 (widescreen)', zoom: 'Zoom (crops black bars)' };
+    // Named by what you see, not the format: forcing a shape on a picture that was right distorts it,
+    // and Zoom on an ordinary 4:3 show crops real picture off the top and bottom
+    const labels = { auto: 'Auto: as the channel sends it', '4:3': '4:3: when people look too wide',
+      '16:9': '16:9: when people look too thin', zoom: 'Zoom: black bars on all four sides (crops the edges)' };
     openMenu(anchor, [
       { heading: 'Picture shape for this channel' },
       ...this.SHAPES.map(shape => ({ label: labels[shape], checked: now === shape, run: () => this.set(shape) })),

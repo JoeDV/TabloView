@@ -320,7 +320,7 @@ const player = {
   // Shape: the choices in place of the buttons, the current one highlighted
   showShapes() {
     const now = shapeOf(this.s.shapeKey);
-    this.controlList = SHAPES.map(v => [v, SHAPE_NAMES[v] + (v === 'auto' ? ' (as sent)' : '')]);
+    this.controlList = SHAPES.map(v => [v, SHAPE_NAMES[v]]);
     this.controlIndex = SHAPES.indexOf(now);
     this.shapeMenu = true;
     this.renderControls();
@@ -341,7 +341,10 @@ const player = {
 
   renderControls() {
     const box = $('#osdControls');
-    box.innerHTML = this.controlList.map(([, label], i) => `<button class="ctl ${i === this.controlIndex ? 'on' : ''}" data-ctl="${i}">${esc(label)}</button>`).join('');
+    // The shape choices are short names; the highlighted one is explained underneath
+    const hint = this.shapeMenu ? SHAPE_HINTS[this.controlList[this.controlIndex][0]] : '';
+    box.innerHTML = `<div class="ctl-row">${this.controlList.map(([, label], i) => `<button class="ctl ${i === this.controlIndex ? 'on' : ''}" data-ctl="${i}">${esc(label)}</button>`).join('')}</div>`
+      + (hint ? `<div class="ctl-hint">${esc(hint)}</div>` : '');
     box.classList.remove('hidden');
     this.wake();
     clearTimeout(this.controlsTimer);
@@ -683,6 +686,9 @@ const player = {
 // saved for the channel, so either view can set them
 const SHAPES = ['auto', '4:3', '16:9', 'zoom'];
 const SHAPE_NAMES = { auto: 'Auto', '4:3': '4:3', '16:9': '16:9', zoom: 'Zoom' };
+// When to use each, by what you see (forcing a shape on a picture that was right distorts it)
+const SHAPE_HINTS = { auto: 'As the channel sends it', '4:3': 'For when people look too wide',
+  '16:9': 'For when people look too thin', zoom: 'For black bars on all four sides; crops the edges' };
 const shapeOf = key => (key && state.shapes[key]) || 'auto';
 
 function applyShape(video, key) {
