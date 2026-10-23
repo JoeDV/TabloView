@@ -304,14 +304,39 @@ const player = {
   },
 
   // OK: Pause, skip, Back to live, Close
-  showControls() {
+  // OK: Pause, skip, Back to live, Shape, Close
+  showControls(index = 0) {
     const live = this.s.kind === 'live';
+    const shape = this.s.shapeKey ? [['shape', `Shape: ${SHAPE_NAMES[shapeOf(this.s.shapeKey)]}`]] : [];
     this.controlList = live
-      ? [['pause', this.video().paused ? '▶ Play' : '❚❚ Pause'], ['live', 'Back to live'], ['close', '✕ Close']]
-      : [['pause', this.video().paused ? '▶ Play' : '❚❚ Pause'], ['back', '◀◀ 10 s'], ['fwd', '30 s ▶▶'], ['close', '✕ Close']];
-    this.controlIndex = 0;
+      ? [['pause', this.video().paused ? '▶ Play' : '❚❚ Pause'], ['live', 'Back to live'], ...shape, ['close', '✕ Close']]
+      : [['pause', this.video().paused ? '▶ Play' : '❚❚ Pause'], ['back', '◀◀ 10 s'], ['fwd', '30 s ▶▶'], ...shape, ['close', '✕ Close']];
+    this.controlIndex = Math.min(index, this.controlList.length - 1);
     this.controls = true;
+    this.shapeMenu = false;
     this.renderControls();
+  },
+
+  // Shape: the choices in place of the buttons, the current one highlighted
+  showShapes() {
+    const now = shapeOf(this.s.shapeKey);
+    this.controlList = SHAPES.map(v => [v, SHAPE_NAMES[v] + (v === 'auto' ? ' (as sent)' : '')]);
+    this.controlIndex = SHAPES.indexOf(now);
+    this.shapeMenu = true;
+    this.renderControls();
+  },
+
+  async pickShape(shape) {
+    const key = this.s.shapeKey;
+    if (shape === 'auto') delete state.shapes[key]; else state.shapes[key] = shape;
+    applyShape(this.video(), key);
+    this.showControls();  // back to the buttons, on Shape
+    this.controlIndex = this.controlList.findIndex(([v]) => v === 'shape');
+    this.renderControls();
+    try {
+      const res = await api('/api/settings/picture_shape', { method: 'POST', body: JSON.stringify({ channel: key, shape }) });
+      state.shapes = res.picture_shapes || state.shapes;
+    } catch (err) { this.message(`Couldn't save the shape: ${err.message}`); setTimeout(() => this.message(''), 4000); }
   },
 
   renderControls() {
@@ -330,6 +355,8 @@ const player = {
 
   pressControl() {
     const what = this.controlList[this.controlIndex][0];
+    if (this.shapeMenu) { this.pickShape(what); return; }
+    if (what === 'shape') { this.showShapes(); return; }
     if (what === 'close') { this.hideControls(); this.exit(); return; }
     if (what === 'pause') this.togglePlay();
     else if (what === 'back') this.skip(-10);
@@ -341,6 +368,7 @@ const player = {
 
   hideControls() {
     this.controls = false;
+    this.shapeMenu = false;
     clearTimeout(this.controlsTimer);
     $('#osdControls').classList.add('hidden');
   },
@@ -632,9 +660,14 @@ const player = {
   },
 };
 
-// Picture shape for the channel, as chosen in the PC player (4:3, 16:9 or Zoom; Auto = as sent)
+// Picture shape per channel (4:3, 16:9 or Zoom; Auto = as sent): the same choices as the PC player,
+// saved for the channel, so either view can set them
+const SHAPES = ['auto', '4:3', '16:9', 'zoom'];
+const SHAPE_NAMES = { auto: 'Auto', '4:3': '4:3', '16:9': '16:9', zoom: 'Zoom' };
+const shapeOf = key => (key && state.shapes[key]) || 'auto';
+
 function applyShape(video, key) {
-  const shape = (key && state.shapes[key]) || 'auto';
+  const shape = shapeOf(key);
   const st = video.style;
   Object.assign(st, { left: '', top: '', width: '', height: '', objectFit: '', transform: '' });
   if (shape === 'zoom') { st.transform = 'scale(1.3333)'; return; }
@@ -666,6 +699,7 @@ function onKey(e) {
       e.preventDefault();
       if (k === 'ArrowLeft' || k === 'ArrowRight') player.moveControl(k === 'ArrowLeft' ? -1 : 1);
       else if (k === 'Enter' || k === ' ') player.pressControl();
+      else if (player.shapeMenu && (isBack(e) || k === 'ArrowUp' || k === 'ArrowDown')) player.showControls();
       else if (isBack(e) || k === 'ArrowUp' || k === 'ArrowDown') player.hideControls();
       return;
     }
