@@ -293,8 +293,11 @@ class TranscodeManager:
 
         return "\n".join(lines)
 
-    async def proxy_hls_request(self, session_id: str, subpath: str, query_string: str = "") -> Response:
-        """Proxy HLS segments and manifests from Tablo device."""
+    async def proxy_hls_request(self, session_id: str, subpath: str, query_string: str = "",
+                                range_header: Optional[str] = None) -> Response:
+        """Proxy HLS segments and manifests from Tablo device. A recording is one big file read in
+        byte ranges (#EXT-X-BYTERANGE): the player's Range is passed on, or every piece fetched and
+        sent the whole recording, and VLC/FFmpeg gave up ("Unexpected offset")."""
         sess = self.get_session(session_id)
         if not sess:
             return Response(content="Session expired or not found", status_code=404)
@@ -310,8 +313,9 @@ class TranscodeManager:
         hls_type = "application/vnd.apple.mpegurl"
 
         try:
-            resp = await self._http.get(target_url, timeout=15)
-            if resp.status_code != 200:
+            headers = {"Range": range_header} if range_header and not subpath.endswith(".m3u8") else None
+            resp = await self._http.get(target_url, headers=headers, timeout=15)
+            if resp.status_code not in (200, 206):
                 return Response(content=resp.content, status_code=resp.status_code)
 
             content_type = resp.headers.get("content-type", "")
@@ -327,15 +331,15 @@ class TranscodeManager:
                     }
                 )
 
-            # Transport stream segment (.ts)
+            # Transport stream segment (.ts), or a byte range of a recording's one file
+            out_headers = {"Cache-Control": "max-age=3600", "Access-Control-Allow-Origin": "*", "Accept-Ranges": "bytes"}
+            if resp.status_code == 206 and resp.headers.get("content-range"):
+                out_headers["Content-Range"] = resp.headers["content-range"]
             return Response(
                 content=resp.content,
+                status_code=resp.status_code,
                 media_type="video/mp2t" if subpath.endswith(".ts") else content_type,
-                headers={
-                    "Cache-Control": "max-age=3600",
-                    "Access-Control-Allow-Origin": "*",
-                    "Accept-Ranges": "bytes"
-                }
+                headers=out_headers,
             )
         except Exception as e:
             return Response(content=f"Proxy error: {e}", status_code=502)

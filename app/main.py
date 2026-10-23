@@ -237,7 +237,7 @@ async def export_relay(relay_id: str, name: str):
 async def proxy_hls_stream(session_id: str, subpath: str, request: Request):
     """Proxy HLS segments and manifests with URL rewriting."""
     query_str = str(request.url.query)
-    return await transcode_manager.proxy_hls_request(session_id, subpath, query_str)
+    return await transcode_manager.proxy_hls_request(session_id, subpath, query_str, request.headers.get("range"))
 
 
 @app.get("/api/transcoded/{session_id}/{filename:path}")
