@@ -6,3 +6,5 @@ tablo-api>=0.1.2
 python-dotenv>=1.0.1
 requests>=2.31.0
 aiofiles>=24.1.0
+# HTTPS trust store (via httpx/requests): 2026.10.19 drops emSign CAs whose intermediate keys leaked
+certifi>=2026.10.19

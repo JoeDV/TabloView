@@ -38,6 +38,18 @@ class PickFolderTests(unittest.TestCase):
         r = self.pick(stderr=b"Add-Type : Cannot add type.", returncode=1)
         self.assertEqual(r.status_code, 500)
 
+    def test_the_start_folder_is_not_in_the_script(self):
+        # A folder named with a curly quote (Joe’s Videos) ended PowerShell's quoted string early
+        client = TestClient(app, base_url="http://127.0.0.1:7070", client=("127.0.0.1", 50000))
+        run = mock.Mock(return_value=subprocess.CompletedProcess([], 0, b"CANCELLED", b""))
+        with mock.patch.object(system.sys, "platform", "win32"), mock.patch.object(system.subprocess, "run", new=run), \
+                mock.patch.object(system.subprocess, "CREATE_NO_WINDOW", 0x08000000, create=True), \
+                mock.patch.object(system, "exports_dir", return_value=system.Path("D:/Joe’s Videos")):
+            client.post("/api/system/pick_folder", headers=HDR)
+        args, kwargs = run.call_args
+        self.assertNotIn("Joe’s", args[0][-1])
+        self.assertIn("Joe’s", kwargs["env"]["TABLOVIEW_PICK_START"])
+
     def test_no_powershell_is_an_error(self):
         self.assertEqual(self.pick(error=FileNotFoundError("powershell")).status_code, 500)
 

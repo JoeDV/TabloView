@@ -35,6 +35,11 @@ class PictureShapeTests(unittest.TestCase):
         self.shape("S19593_013_02", "auto")
         self.assertEqual(load_settings()["picture_shapes"], {})
 
+    def test_the_list_has_a_limit(self):
+        save_settings({"picture_shapes": {f"S{i}": "4:3" for i in range(500)}})
+        self.assertEqual(self.shape("S_new", "zoom").status_code, 400)
+        self.assertEqual(self.shape("S1", "zoom").status_code, 200)  # changing one already there is fine
+
     def test_only_known_shapes(self):
         self.assertEqual(self.shape("S19593_013_02", "21:9").status_code, 422)
 

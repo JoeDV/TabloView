@@ -1,6 +1,7 @@
 """System status, hard drive storage metrics, library refresh, and export tracking."""
 
 import asyncio
+import os
 import shutil
 import subprocess
 import sys
@@ -36,6 +37,7 @@ class SettingsUpdate(BaseModel):
 
 
 PRIVATE_SETTINGS = ("lan_pin", "lan_secret")
+MAX_PICTURE_SHAPES = 500  # far more channels than a lineup has; keeps settings.json small
 
 
 class PictureShapeRequest(BaseModel):
@@ -184,7 +186,6 @@ async def pick_folder(request: Request):
     _only_this_pc(request)
     if sys.platform != "win32":
         raise HTTPException(status_code=400, detail="The folder picker is only available on Windows")
-    start = str(exports_dir()).replace("'", "''")
     # The owner is an invisible window that's shown and activated first: an owner that was never shown
     # left the picker opening behind other windows (or not visibly at all), and nothing said so.
     # PICKED:/CANCELLED tell a choice from a PowerShell that failed (blocked by security software,
@@ -193,15 +194,18 @@ async def pick_folder(request: Request):
         "[Console]::OutputEncoding = [Text.Encoding]::UTF8; Add-Type -AssemblyName System.Windows.Forms; "
         "$d = New-Object System.Windows.Forms.FolderBrowserDialog; "
         "$d.Description = 'Where should TabloView save MP4 exports?'; $d.ShowNewFolderButton = $true; "
-        f"$d.SelectedPath = '{start}'; "
+        "$d.SelectedPath = $env:TABLOVIEW_PICK_START; "
         "$owner = New-Object System.Windows.Forms.Form -Property @{TopMost = $true; ShowInTaskbar = $false; "
         "Opacity = 0; FormBorderStyle = 'None'; StartPosition = 'CenterScreen'; Width = 1; Height = 1}; "
         "$owner.Show(); $owner.Activate(); "
         "if ($d.ShowDialog($owner) -eq 'OK') { 'PICKED:' + $d.SelectedPath } else { 'CANCELLED' }; $owner.Close()"
     )
     try:
+        # The starting folder goes in through the environment, not the script: PowerShell also ends a
+        # quoted string at curly quotes, so a folder like "Joe’s Videos" would break it
         r = await asyncio.to_thread(subprocess.run, ["powershell", "-NoProfile", "-STA", "-Command", script],
-                                    capture_output=True, timeout=600, creationflags=subprocess.CREATE_NO_WINDOW)
+                                    capture_output=True, timeout=600, creationflags=subprocess.CREATE_NO_WINDOW,
+                                    env={**os.environ, "TABLOVIEW_PICK_START": str(exports_dir())})
     except subprocess.TimeoutExpired:
         return {"path": None}
     except OSError as e:
@@ -228,6 +232,8 @@ async def set_picture_shape(req: PictureShapeRequest):
     """The player's picture shape for one channel, for diginets that send the wrong shape (squeezed,
     stretched, or boxed in black). Kept here rather than per browser, so a TV's browser gets it too."""
     shapes = dict(load_settings().get("picture_shapes") or {})
+    if req.shape != "auto" and req.channel not in shapes and len(shapes) >= MAX_PICTURE_SHAPES:
+        raise HTTPException(status_code=400, detail="Too many channels have a picture shape; set some back to Auto")
     if req.shape == "auto":
         shapes.pop(req.channel, None)
     else:
