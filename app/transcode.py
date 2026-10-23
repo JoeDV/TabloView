@@ -34,6 +34,12 @@ MAX_STREAM_RESTARTS = 4
 STREAM_STALL_SECONDS = 10
 # Restarts allowed again after this long without one (an evening of live TV can have a few hiccups)
 RESTARTS_RESET_SECONDS = 600
+# A stream nothing has used for this long is closed: no video fetched and no check-in from its page
+# (the player checks in every minute, paused or not). Pages say when they close, but a TV browser
+# switched off, a sleeping laptop or a killed browser never does, and the stream stayed open until
+# TabloView restarted: holding a live tuner, pausing commercial finding, slowing exports. Long enough
+# for VLC, which can't check in, to sit paused a while.
+ABANDONED_SECONDS = 600
 # Live TV keeps this much behind the live point, for pause and rewind (about 1-1.5 GB on disk)
 LIVE_REWIND_MINUTES = 30
 # Recordings: a small preview frame every this many seconds, for the timeline. Named by position in
@@ -120,6 +126,7 @@ class StreamSession:
         self.supervisor: Optional[asyncio.Task] = None
         self.reception = None  # live antenna channels: picture quality meter (app/reception.py)
         self.reception_task: Optional[asyncio.Task] = None
+        self.last_used = time.time()  # video fetched or a check-in from its page (see ABANDONED_SECONDS)
 
 
 class TranscodeManager:
@@ -171,6 +178,30 @@ class TranscodeManager:
 
     def get_session(self, session_id: str) -> Optional[StreamSession]:
         return self.sessions.get(session_id)
+
+    def touch(self, session_id: str) -> bool:
+        """The stream is still wanted. False if it's gone (closed, or TabloView restarted)."""
+        sess = self.sessions.get(session_id)
+        if sess:
+            sess.last_used = time.time()
+        return bool(sess)
+
+    def close_abandoned(self, now: Optional[float] = None) -> List[str]:
+        """Close streams nothing has used for ABANDONED_SECONDS; returns their ids."""
+        now = now or time.time()
+        gone = [sid for sid, s in self.sessions.items() if now - s.last_used > ABANDONED_SECONDS]
+        for sid in gone:
+            print(f"[Transcode] Session {sid[:8]}: closed, not used for {ABANDONED_SECONDS // 60} minutes")
+            self.stop_session(sid)
+        return gone
+
+    async def abandoned_loop(self) -> None:
+        while True:
+            await asyncio.sleep(60)
+            try:
+                self.close_abandoned()
+            except Exception as e:
+                print(f"[Transcode] Closing unused streams failed: {e}")
 
     def start_measure(self, sess: StreamSession, input_url: str) -> None:
         """Antenna helper: decode a live channel only to measure it (no video for a player), so it's
@@ -267,6 +298,7 @@ class TranscodeManager:
         sess = self.get_session(session_id)
         if not sess:
             return Response(content="Session expired or not found", status_code=404)
+        sess.last_used = time.time()
 
         if subpath == "playlist.m3u8":
             target_url = sess.playlist_url

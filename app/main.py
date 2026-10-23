@@ -55,6 +55,7 @@ async def lifespan(app: FastAPI):
     ad_finder = asyncio.create_task(commercials.worker_loop())
     dropout_finder = asyncio.create_task(dropouts.worker_loop())
     streaming_guide = asyncio.create_task(streaming.worker_loop())
+    unused_streams = asyncio.create_task(transcode_manager.abandoned_loop())
 
     yield
 
@@ -62,6 +63,7 @@ async def lifespan(app: FastAPI):
     ad_finder.cancel()
     dropout_finder.cancel()
     streaming_guide.cancel()
+    unused_streams.cancel()
     # Shutdown: clean up transcode sessions
     print("[Shutdown] Cleaning up stream sessions...")
     for sid in list(transcode_manager.sessions.keys()):
@@ -242,6 +244,7 @@ async def proxy_hls_stream(session_id: str, subpath: str, request: Request):
 async def serve_transcoded_file(session_id: str, filename: str):
     """Serve transcoded HLS playlist and video segments."""
     file_path = safe_join(TRANSCODE_DIR, session_id, filename)
+    transcode_manager.touch(session_id)
     if not file_path.exists():
         # Wait briefly for manifest if just starting
         if filename.endswith(".m3u8"):

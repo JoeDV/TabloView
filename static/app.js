@@ -5476,6 +5476,12 @@ function wireEvents() {
   });
 
   window.addEventListener('hashchange', route);
+  // While anything plays here (paused too), tell TabloView every minute; a stream nothing checks in
+  // on for 10 minutes is closed (a TV browser switched off never says goodbye)
+  setInterval(() => {
+    const ids = [state.stream.sessionId, dual.s.sessionId].filter(Boolean);
+    if (ids.length) api('/api/live/alive', { method: 'POST', body: JSON.stringify({ session_ids: ids }) }).catch(() => {});
+  }, 60000);
   // Stop the backend FFmpeg session if the tab is closed mid-playback
   window.addEventListener('pagehide', () => {
     if (state.stream.episodeId) player.saveProgress({ final: true });

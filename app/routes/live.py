@@ -10,7 +10,7 @@ from datetime import date, datetime, timezone, timedelta
 import httpx
 import requests
 from fastapi import APIRouter, HTTPException, Query, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..tablo_client import tablo_manager
 from ..transcode import transcode_manager
@@ -816,7 +816,19 @@ async def reception_report(session_id: str):
     sess = transcode_manager.get_session(session_id)
     if not sess or not sess.reception:
         return {"available": False}
+    sess.last_used = time.time()  # the antenna helper asks every second: it's still wanted
     return {"available": True, **sess.reception.report()}
+
+
+class AliveRequest(BaseModel):
+    session_ids: List[str] = Field(default_factory=list, max_length=8)
+
+
+@router.post("/alive")
+async def streams_alive(req: AliveRequest):
+    """The player checks in every minute while it's open (paused too), so its streams aren't closed
+    as unused. Says which are gone."""
+    return {"gone": [sid for sid in req.session_ids if sid and not transcode_manager.touch(sid)]}
 
 
 @router.post("/stop")
