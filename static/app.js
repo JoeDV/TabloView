@@ -3144,7 +3144,7 @@ PAGES.device = async (r, token) => {
             <option value="tv">TV (big screens for a remote)</option>
           </select>
         </label>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">TV view is for a TV's browser: Continue watching, Recordings, Live TV and your Watch list, used with the remote's arrows, OK and Back. This browser keeps opening in the view you choose; TV view has a PC view button to come back.</p>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">TV view is for a TV's browser: Continue watching, Library, Live TV and your Watch list, used with the remote's arrows, OK and Back. This browser keeps opening in the view you choose; TV view has a PC view button to come back.</p>
       </div>
 `;
   const diagnosticsPanel = `

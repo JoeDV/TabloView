@@ -1,4 +1,4 @@
-// TabloView TV: Continue watching, Recordings and Live TV for a TV's browser (TV Bro, Silk...),
+// TabloView TV: Continue watching, Library, Live TV and the Watch list for a TV's browser (TV Bro, Silk...),
 // driven by a remote: arrows move between big tiles, OK picks, Back goes back. Screens are hash
 // routes, so the browser's own Back button works too. Everything else (Guide, scheduling,
 // settings, exports) stays on the PC page. Uses the same API and streams as the PC page.
@@ -106,7 +106,7 @@ async function showHome() {
   state.episodes = eps;
   if (!eps.length) {
     return setScreen(`<div class="empty">Nothing to continue right now.<br>
-      <button class="btn primary f" data-go="#/recordings" data-key="go-rec">Browse recordings</button></div>`, '#/');
+      <button class="btn primary f" data-go="#/library" data-key="go-lib">Go to your Library</button></div>`, '#/');
   }
   setScreen(`<h1>Continue watching</h1><div class="grid wide">${eps.map(e => `
     <button class="tile f" data-act="play" data-id="${esc(e.id)}" data-key="cw-${esc(e.id)}">
@@ -116,24 +116,35 @@ async function showHome() {
     </button>`).join('')}</div>`, '#/');
 }
 
-async function showRecordings() {
-  loading('#/recordings');
+// Wide pictures or posters: the same per-browser choice as the PC Library's
+function libraryLayout() {
+  try { return localStorage.getItem('tv_lib_layout') === 'posters' ? 'posters' : 'wide'; } catch { return 'wide'; }
+}
+
+async function showLibrary() {
+  loading('#/library');
   let shows;
-  try { shows = (await api('/api/shows')).shows || []; } catch (err) { return failed(err, '#/recordings'); }
+  try { shows = (await api('/api/shows')).shows || []; } catch (err) { return failed(err, '#/library'); }
   shows.sort((a, b) => String(b.latest_recording_date || '').localeCompare(String(a.latest_recording_date || '')));
-  if (!shows.length) return setScreen('<div class="empty">No recordings yet.</div>', '#/recordings');
-  setScreen(`<h1>Recordings</h1><div class="grid posters">${shows.map(s => `
+  if (!shows.length) return setScreen('<div class="empty">No recordings yet.</div>', '#/library');
+  const layout = libraryLayout();
+  setScreen(`<h1>Library</h1>
+    <div class="subtabs">
+      <button class="btn f ${layout === 'wide' ? 'primary' : ''}" data-act="lib-layout" data-layout="wide" data-key="lib-wide">Wide</button>
+      <button class="btn f ${layout === 'posters' ? 'primary' : ''}" data-act="lib-layout" data-layout="posters" data-key="lib-posters">Posters</button>
+    </div>
+    <div class="grid ${layout}">${shows.map(s => `
     <button class="tile f" data-go="#/show/${encodeURIComponent(s.id)}" data-key="show-${esc(s.id)}">
-      <div class="art" ${art(s.cover_url || s.backdrop_url)}>${s.unwatched_count ? `<span class="badge">${s.unwatched_count}</span>` : ''}</div>
+      <div class="art" ${art(layout === 'wide' ? s.backdrop_url || s.cover_url : s.cover_url || s.backdrop_url)}>${s.unwatched_count ? `<span class="badge">${s.unwatched_count}</span>` : ''}</div>
       <div class="label"><div class="name">${esc(s.title)}</div>
         <div class="meta">${s.episode_count === 1 ? '1 recording' : `${s.episode_count} recordings`}</div></div>
-    </button>`).join('')}</div>`, '#/recordings');
+    </button>`).join('')}</div>`, '#/library');
 }
 
 async function showShow(id) {
-  loading('#/recordings');
+  loading('#/library');
   let d;
-  try { d = await api(`/api/shows/episodes?show_id=${encodeURIComponent(id)}`); } catch (err) { return failed(err, '#/recordings'); }
+  try { d = await api(`/api/shows/episodes?show_id=${encodeURIComponent(id)}`); } catch (err) { return failed(err, '#/library'); }
   const eps = (d.episodes || []).slice().sort((a, b) => String(b.air_date || '').localeCompare(String(a.air_date || '')));
   state.episodes = eps;
   setScreen(`<h1>${esc(d.show_title || (d.show && d.show.title) || '')}</h1><div class="rows">${eps.map(e => {
@@ -144,7 +155,7 @@ async function showShow(id) {
       <div class="body"><div class="name">${watched ? '' : '<span class="dot"></span>'}${esc([fmt.se(e.season_number, e.episode_number), e.title].filter(Boolean).join(' · '))}</div>
         <div class="meta">${e.air_date ? esc(fmt.day(e.air_date)) : ''}${e.duration ? ` · ${fmt.mins(e.actual_duration || e.duration)}` : ''}${left}${e.channel_name ? ` · ${esc(e.channel_name)}` : ''}</div></div>
     </button>`;
-  }).join('')}</div>`, '#/recordings');
+  }).join('')}</div>`, '#/library');
 }
 
 async function showWatchlist() {
@@ -232,7 +243,7 @@ function route() {
   const h = location.hash || '#/';
   if (h !== '#/play' && player.open) player.close();
   if (h === '#/play') { if (!player.open) location.replace('#/'); return; }
-  if (h === '#/recordings') return showRecordings();
+  if (h === '#/library' || h === '#/recordings') return showLibrary();  // #/recordings: its 1.2.5 name
   if (h.startsWith('#/show/')) return showShow(decodeURIComponent(h.slice(7)));
   if (h === '#/live') return showLive();
   if (h === '#/watchlist') return showWatchlist();
@@ -784,6 +795,11 @@ function onClick(e) {
   else if (act === 'run-from') startRun(Number(el.dataset.from));
   else if (act === 'live-tab') { state.liveTab = el.dataset.tab; state.focus['#/live'] = `lt-${el.dataset.tab}`; showLive(); }
   else if (act === 'reload') location.reload();
+  else if (act === 'lib-layout') {
+    try { localStorage.setItem('tv_lib_layout', el.dataset.layout); } catch { /* this visit only */ }
+    state.focus['#/library'] = `lib-${el.dataset.layout}`;
+    showLibrary();
+  }
   else if (act === 'pc-view') {
     try { localStorage.setItem('tv_view', 'pc'); } catch { /* the PC page opens anyway */ }
     location.href = '/';
