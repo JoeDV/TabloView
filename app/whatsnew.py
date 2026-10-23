@@ -13,6 +13,14 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.2.5": [
+        "TV view: big screens for a TV's browser (TV Bro on Google TV, Silk on Fire TV), used with the remote. Continue watching, Recordings, Live TV and your Watch list, with large buttons for pause, skip and close. Choose it under Device → Appearance → View on this device, or open your TabloView address with /tv on the end. New, so tell us how it works on your TV.",
+        "Picture shape for each channel: some stations send a squeezed, stretched or boxed-in picture. Choose Auto, 4:3, 16:9 or Zoom from the player (or press A), and TabloView remembers it for that channel, for live TV and its recordings.",
+        "A stream nobody is watching any more (a TV browser switched off, a laptop gone to sleep) is closed after 10 minutes, so it no longer holds a tuner, slows exports or pauses commercial finding.",
+        "Save exports to: the folder window now opens in front, and if it can't open you can type the folder instead.",
+        "Security: other devices no longer receive the network PIN's details, and HTTPS uses an updated list of trusted certificates.",
+        "Fixed: skipping ahead several times quickly could leave copies of the stream running and slow everything down, and L skips ahead 30 seconds again (two-channel layouts moved to V).",
+    ],
     "1.2.4": [
         "Refresh guide now asks your Tablo to download the latest guide first (like its own app's Update guide button), shows how far along it is, then loads it.",
         "Faster exports: Original exports run several times faster than real time while nothing else is playing from your Tablo, and slow down by themselves when something starts, so watching isn't affected.",
