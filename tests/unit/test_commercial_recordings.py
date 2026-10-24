@@ -20,6 +20,7 @@ FLOORS = {
     "hells_kitchen": (0.95, 60),   # Fox: corner logo
     "price_is_right": (0.72, 30),  # CBS: no logo, a set as colourful as the ads
     "boston_blue": (0.97, 20),     # CBS drama: no logo; breaks marked in /dev/marks
+    "elsbeth": (0.97, 20),         # CBS drama, marked in /dev/marks (the end: ads, credits, next show)
 }
 
 
