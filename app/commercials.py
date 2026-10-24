@@ -27,7 +27,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 from . import childproc
 from .config import FFMPEG_PATH, TRANSCODE_DIR
@@ -46,6 +46,8 @@ SNAP_SECONDS = 8  # move a break edge to a black frame this close
 # ad than skipping any of the show (what Tablo's own commercial skip got wrong)
 UNANCHORED_TRIM = 3
 MIN_SEPARATION = 0.15  # show and ad scores must be at least this far apart to trust the result
+MAX_AD_PIECE_SECONDS = 300  # between two black-and-silent moments: longer than this is show
+SHORT_PIECE_SECONDS = 45
 LEVEL_SECONDS = 0.05  # the sound's loudness is measured this often (speech dips between syllables)
 
 # The detector, saved with each result: results from an older one are redone (1: colour only;
@@ -147,10 +149,11 @@ def lighter_pixels(corner: bytes) -> List[bool]:
     return out
 
 
-def logo_scores(corners: List[bytes]) -> Optional[Tuple[List[float], float, float]]:
+def logo_scores(corners: List[Union[bytes, Sequence[bool]]]) -> Optional[Tuple[List[float], float, float]]:
     """Per second, how much the channel's logo is in this corner, the score that separates "on"
-    from "off", and how clearly they separate; None if there's no logo here to go by."""
-    marks = [lighter_pixels(c) for c in corners]
+    from "off", and how clearly they separate; None if there's no logo here to go by. A corner is
+    its grey pixels, or already which of them are lit (lighter_pixels; the test recordings keep that)."""
+    marks = [lighter_pixels(c) if isinstance(c, (bytes, bytearray)) else c for c in corners]
     n = len(marks)
     if n < 120:
         return None
@@ -224,11 +227,11 @@ def find_breaks(hists: List[List[float]], blacks: List[float], corners: Optional
     """Commercial breaks as [{'start', 'end'}] in seconds, or None if this recording's show and ads
     can't be told apart reliably. corners and quiet (silences) are used when there are any: the
     channel logo, edges at black frames that are also silent."""
+    edges = sorted(b for b in blacks if any(a - 1 <= b <= z + 1 for a, z in quiet)) if quiet else sorted(blacks)
     if corners:
         found = best_logo([(c,) if isinstance(c, bytes) else c for c in corners])
         if found:
-            edges = [b for b in blacks if any(a - 1 <= b <= z + 1 for a, z in quiet)] if quiet else list(blacks)
-            return _logo_breaks(found[0], found[1], sorted(edges), sorted(blacks))
+            return _logo_breaks(found[0], found[1], edges, sorted(blacks))
     n = len(hists)
     if n < 120:
         return None
@@ -271,7 +274,42 @@ def find_breaks(hists: List[List[float]], blacks: List[float], corners: Optional
         start = float(s) + UNANCHORED_TRIM if start is None else start
         end = float(e) - UNANCHORED_TRIM if end is None else end
         breaks.append({"start": round(start if s > 0 else 0.0, 1), "end": round(end if e < n else float(n), 1)})
+    if quiet:
+        breaks = _join(breaks + _marked_pieces(scores, t, edges, n))
     return breaks
+
+
+def _marked_pieces(scores: List[float], t: float, edges: List[float], n: int) -> List[Dict[str, float]]:
+    """Without a logo: the black-and-silent moments mark nearly every break edge and the changes
+    between ads (on a Price Is Right recording, 14 of 16 edges and almost nothing in the show), so
+    the pieces between them that look like ads on average are ads. One second at a time, the show's
+    colourful set and the ads overlap; a piece's average doesn't (ads 0.12-0.42, show 0.47-0.62)."""
+    cuts: List[float] = []
+    for b in [0.0] + edges + [float(n)]:
+        if not cuts or b - cuts[-1] > 5:
+            cuts.append(b)
+    spans = list(zip(cuts, cuts[1:]))
+    ad = []
+    for a, b in spans:
+        seg = scores[int(a):max(int(b), int(a) + 1)]
+        ad.append(b - a <= MAX_AD_PIECE_SECONDS and sum(seg) / len(seg) < t)
+    # A short piece against an ad piece is the rest of that break (an ad brighter than most): the
+    # show never runs that briefly between two of these moments
+    for i, (a, b) in enumerate(spans):
+        if not ad[i] and b - a <= SHORT_PIECE_SECONDS and ((i and ad[i - 1]) or (i + 1 < len(ad) and ad[i + 1])):
+            ad[i] = True
+    return [{"start": round(a, 1), "end": round(b, 1)} for (a, b), x in zip(spans, ad) if x]
+
+
+def _join(breaks: List[Dict[str, float]]) -> List[Dict[str, float]]:
+    """Overlapping or touching breaks as one, in order."""
+    out: List[Dict[str, float]] = []
+    for b in sorted(breaks, key=lambda x: x["start"]):
+        if out and b["start"] <= out[-1]["end"] + 1:
+            out[-1]["end"] = max(out[-1]["end"], b["end"])
+        else:
+            out.append(dict(b))
+    return [b for b in out if b["end"] - b["start"] >= 10]
 
 
 # ---------------------------------------------------------------------------------------------------

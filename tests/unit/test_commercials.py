@@ -98,6 +98,24 @@ class LogoTests(unittest.TestCase):
         self.assertEqual(len(breaks), 1)
         self.assertEqual(breaks[0]["start"], 300.0)
 
+    def test_no_logo_pieces_between_quiet_black_frames(self):
+        # Price Is Right: no logo, and a third of the ad seconds look like the colourful set, which
+        # splits colour runs; the pieces between black-and-silent moments still average like ads
+        rnd = random.Random(9)
+        layout = [(300, "show"), (70, "ad"), (60, "ad"), (330, "show")]
+        hists, blacks, quiet, t = [], [], [], 0
+        for secs, kind in layout:
+            if t:
+                blacks.append(float(t))
+                quiet.append((t - 0.3, t + 0.3))
+            for i in range(secs):
+                blue = kind == "show" or i % 3 == 0
+                rgb = (30, 60, 200) if blue else (rnd.randint(0, 255), rnd.randint(0, 255), rnd.randint(0, 255))
+                hists.append(c.histogram(frame(rgb, 20, rnd)))
+            t += secs
+        corners = [corner(False, rnd) for _ in hists]
+        self.assertEqual(c.find_breaks(hists, blacks, corners, quiet), [{"start": 300.0, "end": 430.0}])
+
     def test_no_logo_falls_back_to_colour(self):
         hists, blacks = recording([(300, "show"), (120, "ad"), (330, "show"), (150, "ad"), (400, "show")])
         rnd = random.Random(5)
