@@ -13,6 +13,13 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.2.6": [
+        "Commercial skip finds whole breaks now, not just part of them. It looks for the channel's logo in the corner of the picture (most networks take it off during ads), the moment of black and silence at each break's edges, and, on channels without a logo, how different the picture looks from the show. In our tests it skips 80-100% of the ads during a show, and it never skips past the end of a show.",
+        "Recordings whose breaks were found the old way are looked at again once, in the background, unless you've already watched them.",
+        "Help: a guide to everything TabloView does, at the bottom of the sidebar.",
+        "TV view: Recordings is now called Library, as on the PC, and opens with wide pictures; switch to posters at the top.",
+        "Fixed: Open in VLC didn't play recordings.",
+    ],
     "1.2.5": [
         "TV view: big screens for a TV's browser (TV Bro on Google TV, Silk on Fire TV), used with the remote. Continue watching, Recordings, Live TV and your Watch list, with large buttons for pause, skip and close. Choose it under Device → Appearance → View on this device, or open your TabloView address with /tv on the end. New, so tell us how it works on your TV.",
         "Picture shape for each channel: some stations send a squeezed, stretched or boxed-in picture. Choose Auto, 4:3, 16:9 or Zoom from the player (or press A), and TabloView remembers it for that channel, for live TV and its recordings.",
