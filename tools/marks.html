@@ -30,6 +30,9 @@
   .bar .k { bottom: 0; height: 50%; background: var(--mark); }
   .bar .now { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; }
   .legend { color: var(--dim); font-size: 12px; }
+  .barwrap { position: relative; }
+  .hover { position: absolute; bottom: 42px; transform: translateX(-50%); background: #000; border: 1px solid var(--line); border-radius: 6px; padding: 3px; pointer-events: none; z-index: 2; text-align: center; font: 600 13px ui-monospace, Consolas, monospace; }
+  .hover img { display: block; width: 240px; height: 135px; object-fit: cover; border-radius: 4px; background: var(--panel); }
   .marks { display: flex; flex-wrap: wrap; gap: 6px; }
   .mk { display: flex; gap: 6px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; }
   .mk.start { border-left: 4px solid var(--mark); } .mk.end { border-left: 4px solid #3ecf8e; }
@@ -57,7 +60,7 @@
     <button class="red" id="mStart">Break starts <kbd>[</kbd></button>
     <button id="mEnd" style="border-left:4px solid #3ecf8e">Show's back <kbd>]</kbd></button>
   </div>
-  <div class="bar" id="bar"></div>
+  <div class="barwrap"><div class="bar" id="bar"></div><div class="hover" id="hover" hidden><img id="hoverImg" alt=""><div id="hoverTime"></div></div></div>
   <div class="legend">Top grey: breaks the finder saved (this copy). Bottom red: your marks. Click the bar to jump. Keys: <kbd>Space</kbd> play/pause, <kbd>←</kbd><kbd>→</kbd> 5 s, <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> 1 s, <kbd>[</kbd> break starts, <kbd>]</kbd> show's back. Saved as you go.</div>
   <div class="marks" id="marks"></div>
   <textarea id="note" placeholder="Notes (anything odd about this recording)"></textarea>
@@ -69,7 +72,7 @@ const api = async (url, o = {}) => { const r = await fetch(url, { headers: H, ..
 const clock = s => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? `${h}:${String(m).padStart(2, '0')}` : `${m}`) + `:${String(x).padStart(2, '0')}`; };
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-let recs = [], cur = null, marks = [], note = '';
+let recs = [], cur = null, marks = [], note = '', previews = [];
 // The stream starts at `offset` seconds into the recording; jumping past what's converted starts it again
 const st = { sid: null, offset: 0, hls: null, gen: 0 };
 const v = $('#v');
@@ -118,8 +121,24 @@ function seek(t) {
   if (rel >= 0 && rel <= w - 1) v.currentTime = rel; else start(t);
 }
 
+// The Tablo's preview images for the whole recording (fetched once playback has started)
+async function loadPreviews(id) {
+  previews = [];
+  for (let i = 0; i < 8 && cur && cur.id === id; i++) {
+    await new Promise(r => setTimeout(r, 1500));
+    try { const res = await api(`/api/episodes/${encodeURIComponent(id)}/previews`); if (res.times && res.times.length) { previews = res.times; return; } } catch { /* again */ }
+  }
+}
+function previewUrl(t) {
+  if (!previews.length) return st.sid ? `/api/transcoded/${st.sid}/p${String(Math.floor(t / 5)).padStart(5, '0')}.jpg` : '';
+  let n = 0;
+  while (n + 1 < previews.length && previews[n + 1] <= t) n++;
+  return `/api/episodes/${encodeURIComponent(cur.id)}/previews/${n}`;
+}
+
 async function open(id) {
   cur = recs.find(r => r.id === id);
+  loadPreviews(id);
   $('#title').textContent = `${cur.show_title} · ${cur.title || ''} (${cur.channel_name || ''})`;
   const saved = await api(`/api/dev/marks/${encodeURIComponent(id)}`);
   marks = saved.marks; note = saved.note || ''; $('#note').value = note;
@@ -177,6 +196,18 @@ $('#jump').addEventListener('keydown', e => {
   if (p.some(isNaN)) return;
   seek(p.reduce((a, x) => a * 60 + x, 0)); $('#jump').blur();
 });
+$('#bar').addEventListener('mousemove', e => {
+  if (!cur) return;
+  const r = $('#bar').getBoundingClientRect();
+  const t = ((e.clientX - r.left) / r.width) * Number($('#bar').dataset.dur);
+  const h = $('#hover');
+  h.hidden = false;
+  h.style.left = `${Math.max(124, Math.min(r.width - 124, e.clientX - r.left))}px`;
+  const url = previewUrl(t);
+  if (url && $('#hoverImg').dataset.src !== url) { $('#hoverImg').src = url; $('#hoverImg').dataset.src = url; }
+  $('#hoverTime').textContent = clock(t);
+});
+$('#bar').addEventListener('mouseleave', () => { $('#hover').hidden = true; });
 $('#bar').addEventListener('click', e => { if (!cur) return; const r = $('#bar').getBoundingClientRect(); seek(((e.clientX - r.left) / r.width) * Number($('#bar').dataset.dur)); });
 $('#marks').addEventListener('click', e => {
   const go = e.target.closest('[data-go]'), del = e.target.closest('[data-del]');
