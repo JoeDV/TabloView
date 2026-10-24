@@ -970,3 +970,19 @@ code { font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace; font-si
   .topbar, .page, .live-bar { padding-left: 16px; padding-right: 16px; }
   .ep-table { margin: 16px; }
 }
+
+/* Help: the user guide (static/help.html) */
+.help-toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 8px; }
+.help { max-width: 860px; line-height: 1.6; }
+.help section { padding-top: 12px; scroll-margin-top: 12px; }
+.help h2 { font-size: 21px; font-weight: 700; letter-spacing: -0.01em; margin: 26px 0 8px; }
+.help h3 { font-size: 15px; font-weight: 650; margin: 18px 0 6px; }
+.help p, .help ul, .help ol { margin: 8px 0; color: var(--text); }
+.help ul, .help ol { padding-left: 22px; }
+.help li { margin: 4px 0; }
+.help a { color: var(--accent); cursor: pointer; }
+.help table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13.5px; }
+.help th, .help td { text-align: left; vertical-align: top; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.help th { color: var(--text-2); font-weight: 600; background: var(--surface); }
+.help td:first-child { white-space: nowrap; font-weight: 550; }
+.help kbd { font: inherit; font-weight: 600; font-size: 12px; padding: 1px 6px; border-radius: 5px; background: var(--surface-3); border: 1px solid var(--border); }

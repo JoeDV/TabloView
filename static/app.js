@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 const ICONS = {
   home: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>',
+  help: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
   library: '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>',
   guide: '<path d="M4 6h16M4 12h16M4 18h10"/>',
   live: '<path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/>',
@@ -2896,6 +2897,32 @@ PAGES.antenna = async (r, token) => {
   if (antenna.channel) sel.value = antenna.channel.channel_id;
 };
 
+// Help: the user guide (static/help.html, one <section> per topic), with its contents at the top
+PAGES.help = async (r, token) => {
+  paint(`<div class="page"><div class="page-head"><div><h1 class="page-title">Help</h1>
+    <div class="page-sub">How to use TabloView. Press <span class="kbd">?</span> in the player for its keyboard shortcuts.</div></div></div>
+    <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
+  let html;
+  try {
+    const res = await fetch('/static/help.html?v=1');
+    if (!res.ok) throw new Error(res.status);
+    html = await res.text();
+  } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
+  if (stale(token)) return;
+  const guide = document.createElement('div');
+  guide.className = 'help';
+  guide.innerHTML = html;
+  // Links inside the guide to another of its sections
+  guide.querySelectorAll('[data-help-jump]').forEach(a => { a.dataset.action = 'help-jump'; a.dataset.id = a.dataset.helpJump; a.href = '#/help'; });
+  const toc = [...guide.querySelectorAll('section[id] > h2')].map(h =>
+    `<button class="chip" data-action="help-jump" data-id="${esc(h.parentElement.id)}">${esc(h.textContent)}</button>`).join('');
+  const list = view().querySelector('.list');
+  list.outerHTML = `<div class="help-toc">${toc}</div>`;
+  view().querySelector('.page').appendChild(guide);
+  const jump = r.query.get('topic');
+  if (jump) document.getElementById(jump)?.scrollIntoView();
+};
+
 PAGES.downloads = async (r, token) => {
   paint(`<div class="page">
     <div class="page-head"><div><h1 class="page-title">Downloads</h1><div class="page-sub">MP4 exports saved to this computer (choose the folder under <a href="#/device?tab=storage">Device → Storage → Exports</a>)</div></div></div>
@@ -5079,6 +5106,7 @@ const ACTIONS = {
   'pb-pip': () => player.togglePip(),
   'pb-live': () => player.goLive(),
   'pb-help': () => player.showHelp(),
+  'help-jump': (el, e) => { if (e) e.preventDefault(); document.getElementById(el.dataset.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
   'pb-shape': el => pictureShape.menu(el),
   'export-folder': el => chooseExportFolder(el),
   'export-folder-reset': async () => {
