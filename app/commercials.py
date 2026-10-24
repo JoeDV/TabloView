@@ -224,10 +224,12 @@ def _logo_breaks(scores: List[float], t: float, edges: List[float], blacks: List
 
 
 def find_breaks(hists: List[List[float]], blacks: List[float], corners: Optional[List[Sequence[bytes]]] = None,
-                quiet: Optional[List[Tuple[float, float]]] = None) -> Optional[List[Dict[str, float]]]:
+                quiet: Optional[List[Tuple[float, float]]] = None,
+                program_end: Optional[float] = None) -> Optional[List[Dict[str, float]]]:
     """Commercial breaks as [{'start', 'end'}] in seconds, or None if this recording's show and ads
     can't be told apart reliably. corners and quiet (silences) are used when there are any: the
-    channel logo, edges at black frames that are also silent."""
+    channel logo, edges at black frames that are also silent. program_end: where the show is
+    scheduled to end in the recording."""
     edges = sorted(b for b in blacks if any(a - 1 <= b <= z + 1 for a, z in quiet)) if quiet else sorted(blacks)
     if corners:
         found = best_logo([(c,) if isinstance(c, bytes) else c for c in corners])
@@ -276,11 +278,12 @@ def find_breaks(hists: List[List[float]], blacks: List[float], corners: Optional
         end = float(e) - UNANCHORED_TRIM if end is None else end
         breaks.append({"start": round(start if s > 0 else 0.0, 1), "end": round(end if e < n else float(n), 1)})
     if quiet:
-        breaks = _join(breaks + _marked_pieces(scores, t, edges, n))
+        breaks = _join(breaks + _marked_pieces(scores, t, edges, n, program_end))
     return breaks
 
 
-def _marked_pieces(scores: List[float], t: float, edges: List[float], n: int) -> List[Dict[str, float]]:
+def _marked_pieces(scores: List[float], t: float, edges: List[float], n: int,
+                   program_end: Optional[float] = None) -> List[Dict[str, float]]:
     """Without a logo: the black-and-silent moments mark nearly every break edge and the changes
     between ads (on a Price Is Right recording, 14 of 16 edges and almost nothing in the show), so
     the pieces between them that look like ads on average are ads. One second at a time, the show's
@@ -297,6 +300,11 @@ def _marked_pieces(scores: List[float], t: float, edges: List[float], n: int) ->
     long_means = sorted(m for (a, b), m in zip(spans, means) if b - a > MAX_AD_PIECE_SECONDS)
     cut = long_means[len(long_means) // 2] * AD_PIECE_SHARE if long_means else t
     ad = [b - a <= MAX_AD_PIECE_SECONDS and m < cut for (a, b), m in zip(spans, means)]
+    # The show's last segment often runs straight into the closing break with no black-and-silent
+    # moment between them (Jeopardy: Final Jeopardy and the station's ads were one piece, and the
+    # piece looked like ads), so a piece across the scheduled end is never taken whole
+    if program_end:
+        ad = [x and not (a + 5 < program_end < b - 5) for (a, b), x in zip(spans, ad)]
     # A short piece against an ad piece is the rest of that break (an ad brighter than most): the
     # show never runs that briefly between two of these moments
     for i, (a, b) in enumerate(spans):
@@ -377,7 +385,9 @@ def pending(shows: Optional[List[str]] = None) -> List[Dict[str, str]]:
         if details["recording_state"] == "finished":
             se = f" S{r['season_number']}E{r['episode_number']}" if r["season_number"] and r["episode_number"] else ""
             found.append({"id": r["id"], "path": r["path"], "show_id": r["show_id"], "show_title": r["show_title"],
-                          "title": f"{r['show_title']}{se}", "duration": details["actual_duration"] or r["duration"] or 0})
+                          "title": f"{r['show_title']}{se}", "duration": details["actual_duration"] or r["duration"] or 0,
+                          # where the show is scheduled to end in the recording (it starts a little in)
+                          "program_end": details["program_start"] + r["duration"] if r["duration"] else None})
     return sorted(found, key=lambda ep: ep["id"] not in queued)  # stable: keeps newest first within each
 
 
@@ -505,7 +515,7 @@ async def analyze(ep: Dict[str, str]) -> Optional[str]:
         log = log_path.read_text(encoding="utf-8", errors="replace")
     finally:
         log_path.unlink(missing_ok=True)
-    breaks = find_breaks(hists, black_frames(log), corners, silences(log))
+    breaks = find_breaks(hists, black_frames(log), corners, silences(log), ep.get("program_end"))
     save_commercials(ep["id"], "unreliable" if breaks is None else "done", breaks, method=METHOD)
     print(f"[Commercials] {ep['show_title']} {ep['id']}: "
           f"{'show and ads could not be told apart' if breaks is None else f'{len(breaks)} breaks'}")
