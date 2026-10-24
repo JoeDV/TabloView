@@ -1,2 +1,4 @@
 # Shell scripts must keep Unix line endings or macOS can't run them
 *.sh text eol=lf
+# Developer tools (TABLOVIEW_DEV_TOOLS=1) stay out of the Mac and Linux downloads (git archive)
+tools/ export-ignore

@@ -46,6 +46,7 @@ SNAP_SECONDS = 8  # move a break edge to a black frame this close
 # ad than skipping any of the show (what Tablo's own commercial skip got wrong)
 UNANCHORED_TRIM = 3
 MIN_SEPARATION = 0.15  # show and ad scores must be at least this far apart to trust the result
+LEVEL_SECONDS = 0.05  # the sound's loudness is measured this often (speech dips between syllables)
 
 # The detector, saved with each result: results from an older one are redone (1: colour only;
 # 2: the channel logo, black frames and silences)
@@ -114,6 +115,12 @@ def _runs(flags: List[bool]) -> List[Tuple[int, int]]:
     return runs
 
 
+def loudness(ffmpeg_log: str) -> List[float]:
+    """The sound's level (dB) every LEVEL_SECONDS, in order, from astats/ametadata in the log."""
+    return [float(v) if v not in ("-inf", "nan") else -120.0
+            for v in re.findall(r"lavfi\.astats\.Overall\.RMS_level=(\S+)", ffmpeg_log)]
+
+
 def silences(ffmpeg_log: str) -> List[Tuple[float, float]]:
     """(start, end) of the silences FFmpeg's silencedetect reported, in seconds."""
     return [(float(a), float(b)) for a, b in
@@ -140,9 +147,9 @@ def lighter_pixels(corner: bytes) -> List[bool]:
     return out
 
 
-def logo_scores(corners: List[bytes]) -> Optional[Tuple[List[float], float]]:
-    """Per second, how much the channel's logo is in the corner, and the score that separates "on"
-    from "off"; None if this channel shows no logo to go by."""
+def logo_scores(corners: List[bytes]) -> Optional[Tuple[List[float], float, float]]:
+    """Per second, how much the channel's logo is in this corner, the score that separates "on"
+    from "off", and how clearly they separate; None if there's no logo here to go by."""
     marks = [lighter_pixels(c) for c in corners]
     n = len(marks)
     if n < 120:
@@ -157,7 +164,17 @@ def logo_scores(corners: List[bytes]) -> Optional[Tuple[List[float], float]]:
     t, lo, hi = _threshold(scores)
     # A QR code in an ad's corner can pass for the logo (about two thirds of its pixels lit); a
     # stricter cut-off would lose the logo over bright scenes too, so LOGO_MERGE_GAP bridges such ads
-    return (scores, t) if hi - lo >= LOGO_SEPARATION else None
+    return (scores, t, hi - lo) if hi - lo >= LOGO_SEPARATION else None
+
+
+def best_logo(corners: List[Sequence[bytes]]) -> Optional[Tuple[List[float], float]]:
+    """The corner with the channel's logo (most networks: bottom right; some channels use another)."""
+    found = [logo_scores([c[k] for c in corners]) for k in range(len(corners[0]))]
+    found = [f for f in found if f]
+    if not found:
+        return None
+    scores, t, _ = max(found, key=lambda f: f[2])
+    return scores, t
 
 
 def _logo_breaks(scores: List[float], t: float, edges: List[float], blacks: List[float]) -> List[Dict[str, float]]:
@@ -202,13 +219,13 @@ def _logo_breaks(scores: List[float], t: float, edges: List[float], blacks: List
     return breaks
 
 
-def find_breaks(hists: List[List[float]], blacks: List[float], corners: Optional[List[bytes]] = None,
+def find_breaks(hists: List[List[float]], blacks: List[float], corners: Optional[List[Sequence[bytes]]] = None,
                 quiet: Optional[List[Tuple[float, float]]] = None) -> Optional[List[Dict[str, float]]]:
     """Commercial breaks as [{'start', 'end'}] in seconds, or None if this recording's show and ads
     can't be told apart reliably. corners and quiet (silences) are used when there are any: the
     channel logo, edges at black frames that are also silent."""
     if corners:
-        found = logo_scores(corners)
+        found = best_logo([(c,) if isinstance(c, bytes) else c for c in corners])
         if found:
             edges = [b for b in blacks if any(a - 1 <= b <= z + 1 for a, z in quiet)] if quiet else list(blacks)
             return _logo_breaks(found[0], found[1], sorted(edges), sorted(blacks))
@@ -355,34 +372,49 @@ def _busy() -> bool:
 
 
 # Each second FFmpeg sends one OUT_W x OUT_H rgb24 frame: the colour thumbnail on top (padded to the
-# corner's width) and the grey logo corner below it
-OUT_W, OUT_H = CORNER_W, THUMB_H + CORNER_H
+# corners' width) and the four grey corners below it, in CORNERS order
+CORNERS = ("top left", "top right", "bottom left", "bottom right")
+OUT_W, OUT_H = CORNER_W, THUMB_H + len(CORNERS) * CORNER_H
 
 
-def _split_frame(frame: bytes) -> Tuple[bytes, bytes]:
-    """(the THUMB_W x THUMB_H rgb24 thumbnail, the grey corner) from one FFmpeg frame."""
+def analysis_graph() -> str:
+    """FFmpeg's filter graph for the one pass: [bd] black frames, [o] the per-second frame, [sd]
+    silences and [lv] loudness every LEVEL_SECONDS (the last three printed to the log)."""
+    x, y = FRAME_W - CORNER_W, FRAME_H - CORNER_H
+    crops = [(0, 0), (x, 0), (0, y), (x, y)]
+    labels = "".join(f"[k{i}]" for i in range(len(crops)))
+    return (f"[0:v]scale=320:-2,split[a][b];[a]blackdetect=d=0.05:pix_th=0.10[bd];"
+            f"[b]fps=1,scale={FRAME_W}:{FRAME_H},format=rgb24,split={len(crops) + 1}[p]{labels};"
+            f"[p]scale={THUMB_W}:{THUMB_H},pad={OUT_W}:{THUMB_H}[t];"
+            + "".join(f"[k{i}]crop={CORNER_W}:{CORNER_H}:{cx}:{cy},format=gray,format=rgb24[c{i}];" for i, (cx, cy) in enumerate(crops))
+            + "[t]" + "".join(f"[c{i}]" for i in range(len(crops))) + f"vstack=inputs={len(crops) + 1},format=rgb24[o];"
+            f"[0:a]asplit[a1][a2];[a1]silencedetect=n=-50dB:d=0.15[sd];"
+            f"[a2]aformat=sample_rates=8000:channel_layouts=mono,asetnsamples=n={int(8000 * LEVEL_SECONDS)}:p=0,"
+            f"astats=metadata=1:reset=1:measure_overall=RMS_level:measure_perchannel=none,"
+            f"ametadata=mode=print:key=lavfi.astats.Overall.RMS_level[lv]")
+
+
+def _split_frame(frame: bytes) -> Tuple[bytes, Tuple[bytes, ...]]:
+    """(the THUMB_W x THUMB_H rgb24 thumbnail, the grey corners) from one FFmpeg frame."""
     row = OUT_W * 3
     thumb = b"".join(frame[y * row:y * row + THUMB_W * 3] for y in range(THUMB_H))
-    corner = bytes(frame[(THUMB_H + y) * row + x * 3] for y in range(CORNER_H) for x in range(CORNER_W))
-    return thumb, corner
+    corners = tuple(bytes(frame[(THUMB_H + k * CORNER_H + y) * row + x * 3] for y in range(CORNER_H) for x in range(CORNER_W))
+                    for k in range(len(CORNERS)))
+    return thumb, corners
 
 
-def _analyze(url: str, log_path, stop: threading.Event, progress: Optional[Dict[str, object]] = None) -> Optional[Tuple[List[List[float]], List[bytes]]]:
-    """One FFmpeg pass: black frames and silences to the log, and per second a colour histogram and
-    the logo corner to us. None if stopped."""
+def _analyze(url: str, log_path, stop: threading.Event, progress: Optional[Dict[str, object]] = None) -> Optional[Tuple[List[List[float]], List[Tuple[bytes, ...]]]]:
+    """One FFmpeg pass: black frames, silences and loudness to the log, and per second a colour
+    histogram and the four corners to us. None if stopped."""
     cmd = [FFMPEG_PATH, "-hide_banner", "-nostats", "-readrate", str(READ_RATE), "-i", url,
-           "-filter_complex",
-           f"[0:v]scale=320:-2,split[a][b];[a]blackdetect=d=0.05:pix_th=0.10[bd];"
-           f"[b]fps=1,scale={FRAME_W}:{FRAME_H},format=rgb24,split[p][q];"
-           f"[p]scale={THUMB_W}:{THUMB_H},pad={OUT_W}:{THUMB_H}[t];"
-           f"[q]crop={CORNER_W}:{CORNER_H}:{FRAME_W - CORNER_W}:{FRAME_H - CORNER_H},format=gray,format=rgb24[c];"
-           f"[t][c]vstack,format=rgb24[o];[0:a]silencedetect=n=-50dB:d=0.15[sd]",
+           "-filter_complex", analysis_graph(),
            "-map", "[bd]", "-f", "null", "-",
            "-map", "[sd]", "-f", "null", "-",
+           "-map", "[lv]", "-f", "null", "-",
            "-map", "[o]", "-f", "rawvideo", "-"]
     size = OUT_W * OUT_H * 3
     hists: List[List[float]] = []
-    corners: List[bytes] = []
+    corners: List[Tuple[bytes, ...]] = []
     with open(log_path, "w", encoding="utf-8") as log:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=log, creationflags=LOW_PRIORITY,
                                 **childproc.popen_kwargs(LOW_PRIORITY_POSIX))
