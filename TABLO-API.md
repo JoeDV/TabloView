@@ -88,6 +88,7 @@ These are the most important things to know about the Tablo.
 |---|---|---|
 | `GET /ping` | `{"sid": ...}` | The only unsigned request. Verified. |
 | `GET /server/info` | Device details | `server_id`, `name`, `version` (firmware, e.g. `2.2.58`), `build_number`, `local_address`, `setup_completed`, `availability` (`ready`), and `model`: `name` (e.g. "Tablo 4G QUAD 128GB"), `type` (`t4g4`), `wifi`, and `tuners`, the number of antenna tuners. `timezone` is empty and marked `deprecated`. Verified. |
+| `GET /server/network` | How the Tablo is connected | `ip`, `connection` (`ethernet` on a wired Tablo; presumably `wifi` otherwise), `status` (`online`), `server_id`. Verified on a wired Tablo; what it adds on Wi-Fi (perhaps a signal strength) isn't known yet. TabloView shows it under Device → Desktop & network. |
 | `GET /server/tuners` | A list of tuner slots | Each slot has `in_use`, `recording`, `channel` (a `/guide/channels/{id}` path) and `channel_identifier` (as in the channel lineup). A 4-tuner Tablo lists **8** slots: the first 4 are antenna tuners, the rest are virtual slots used by streaming (FAST) channels (verified by tuning one of each). |
 | `GET /server/harddrives` | A list of drives | `name` (e.g. "Internal Flash (128 GB)"), `kind` (`internal`), `connected`, `busy_state`, `format_state`, `error`, and `size`, `usage`, `free` and `limit` in bytes (also as `*_mib`). Verified. |
 | `GET /images/{image_id}` | JPEG | Unsigned. IDs come from objects (e.g. `snapshot_image.image_id`). Verified. |

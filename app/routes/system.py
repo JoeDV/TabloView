@@ -1,6 +1,7 @@
 """System status, hard drive storage metrics, library refresh, and export tracking."""
 
 import asyncio
+import httpx
 import os
 import shutil
 import subprocess
@@ -15,7 +16,7 @@ from pydantic import BaseModel, Field
 from ..config import APP_NAME, APP_VERSION, IS_PACKAGED, IS_STORE, FFMPEG_PATH, HOME_DIR, DOWNLOADS_DIR
 from ..settings import load_settings, save_settings, exports_dir
 from ..updates import check_for_update
-from .. import commercials, encoders, lanauth, notifications, presence, startup, whatsnew
+from .. import commercials, encoders, lanauth, netcheck, notifications, presence, startup, whatsnew
 from ..tablo_client import tablo_manager
 from ..sync_service import sync_service
 from ..database import get_sync_meta, get_export_jobs, delete_export_job, get_storage_by_show
@@ -219,6 +220,23 @@ async def pick_folder(request: Request):
     err = r.stderr.decode("utf-8", errors="replace").strip()
     print(f"[Exports] Folder picker failed (exit {r.returncode}): {err[:300]}")
     raise HTTPException(status_code=500, detail="The folder picker didn't open")
+
+
+@router.get("/network")
+async def network_status():
+    """How the Tablo says it's connected, and how this PC is (Ethernet or Wi-Fi, with the signal)."""
+    return await netcheck.status()
+
+
+@router.post("/network/test")
+async def network_test():
+    """Response time and how fast a recording arrives from the Tablo (about 10 seconds)."""
+    try:
+        return await netcheck.speed_test()
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=503, detail=f"The Tablo didn't answer: {e}")
 
 
 @router.get("/system/update")

@@ -2904,7 +2904,7 @@ PAGES.help = async (r, token) => {
     <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
   let html;
   try {
-    const res = await fetch('/static/help.html?v=1');
+    const res = await fetch('/static/help.html?v=2');
     if (!res.ok) throw new Error(res.status);
     html = await res.text();
   } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
@@ -3191,7 +3191,7 @@ PAGES.device = async (r, token) => {
     ['playback', 'Playback', playbackPanel],
     ['storage', 'Storage', storagePanel + exportsPanel + spaceByShowPanel(space, storage.connected ? storage.used_gb : 0)],
     ['signal', 'Signal health', signalHtml],
-    ['desktop', 'Desktop & network', desktop + network],
+    ['desktop', 'Desktop & network', networkPanel() + desktop + network],
     ['diagnostics', 'Diagnostics', diagnosticsPanel],
   ];
   const current = TABS.find(([id]) => id === r.query.get('tab')) || TABS[0];
@@ -3204,7 +3204,64 @@ PAGES.device = async (r, token) => {
 ${current[2]}
     </div>
   </div>`);
+  if (current[0] === 'desktop') loadNetwork(token);
 };
+
+// Device → Desktop & network: how the Tablo and this PC are connected, and a test of the link
+// between them (app/netcheck.py)
+function networkPanel() {
+  return `
+    <div class="panel">
+      <h3>Network</h3><div class="panel-sub">How your Tablo and this computer are connected, and how fast video gets from one to the other</div>
+      <dl class="kv" id="netStatus"><dt>Checking</dt><dd><span class="spinner"></span></dd></dl>
+      <div class="panel-actions"><button class="btn btn-sm" data-action="net-test">Test connection</button></div>
+      <div id="netTest" style="margin-top:12px;font-size:13px"></div>
+    </div>`;
+}
+
+async function loadNetwork(token) {
+  let d;
+  try { d = await api('/api/network'); } catch (err) { if (!stale(token)) $('#netStatus').innerHTML = `<dt>Network</dt><dd>${esc(err.message)}</dd>`; return; }
+  if (stale(token) || !$('#netStatus')) return;
+  const t = d.tablo || {}, pc = d.pc || {};
+  const kind = k => (k === 'wifi' ? 'Wi-Fi' : k === 'ethernet' ? 'Ethernet (wired)' : '');
+  const wifi = pc.wifi;
+  const signalWord = v => (v >= 80 ? 'excellent' : v >= 60 ? 'good' : v >= 40 ? 'fair' : 'weak');
+  // A Tablo on Wi-Fi may report its own signal; show what it gives beyond the basics
+  const tabloExtra = Object.entries(t).filter(([k]) => !['server_id', 'ip', 'connection', 'status'].includes(k))
+    .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ');
+  $('#netStatus').innerHTML = `
+    <dt>Your Tablo</dt><dd>${t.connection ? `${esc(kind(t.connection) || t.connection)}, ${esc(t.status || '')}` : 'Not reported'}${t.ip ? ` · ${esc(t.ip)}` : ''}${tabloExtra ? ` · ${esc(tabloExtra)}` : ''}</dd>
+    <dt>This computer</dt><dd>${pc.kind ? esc(kind(pc.kind)) : 'Connected'}${wifi && wifi.ssid ? ` to ${esc(wifi.ssid)}` : ''}${pc.ip ? ` · ${esc(pc.ip)}` : ''}</dd>
+    ${wifi && wifi.signal != null ? `<dt>Wi-Fi signal</dt><dd>${wifi.signal}% (${signalWord(wifi.signal)})${wifi.band ? ` · ${esc(wifi.band)}` : ''}${wifi.receive_mbps ? ` · ${Math.round(wifi.receive_mbps)} Mb/s link` : ''}</dd>` : ''}
+    ${pc.kind === 'ethernet' && pc.link_speed ? `<dt>Link speed</dt><dd>${esc(pc.link_speed)}</dd>` : ''}`;
+}
+
+async function testNetwork(btn) {
+  btn.disabled = true;
+  const out = $('#netTest');
+  out.innerHTML = '<span class="spinner"></span> Testing: reading part of a recording from your Tablo for about 10 seconds…';
+  try {
+    const r = await api('/api/network/test', { method: 'POST' });
+    const lines = [];
+    if (r.ping_ms != null) lines.push(`<b>Response time:</b> ${r.ping_ms} ms${r.ping_ms <= 30 ? ' (quick)' : r.ping_ms <= 100 ? ' (fine)' : ' (slow: video may take a while to start)'}${r.ping_lost ? `, ${r.ping_lost} of 5 checks got no answer` : ''}`);
+    if (r.mb_per_s != null) {
+      const times = r.mb_per_s / 2.5;
+      const verdict = times >= 2 ? `about ${Math.floor(times)}× what an HD stream needs, so plenty`
+        : times >= 1 ? 'just enough for one HD stream, with little to spare'
+        : 'not enough for smooth HD: try a wired connection for the Tablo or this computer, or move closer to the router';
+      lines.push(`<b>Video speed:</b> recordings arrive at ${r.mb_per_s} MB/s (${r.mbit_per_s} Mb/s), ${verdict}.`);
+    } else {
+      lines.push('No recordings to test the video speed with yet.');
+    }
+    if (r.busy) lines.push('<span class="dim">Something was playing from your Tablo during the test, so these numbers may be lower than usual.</span>');
+    out.innerHTML = lines.map(l => `<div style="margin-top:4px">${l}</div>`).join('');
+  } catch (err) {
+    out.innerHTML = `<span style="color:var(--rec)">Couldn't test: ${esc(err.message)}</span>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
 
 // Which shows use the most space. The Tablo's per-recording sizes don't add up to the drive's usage
 // figure, so each show gets its share of the drive's real usage, labelled as approximate.
@@ -5106,6 +5163,7 @@ const ACTIONS = {
   'pb-pip': () => player.togglePip(),
   'pb-live': () => player.goLive(),
   'pb-help': () => player.showHelp(),
+  'net-test': el => testNetwork(el),
   'help-jump': (el, e) => { if (e) e.preventDefault(); document.getElementById(el.dataset.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
   'pb-shape': el => pictureShape.menu(el),
   'export-folder': el => chooseExportFolder(el),
