@@ -2,7 +2,7 @@
 .env
 
 # Local cache: credentials (config.json), SQLite cache, downloaded artwork
-data/
+/data/
 *.db
 tablo_cache.db
 
