@@ -985,4 +985,4 @@ code { font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace; font-si
 .help th, .help td { text-align: left; vertical-align: top; padding: 8px 12px; border-bottom: 1px solid var(--border); }
 .help th { color: var(--text-2); font-weight: 600; background: var(--surface); }
 .help td:first-child { white-space: nowrap; font-weight: 550; }
-.help kbd { font: inherit; font-weight: 600; font-size: 12px; padding: 1px 6px; border-radius: 5px; background: var(--surface-3); border: 1px solid var(--border); }
+.help kbd, .page-sub kbd { font: inherit; font-weight: 600; font-size: 12px; padding: 1px 6px; border-radius: 5px; background: var(--surface-3); border: 1px solid var(--border); }

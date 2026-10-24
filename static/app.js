@@ -2900,7 +2900,7 @@ PAGES.antenna = async (r, token) => {
 // Help: the user guide (static/help.html, one <section> per topic), with its contents at the top
 PAGES.help = async (r, token) => {
   paint(`<div class="page"><div class="page-head"><div><h1 class="page-title">Help</h1>
-    <div class="page-sub">How to use TabloView. Press <span class="kbd">?</span> in the player for its keyboard shortcuts.</div></div></div>
+    <div class="page-sub">How to use TabloView. Press <kbd>?</kbd> in the player for its keyboard shortcuts.</div></div></div>
     <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
   let html;
   try {
