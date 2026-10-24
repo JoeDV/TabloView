@@ -48,6 +48,7 @@ UNANCHORED_TRIM = 3
 MIN_SEPARATION = 0.15  # show and ad scores must be at least this far apart to trust the result
 MAX_AD_PIECE_SECONDS = 300  # between two black-and-silent moments: longer than this is show
 SHORT_PIECE_SECONDS = 45
+AD_PIECE_SHARE = 0.85  # a piece averaging below this share of the show's long pieces is ads
 LEVEL_SECONDS = 0.05  # the sound's loudness is measured this often (speech dips between syllables)
 
 # The detector, saved with each result: results from an older one are redone (1: colour only;
@@ -289,10 +290,13 @@ def _marked_pieces(scores: List[float], t: float, edges: List[float], n: int) ->
         if not cuts or b - cuts[-1] > 5:
             cuts.append(b)
     spans = list(zip(cuts, cuts[1:]))
-    ad = []
-    for a, b in spans:
-        seg = scores[int(a):max(int(b), int(a) + 1)]
-        ad.append(b - a <= MAX_AD_PIECE_SECONDS and sum(seg) / len(seg) < t)
+    means = [sum(scores[int(a):max(int(b), int(a) + 1)]) / max(1, len(scores[int(a):max(int(b), int(a) + 1)])) for a, b in spans]
+    # What the show's pieces look like: no break runs past MAX_AD_PIECE_SECONDS, so the long pieces
+    # are show. A piece clearly below them is ads (Boston Blue: show 0.67-0.74, two whole breaks
+    # 0.56-0.57, above the recording-wide cut-off). Without long pieces, that cut-off
+    long_means = sorted(m for (a, b), m in zip(spans, means) if b - a > MAX_AD_PIECE_SECONDS)
+    cut = long_means[len(long_means) // 2] * AD_PIECE_SHARE if long_means else t
+    ad = [b - a <= MAX_AD_PIECE_SECONDS and m < cut for (a, b), m in zip(spans, means)]
     # A short piece against an ad piece is the rest of that break (an ad brighter than most): the
     # show never runs that briefly between two of these moments
     for i, (a, b) in enumerate(spans):
