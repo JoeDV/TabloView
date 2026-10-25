@@ -2904,7 +2904,7 @@ PAGES.help = async (r, token) => {
     <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
   let html;
   try {
-    const res = await fetch('/static/help.html?v=2');
+    const res = await fetch('/static/help.html?v=3');
     if (!res.ok) throw new Error(res.status);
     html = await res.text();
   } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
@@ -3164,14 +3164,6 @@ PAGES.device = async (r, token) => {
           </select>
         </label>
         <p class="dim" style="margin-top:6px;font-size:12.5px">The page you see when TabloView opens, on this computer.</p>
-        <label class="switch-row" style="font-weight:400;cursor:default;margin-top:14px">
-          <span>View on this device</span>
-          <select class="select" data-change="view-mode" style="height:32px">
-            <option value="pc" selected>PC (all of TabloView)</option>
-            <option value="tv">TV (big screens for a remote)</option>
-          </select>
-        </label>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">TV view is for a TV's browser: Continue watching, Library, Live TV and your Watch list, used with the remote's arrows, OK and Back. This browser keeps opening in the view you choose; TV view has a PC view button to come back.</p>
       </div>
 `;
   const diagnosticsPanel = `
@@ -5163,6 +5155,11 @@ const ACTIONS = {
   'pb-pip': () => player.togglePip(),
   'pb-live': () => player.goLive(),
   'pb-help': () => player.showHelp(),
+  // TV view (top right): this browser opens in it from now on; TV view's PC view comes back
+  'tv-view': () => {
+    save('tv_view', 'tv');
+    location.href = '/tv';
+  },
   'net-test': el => testNetwork(el),
   'help-jump': (el, e) => { if (e) e.preventDefault(); document.getElementById(el.dataset.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
   'pb-shape': el => pictureShape.menu(el),
@@ -5331,11 +5328,6 @@ const CHANGES = {
   'show-cleanup': el => setCleanup(el),
   'buffer': el => { state.bufferTarget = parseInt(el.value, 10) || 8; save('tablo_buffer_target', state.bufferTarget); toast(`Buffer set to ${state.bufferTarget} seconds`); },
   'autoplay': el => { state.autoplay = el.checked; save('tablo_autoplay', el.checked ? '1' : '0'); },
-  'view-mode': el => {
-    if (el.value !== 'tv') return;
-    save('tv_view', 'tv');
-    location.href = '/tv';
-  },
   'start-page': el => {
     save('tv_start_page', el.value);
     toast(`TabloView will open on ${START_PAGES.find(([v]) => v === el.value)[1]}`);
