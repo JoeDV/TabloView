@@ -87,16 +87,18 @@ async def get_cloud_grid(start: datetime, end: datetime) -> Dict[str, Any]:
 
 
 async def fetch_local_ota_map() -> Dict[str, Dict[str, Any]]:
-    """Fetch OTA channel details (logos, resolution) from the local device, 50 channels per request
-    (tablo_manager.batch_get). If the Tablo rejects a batch, those channels show without their local
-    details rather than the page waiting."""
+    """Fetch channel details (logos, resolution, favourites) from the local device, 50 channels per
+    request (tablo_manager.batch_get). Streaming channels too (?lh): without it the Tablo lists only
+    its antenna channels, and favourites set on streaming channels in the Tablo's apps were never
+    seen, so Live TV had no Favorites filter for people who'd only favourited those. If the Tablo
+    rejects a batch, those channels show without their local details rather than the page waiting."""
     local_ota_map: Dict[str, Dict[str, Any]] = {}
     try:
-        resp = await tablo_manager.request_local("GET", "/guide/channels")
+        resp = await tablo_manager.request_local("GET", "/guide/channels?lh")
         if resp.status_code != 200:
             return local_ota_map
 
-        for p, c_data in (await tablo_manager.batch_get(resp.json())).items():
+        for p, c_data in (await tablo_manager.batch_get(resp.json(), lh=True)).items():
             # Keep the device path (e.g. /guide/channels/17182): tuners report busy channels by path
             c_info = {**c_data.get("channel", {}), "_path": p}
             ident = c_info.get("channel_identifier") or str(c_data.get("object_id"))

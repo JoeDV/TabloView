@@ -284,14 +284,15 @@ class TabloManager:
         data = resp.json()
         return data
 
-    async def batch_get(self, paths: List[str]) -> Dict[str, Any]:
+    async def batch_get(self, paths: List[str], lh: bool = False) -> Dict[str, Any]:
         """Read Tablo objects by path, 50 per POST /batch (one GET each is the kind of burst that
         makes the Tablo refuse connections for a minute). For pages someone is waiting on: a batch
         the Tablo rejects is left out rather than waited out (background syncs use
         sync_service.fetch_objects, which waits)."""
         objects: Dict[str, Any] = {}
         for i in range(0, len(paths), 50):
-            r = await self.request_local("POST", "/batch", json.dumps(paths[i:i + 50]))
+            # ?lh: streaming (FAST) channels and recordings exist only with it
+            r = await self.request_local("POST", "/batch?lh" if lh else "/batch", json.dumps(paths[i:i + 50]))
             got = r.json() if r.status_code == 200 else None
             if isinstance(got, dict):
                 objects.update({p: d for p, d in got.items() if isinstance(d, dict)})
