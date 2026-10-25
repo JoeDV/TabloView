@@ -23,7 +23,7 @@ class ChannelBatchTests(unittest.IsolatedAsyncioTestCase):
 
         async def fake(method, path, body=""):
             calls.append((method, path))
-            if path == "/guide/channels":
+            if path == "/guide/channels?lh":  # streaming channels too (their favourites)
                 return Resp(paths)
             asked = json.loads(body)
             return Resp({p: {"object_id": int(p.rsplit("/", 1)[1]),
@@ -32,13 +32,13 @@ class ChannelBatchTests(unittest.IsolatedAsyncioTestCase):
 
         with mock.patch.object(tablo_manager, "request_local", new=fake):
             got = await live.fetch_local_ota_map()
-        self.assertEqual(calls, [("GET", "/guide/channels")] + [("POST", "/batch")] * 3)
+        self.assertEqual(calls, [("GET", "/guide/channels?lh")] + [("POST", "/batch?lh")] * 3)
         self.assertEqual(len(got), 120)
         self.assertEqual(got["S7"]["_path"], "/guide/channels/7")
 
     async def test_a_rejected_batch_leaves_those_channels_out(self):
         async def fake(method, path, body=""):
-            return Resp(["/guide/channels/1"]) if path == "/guide/channels" else Resp(None, status=500)
+            return Resp(["/guide/channels/1"]) if path == "/guide/channels?lh" else Resp(None, status=500)
 
         with mock.patch.object(tablo_manager, "request_local", new=fake):
             self.assertEqual(await live.fetch_local_ota_map(), {})
