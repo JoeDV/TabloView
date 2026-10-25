@@ -34,7 +34,7 @@ The local API is plain HTTP on your network, but every request except `/ping` an
 All cloud calls send a mobile-app `User-Agent` (tablo-api uses `Tablo-FAST/2.0.0 (Mobile; iPhone; iOS 16.6)`).
 
 1. **`POST /api/v2/login/`** with `{"email": "...", "password": "..."}` returns an access token. Its exact shape is in tablo-api's `_LoginResponse`.
-2. **`GET /api/v2/account/`** with the login's `Authorization` header returns the account's profiles and devices. Each device has a `serverId`, a `name` and a `url`, which is the Tablo's local address.
+2. **`GET /api/v2/account/`** with the login's `Authorization` header returns the account's profiles and devices. Each device has a `serverId`, a `name` and a `url`, which is the Tablo's local address. Each profile also has `preferences.favorite_channels`: the channel identifiers (e.g. `S19593_013_01`) the user favourited in Tablo's apps. That's where the current apps keep favourites, per profile; the Tablo's own per-channel `favourite` flag stays false. Verified (favourites added in the Tablo app showed up here and not on the device).
 3. **`POST /api/v2/account/select/`** with `{"pid": "<profile identifier>", "sid": "<serverId>"}` returns a token for that Tablo, called the *Lighthouse token*.
 
 Keep three things for later: the access token, the Lighthouse token, and the device's local URL. TabloView never stores the password; it signs in again only when the tokens stop working. The Tablo only accepts signed local requests after the account has signed in through the cloud. Before that, it answers 401.

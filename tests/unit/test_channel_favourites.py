@@ -19,8 +19,9 @@ STREAMING = {"object_id": 247, "path": "/guide/channels/247", "channel": {
 
 
 class FavouriteChannelTests(unittest.TestCase):
-    """Favourites set in the Tablo's apps: a user who'd favourited only streaming channels had no
-    Favorites filter, because the channel list was read without ?lh (antenna channels only)."""
+    """Favourites set in the Tablo's apps: a user had no Favorites filter in Live TV. Tablo's apps keep
+    them in the account's profile; the Tablo's own per-channel flag (read with ?lh for streaming
+    channels too) is still honoured for older apps."""
 
     def test_a_favourite_streaming_channel_is_seen(self):
         asked = []
@@ -40,6 +41,20 @@ class FavouriteChannelTests(unittest.TestCase):
 
         ch = mock.Mock(identifier="S120010_500_01", call_sign="Scripps News", major=500, minor=1, network="", kind="ott")
         self.assertTrue(live.base_channel_dict(ch, {}, found)["favorite"])
+
+    def test_favourites_from_the_account_profile(self):
+        # Where Tablo's apps keep them now: the account's profile, by channel identifier
+        account = {"profiles": [{"name": "Profile 1", "preferences": {"favorite_channels": ["S19593_013_01"]}},
+                                {"name": "Kids", "preferences": {"favorite_channels": ["S1_002_01"]}}]}
+        client = mock.Mock()
+        client._session.get.return_value = mock.Mock(json=lambda: account, raise_for_status=lambda: None)
+        with mock.patch.dict(live._favourites, {"at": 0.0, "ids": set()}):
+            ids = asyncio.run(live.fetch_favourites(client))
+        self.assertEqual(ids, {"S19593_013_01"})  # the first profile, the one TabloView signs in as
+        ch = mock.Mock(identifier="S19593_013_01", call_sign="WTHR", major=13, minor=1, network="NBC", kind="ota")
+        self.assertTrue(live.base_channel_dict(ch, {}, {}, ids)["favorite"])
+        ch.identifier = "S21102_006_01"
+        self.assertFalse(live.base_channel_dict(ch, {}, {}, ids)["favorite"])
 
 
 if __name__ == "__main__":

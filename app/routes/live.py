@@ -108,6 +108,34 @@ async def fetch_local_ota_map() -> Dict[str, Dict[str, Any]]:
     return local_ota_map
 
 
+# Favourite channels as Tablo's apps keep them: in the Tablo account, per profile
+# (profiles[].preferences.favorite_channels, channel identifiers), not on the Tablo, whose own
+# channel "favourite" flag the apps no longer set. TabloView signs in as the account's first
+# profile (tablo-api), so that profile's. Kept a few minutes so one added in the app soon shows.
+FAVOURITES_SECONDS = 300
+_favourites: Dict[str, Any] = {"at": 0.0, "ids": set()}
+
+
+async def fetch_favourites(client: TabloClient) -> set:
+    if time.time() - _favourites["at"] < FAVOURITES_SECONDS:
+        return _favourites["ids"]
+
+    def read() -> set:
+        from tablo_api.client import _CLOUD_HOST, _CLOUD_USER_AGENT
+        resp = client._session.get(f"{_CLOUD_HOST}/api/v2/account/", timeout=15, headers={
+            "Authorization": f"Bearer {client.device.account_token}", "Accept": "*/*", "User-Agent": _CLOUD_USER_AGENT})
+        resp.raise_for_status()
+        profiles = resp.json().get("profiles") or []
+        return set(((profiles[0].get("preferences") or {}).get("favorite_channels") or []) if profiles else [])
+
+    try:
+        _favourites.update(at=time.time(), ids=await asyncio.to_thread(read))
+    except Exception as e:
+        print(f"[LiveTV] Couldn't read favourite channels: {e}")
+        _favourites["at"] = time.time() - FAVOURITES_SECONDS + 60  # try again in a minute
+    return _favourites["ids"]
+
+
 _cloud_channels: Dict[Any, Any] = {}
 CLOUD_CHANNELS_SECONDS = 900  # the lineup rarely changes; Live TV asks on every guide page
 
@@ -216,7 +244,8 @@ def pick_logo(logos: List[Dict[str, Any]], style: Optional[str] = None) -> Optio
     return None
 
 
-def base_channel_dict(ch, cloud_ch_info: Dict[str, Any], local_ota_map: Dict[str, Any]) -> Dict[str, Any]:
+def base_channel_dict(ch, cloud_ch_info: Dict[str, Any], local_ota_map: Dict[str, Any],
+                      favourites: Optional[set] = None) -> Dict[str, Any]:
     """Common channel fields shared by /channels and /epg, with logo and resolution resolved."""
     c_cloud = cloud_ch_info.get(ch.identifier, {})
     clean_name = c_cloud.get("name") or (f"{ch.major}.{ch.minor} {ch.call_sign}" if ch.major > 0 else ch.call_sign)
@@ -232,13 +261,13 @@ def base_channel_dict(ch, cloud_ch_info: Dict[str, Any], local_ota_map: Dict[str
         "name": clean_name,
         "logo_url": None,
         "resolution": "HD",
-        "favorite": False,
+        "favorite": ch.identifier in (favourites or ()),
     }
 
     # Local OTA enriched info (logos, resolution, favorites set in Tablo's apps)
     if ch.identifier in local_ota_map:
         loc = local_ota_map[ch.identifier]
-        c_dict["favorite"] = bool(loc.get("favourite"))
+        c_dict["favorite"] = c_dict["favorite"] or bool(loc.get("favourite"))  # older apps set it here
         c_dict["resolution"] = loc.get("resolution", "HD").upper().replace("HD_", "") + "p" if loc.get("resolution") else "HD"
         c_dict["logo_url"] = pick_logo(loc.get("logos", []))
 
@@ -405,9 +434,10 @@ async def get_live_channels(kind: str = Query("all", description="all, ota, fast
     # Fetch local OTA channel details and the full cloud lineup (OTA + FAST) concurrently
     include_ott = kind in ("all", "fast")
     # The Tablo's channel list only changes with a channel scan: kept for an hour (ota_map_cached)
-    local_ota_map, raw_channels = await asyncio.gather(
+    local_ota_map, raw_channels, favourites = await asyncio.gather(
         ota_map_cached(),
-        fetch_cloud_channels(client, include_ott)
+        fetch_cloud_channels(client, include_ott),
+        fetch_favourites(client),
     )
 
     for ch in raw_channels:
@@ -416,7 +446,7 @@ async def get_live_channels(kind: str = Query("all", description="all, ota, fast
         if kind == "fast" and ch.kind != "ott":
             continue
 
-        c_dict = base_channel_dict(ch, cloud_ch_info, local_ota_map)
+        c_dict = base_channel_dict(ch, cloud_ch_info, local_ota_map, favourites)
         c_dict["now_playing"] = None
         c_dict["next_up"] = None
 
@@ -517,9 +547,10 @@ async def get_live_epg(
     # 3 & 4. Local OTA channel details and cloud channel lineup, fetched concurrently
     include_ott = kind in ("all", "fast")
     # The Tablo's channel list only changes with a channel scan: kept for an hour (ota_map_cached)
-    local_ota_map, raw_channels = await asyncio.gather(
+    local_ota_map, raw_channels, favourites = await asyncio.gather(
         ota_map_cached(),
-        fetch_cloud_channels(client, include_ott)
+        fetch_cloud_channels(client, include_ott),
+        fetch_favourites(client),
     )
 
     recording_now = await recording_channel_identifiers(local_ota_map)
@@ -534,7 +565,7 @@ async def get_live_epg(
         if kind == "fast" and ch.kind != "ott":
             continue
 
-        c_dict = base_channel_dict(ch, cloud_ch_info, local_ota_map)
+        c_dict = base_channel_dict(ch, cloud_ch_info, local_ota_map, favourites)
         c_dict["airings"] = []
         if ch.kind != "ota":  # streaming: the Tablo may record it (Live TV's Record button)
             c_dict["can_record"] = bool(((cloud_ch_info.get(ch.identifier) or {}).get("ott") or {}).get("canRecord"))
