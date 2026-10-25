@@ -77,7 +77,13 @@ h2 { font-size: 1.7vw; margin: 2.4vw 0 1.2vw; color: var(--dim); font-weight: 60
 .player.idle .osd { opacity: 0; }
 .osd-title { font-size: 2.2vw; font-weight: 700; }
 .osd-sub { color: var(--dim); margin-top: 0.4vw; }
-.osd-bar { height: 0.5vw; background: rgba(255,255,255,0.25); border-radius: 1vw; margin-top: 1.6vw; overflow: hidden; }
+.osd-bar { position: relative; height: 0.5vw; background: rgba(255,255,255,0.25); border-radius: 1vw; margin-top: 1.6vw; overflow: hidden; }
+/* Commercial breaks (orange) and signal dropouts (red) on the bar, as on the PC */
+.osd-mark { position: absolute; top: 0; bottom: 0; background: #e8a33d; }
+.osd-mark.drop { background: var(--rec); }
+/* In a break that isn't skipped automatically: stays up while it lasts, OK skips it */
+.skip-banner { position: absolute; right: 4vw; bottom: 11vw; padding: 1vw 1.8vw; border-radius: 3vw; background: rgba(0,0,0,0.78);
+  border: 0.2vw solid #fff; font-weight: 600; font-size: 1.6vw; cursor: pointer; }
 .osd-played { height: 100%; width: 0; background: var(--accent); }
 .osd-times { white-space: pre; display: flex; justify-content: space-between; margin-top: 0.8vw; color: var(--dim); font-variant-numeric: tabular-nums; }
 /* OK in the player: a row of big buttons (TV browsers don't always pass the remote's Back to the page) */

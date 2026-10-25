@@ -432,9 +432,62 @@ const player = {
     const previous = this.open ? this.s.sessionId : null;  // the Watch list's recording before this one
     this.s = { kind: 'rec', id, ep, duration: ep.actual_duration || ep.duration || 0, shapeKey: ep.channel_identifier || ep.channel_name };
     if (previous) { this.teardown(); await this.stopById(previous); }
+    this.loadBreaks(this.s);
     const counter = run && state.run.eps.length > 1 ? ` · ${state.run.index + 1} of ${state.run.eps.length}` : '';
     this.show(ep.show_title || 'Recording', [fmt.se(ep.season_number, ep.episode_number), ep.title !== ep.show_title ? ep.title : ''].filter(Boolean).join(' · ') + counter);
     await this.startRecording(start);
+  },
+
+  // Commercial breaks found in this recording, and signal dropouts: marked on the bar, skipped
+  // automatically when that's on (Device → Playback, the same settings as the PC), else OK skips
+  async loadBreaks(s) {
+    let res;
+    try { res = await api(`/api/episodes/${encodeURIComponent(s.id)}/commercials`); } catch { return; }
+    if (this.s !== s) return;
+    Object.assign(s, { breaks: res.breaks || [], dropouts: res.dropouts || [], autoSkip: !!res.auto_skip,
+      autoSkipDropouts: !!res.auto_skip_dropouts, skippedBreaks: new Set(), skippedDropouts: new Set() });
+    this.drawMarks();
+  },
+
+  drawMarks() {
+    const s = this.s, bar = $('#osdMarks');
+    if (!s.duration || !s.breaks) { bar.innerHTML = ''; return; }
+    const span = (b, cls) => `<span class="${cls}" style="left:${(b.start / s.duration) * 100}%;width:${Math.max(0.3, ((b.end - b.start) / s.duration) * 100)}%"></span>`;
+    bar.innerHTML = s.breaks.map(b => span(b, 'osd-mark')).join('') + s.dropouts.map(d => span(d, 'osd-mark drop')).join('');
+  },
+
+  // In a break (or a dropout): skip it once automatically, or offer OK to skip
+  checkBreak(pos) {
+    const s = this.s;
+    const find = (list, edge) => (list || []).findIndex(b => pos >= b.start && pos < b.end - edge);
+    let i = find(s.breaks, 2), kind = 'break';
+    if (i < 0) { i = find(s.dropouts, 0.5); kind = 'dropout'; }
+    if (i < 0) { this.showSkip(null); return; }
+    const b = (kind === 'break' ? s.breaks : s.dropouts)[i];
+    const auto = kind === 'break' ? s.autoSkip : s.autoSkipDropouts;
+    const done = kind === 'break' ? s.skippedBreaks : s.skippedDropouts;
+    if (auto && !done.has(i)) {
+      done.add(i);
+      this.showSkip(null);
+      this.banner(kind === 'break' ? `Skipped a ${fmt.mins(b.end - b.start)} commercial break` : 'Skipped a signal dropout');
+      this.seekTo(b.end);
+      return;
+    }
+    // Watching it anyway (or went back into one already skipped): OK skips it
+    this.showSkip({ end: b.end, text: `${kind === 'break' ? 'Commercial break' : 'Signal dropout'} · ${fmt.clock(b.end - pos)} · OK to skip` });
+  },
+
+  showSkip(skip) {
+    this.inBreak = skip;
+    const el = $('#skipBanner');
+    el.textContent = skip ? skip.text : '';
+    el.classList.toggle('hidden', !skip);
+  },
+
+  skipBreak() {
+    const end = this.inBreak && this.inBreak.end;
+    this.showSkip(null);
+    if (end) this.seekTo(end);
   },
 
   async startRecording(start) {
@@ -561,6 +614,7 @@ const player = {
       $('#osdEnd').textContent = s.duration ? fmt.clock(s.duration) : '';
       $('#osdPlayed').style.width = s.duration ? `${Math.min(100, (pos / s.duration) * 100)}%` : '0';
       $('#osdHint').textContent = v.paused ? 'Paused' : '';
+      if (s.breaks) this.checkBreak(pos);
     } else {
       const w = this.liveWindow();
       const behind = w ? Math.max(0, w.end - v.currentTime) : 0;
@@ -585,7 +639,12 @@ const player = {
       if (w) v.currentTime = Math.max(w.start, Math.min(w.end - 2, v.currentTime + seconds));
       return;
     }
-    const target = Math.max(0, Math.min((s.duration || Infinity) - 5, this.position() + seconds));
+    this.seekTo(this.position() + seconds);
+  },
+
+  seekTo(time) {
+    const s = this.s, v = this.video();
+    const target = Math.max(0, Math.min((s.duration || Infinity) - 5, time));
     const rel = target - (s.offset || 0);
     const w = this.liveWindow();  // for a recording: what's converted so far
     // Within what's been converted: jump there; earlier than the stream starts or past what's
@@ -682,6 +741,8 @@ const player = {
     clearInterval(this.upNext);
     this.upNext = null;
     this.hideControls();
+    this.showSkip(null);
+    $('#osdMarks').innerHTML = '';
     clearInterval(this.progressTimer);
     clearTimeout(this.surfTimer);
     this.teardown();
@@ -737,6 +798,7 @@ function onKey(e) {
 
   if (player.open && $('#dialog').classList.contains('hidden')) {
     if (player.upNext && (k === 'Enter' || k === ' ')) { e.preventDefault(); player.playNext(); return; }
+    if (player.inBreak && !player.controls && k === 'Enter') { e.preventDefault(); player.skipBreak(); return; }
     // The button row: arrows move along it, OK presses, Back/up/down put it away
     if (player.controls) {
       e.preventDefault();
@@ -789,6 +851,7 @@ function onClick(e) {
     return;
   }
   const act = el.dataset.act;
+  if (act === 'skip-break') { player.skipBreak(); return; }
   if (act === 'play') player.playEpisode(el.dataset.id);
   else if (act === 'tune') player.tune(el.dataset.id);
   else if (act === 'run') startRun(Number(el.dataset.from), el.dataset.how);
