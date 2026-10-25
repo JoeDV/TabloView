@@ -33,9 +33,17 @@ class TabloManager:
         self.auth_problems: Dict[str, str] = {}
         # When requests to the Tablo started failing to connect (None while it answers)
         self.unreachable_since: Optional[float] = None
+        self._address_checked_at = 0.0  # last look in the account for the Tablo's current address
         self._local_slots = asyncio.Semaphore(LOCAL_CONCURRENCY)
         self._bulk_slots = asyncio.Semaphore(BULK_CONCURRENCY)
         self.load_cached_config()
+
+    # The Tablo's address comes from the account at sign-in. A router may give the Tablo another
+    # address later; TabloView kept trying the old one, "not responding" for good (a forum report),
+    # while Tablo's apps, which look it up each time, worked. So when it stops answering for a
+    # while, the account is asked again (at most every few minutes)
+    ADDRESS_CHECK_AFTER = 45
+    ADDRESS_CHECK_EVERY = 300
 
     UNREACHABLE_MESSAGE = "Your Tablo isn't responding right now. This usually clears up on its own: wait a minute and try again."
 
@@ -78,6 +86,34 @@ class TabloManager:
         if not self.email and TABLO_EMAIL:
             self.email = TABLO_EMAIL
             self.password = TABLO_PASSWORD
+
+    async def refresh_address(self) -> bool:
+        """Ask the Tablo account for the Tablo's current address (as sign-in does) and switch to it if
+        it moved. True if it changed."""
+        if not self.device:
+            return False
+        from tablo_api.client import _CLOUD_HOST, _CLOUD_USER_AGENT
+        try:
+            resp = await self._http.get(f"{_CLOUD_HOST}/api/v2/account/", timeout=15, headers={
+                "Authorization": f"Bearer {self.device.account_token}", "Accept": "*/*", "User-Agent": _CLOUD_USER_AGENT})
+            if resp.status_code in (401, 403):
+                self.note_auth("cloud", ok=False)
+                return False
+            resp.raise_for_status()
+            mine = next((d for d in resp.json().get("devices") or [] if d.get("serverId") == self.device.sid), None)
+        except Exception as e:
+            print(f"[TabloManager] Couldn't look up the Tablo's address: {e}")
+            return False
+        url = (mine or {}).get("url")
+        if not url or url.rstrip("/") == self.device.local_url.rstrip("/"):
+            return False
+        print(f"[TabloManager] The Tablo moved: {self.device.local_url} -> {url}")
+        self.device.local_url = url
+        for d in self.devices:
+            if d.sid == self.device.sid:
+                d.local_url = url
+        self.save_config()
+        return True
 
     def save_config(self):
         """Save credentials and discovered device data."""
@@ -169,6 +205,10 @@ class TabloManager:
             if self.unreachable_since is None:
                 self.unreachable_since = time.time()
                 print("[TabloManager] Tablo isn't responding")
+            now = time.time()
+            if now - self.unreachable_since >= self.ADDRESS_CHECK_AFTER and now - self._address_checked_at >= self.ADDRESS_CHECK_EVERY:
+                self._address_checked_at = now
+                asyncio.get_running_loop().create_task(self.refresh_address())
             raise
         if self.unreachable_since is not None:
             print(f"[TabloManager] Tablo is responding again (after {time.time() - self.unreachable_since:.0f} s)")

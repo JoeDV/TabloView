@@ -41,6 +41,8 @@ async def lifespan(app: FastAPI):
     # (sync_library starts the guide sync itself once it finishes)
     if tablo_manager.is_authenticated:
         print(f"[Startup] Found cached Tablo device: {tablo_manager.device.name} ({tablo_manager.device.local_url})")
+        # The Tablo may have a new address since sign-in (a router's choice): the account knows
+        asyncio.create_task(tablo_manager.refresh_address())
         asyncio.create_task(sync_service.sync_library())
     else:
         print("[Startup] No authenticated Tablo device yet. Ready for login via web UI.")
