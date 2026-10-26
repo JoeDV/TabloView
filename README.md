@@ -98,6 +98,6 @@ Store copies get updates from the Store; TabloView asks the Store whether one is
 
 TabloView is licensed under the GPL-3.0 (see `LICENSE`). The Windows app bundles:
 
-- **FFmpeg** (GPL), built by gyan.dev; its license is included next to `ffmpeg.exe`. Source: https://ffmpeg.org and https://www.gyan.dev/ffmpeg/builds/
+- **FFmpeg** (GPLv3), the gyan.dev "essentials" build installed when the app is built; its license is included next to `ffmpeg.exe`. The exact version and links to its source (`https://ffmpeg.org/releases/ffmpeg-<version>.tar.xz`) and to the build (`https://github.com/GyanD/codexffmpeg/releases/tag/<version>`) are under Help → About and licenses.
 - **hls.js** (Apache-2.0), in `static/vendor/` with its license.
 - Python and its libraries, via PyInstaller.

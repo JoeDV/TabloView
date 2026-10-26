@@ -69,6 +69,24 @@ def _lan_ip() -> Optional[str]:
         return None
 
 
+_ffmpeg_version: dict = {}
+
+
+def ffmpeg_version() -> Optional[str]:
+    """The FFmpeg in use, as it names itself ("9.0.1-essentials_build-www.gyan.dev"), for Help's
+    credits: the bundled one changes with each build. Asked once."""
+    if "v" not in _ffmpeg_version:
+        _ffmpeg_version["v"] = None
+        try:
+            out = subprocess.run([FFMPEG_PATH, "-hide_banner", "-version"], capture_output=True, text=True,
+                                 timeout=10, creationflags=encoders.NO_WINDOW).stdout
+            if out.startswith("ffmpeg version "):
+                _ffmpeg_version["v"] = out.split()[2]
+        except Exception:
+            pass
+    return _ffmpeg_version["v"]
+
+
 @router.get("/system/info")
 async def system_info(request: Request):
     """App version, where it is listening, and whether FFmpeg is available."""
@@ -82,6 +100,7 @@ async def system_info(request: Request):
         "packaged": IS_PACKAGED,
         "store": IS_STORE,
         "ffmpeg_found": Path(FFMPEG_PATH).is_file() or shutil.which(FFMPEG_PATH) is not None,
+        "ffmpeg_version": await asyncio.to_thread(ffmpeg_version),
         "listening_on_network": host not in ("127.0.0.1", "localhost") if host else None,
         "network_url": f"http://{lan_ip}:{port}" if lan_ip and port else None,
         "lan_pin_set": lanauth.pin_set(),

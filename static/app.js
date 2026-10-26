@@ -2904,7 +2904,7 @@ PAGES.help = async (r, token) => {
     <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
   let html;
   try {
-    const res = await fetch('/static/help.html?v=6');
+    const res = await fetch('/static/help.html?v=7');
     if (!res.ok) throw new Error(res.status);
     html = await res.text();
   } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
@@ -2920,8 +2920,23 @@ PAGES.help = async (r, token) => {
   list.outerHTML = `<div class="help-toc">${toc}</div>`;
   view().querySelector('.page').appendChild(guide);
   const jump = r.query.get('topic');
-  if (jump) document.getElementById(jump)?.scrollIntoView();
+  if (jump) document.getElementById(jump)?.scrollIntoView();  fillCredits(guide);
 };
+
+// About and licenses: the FFmpeg in use, and where its exact source is (the bundled one changes with builds)
+async function fillCredits(guide) {
+  let v;
+  try { v = (await api('/api/system/info')).ffmpeg_version; } catch { return; }
+  if (!v) return;
+  const name = guide.querySelector('[data-fill="ffmpeg-version"]');
+  if (name) name.textContent = `version ${v}`;
+  const num = (v.match(/^\d+(\.\d+)*/) || [])[0];
+  const src = guide.querySelector('[data-fill="ffmpeg-source"]');
+  if (!src || !num) return;
+  const link = (url, text) => `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(text)}</a>`;
+  src.innerHTML = `Source code for this version: ${link(`https://ffmpeg.org/releases/ffmpeg-${num}.tar.xz`, `ffmpeg-${num}`)}`
+    + (v.includes('gyan.dev') ? `; this build and how it was made: ${link(`https://github.com/GyanD/codexffmpeg/releases/tag/${num}`, 'gyan.dev')}.` : '.');
+}
 
 PAGES.downloads = async (r, token) => {
   paint(`<div class="page">
