@@ -18,7 +18,7 @@ import httpx
 from starlette.responses import Response, StreamingResponse
 from starlette.background import BackgroundTask
 
-from . import childproc, encoders
+from . import childproc, encoders, export_pace
 from .config import TRANSCODE_DIR, FFMPEG_PATH
 from .database import save_export_job
 from .settings import load_settings, exports_dir
@@ -126,6 +126,7 @@ class StreamSession:
         self.supervisor: Optional[asyncio.Task] = None
         self.reception = None  # live antenna channels: picture quality meter (app/reception.py)
         self.reception_task: Optional[asyncio.Task] = None
+        self.relay = None  # a recording's playback reads through TabloView (export_pace, unpaced)
         self.last_used = time.time()  # video fetched or a check-in from its page (see ABANDONED_SECONDS)
 
 
@@ -245,6 +246,7 @@ class TranscodeManager:
                 sess.supervisor.cancel()
             if sess.reception_task:
                 sess.reception_task.cancel()
+            export_pace.close_relay(sess.relay)
             if sess.tablo_token:
                 # Free the tuner on the Tablo now rather than when its session times out
                 from .tablo_client import tablo_manager
@@ -450,6 +452,12 @@ class TranscodeManager:
         session_dir.mkdir(exist_ok=True, parents=True)
         playlist_output = session_dir / "playlist.m3u8"
 
+        if not live and sess.relay is None:
+            # A recording: read through TabloView, which hands FFmpeg the pieces cleanly across the
+            # joins between the Tablo's files (export_pace); live TV is one growing file
+            sess.relay = export_pace.open_relay(input_url, paced=False)
+            if sess.relay:
+                input_url = sess.relay.url
         plan = await asyncio.to_thread(self._video_plan, passthrough)
         if live and plan["smooth"] and self.smooth_live_too_slow:
             plan = {**plan, "smooth": False}  # this PC couldn't keep up with it earlier (see _supervise)

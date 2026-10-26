@@ -102,6 +102,39 @@ class RelayTests(unittest.TestCase):
         serve(export_pace.FAST_RATE)
         self.assertAlmostEqual(serve(export_pace.FAST_RATE), 1.2, places=5)
 
+    def test_playback_through_a_relay_isnt_held_back(self):
+        # Recordings play through a relay too (FFmpeg reading the Tablo directly lost a packet at
+        # every join between its files); playback mustn't wait for the export pace
+        export_pace.local_port = 7070
+        relay = export_pace.open_relay("http://tablo/pl.m3u8", paced=False)
+        self.addCleanup(export_pace.close_relay, relay)
+        relay.targets["s1.ts"] = ("http://tablo/segw.ts?a", 6.0, (0, 188))
+        ok = httpx.Response(206, content=b"\x47" * 188, headers={"content-type": "video/mp2t"})
+        with mock.patch.object(transcode_manager._http, "get", new=mock.AsyncMock(return_value=ok)), \
+                mock.patch.object(export_pace.asyncio, "sleep", new=mock.AsyncMock()) as sleep, \
+                mock.patch.object(export_pace, "something_playing", new=mock.AsyncMock(return_value=False)):
+            for _ in range(20):  # far past the head start
+                asyncio.run(export_pace.serve(relay.id, "s1.ts"))
+        sleep.assert_not_called()
+
+    def test_a_recording_plays_through_a_relay_and_live_tv_doesnt(self):
+        from app import transcode
+        export_pace.local_port = 7070
+        made = []
+        real_open = export_pace.open_relay
+        with mock.patch.object(transcode.export_pace, "open_relay", side_effect=lambda u, paced=True: made.append(paced) or real_open(u, paced)):
+            for live in (False, True):
+                sess = transcode_manager.create_session("http://tablo/pl.m3u8")
+                self.addCleanup(transcode_manager.sessions.pop, sess.session_id, None)
+                with mock.patch.object(transcode.subprocess, "Popen", side_effect=OSError("no ffmpeg here")):
+                    try:
+                        asyncio.run(transcode_manager.start_browser_transcode(sess.session_id, "http://tablo/pl.m3u8", live=live))
+                    except OSError:
+                        pass
+                if sess.relay:
+                    export_pace.close_relay(sess.relay)
+        self.assertEqual(made, [False])  # one unpaced relay, for the recording only
+
     def test_no_relay_until_tabloviews_port_is_known(self):
         export_pace.local_port = None
         self.assertIsNone(export_pace.open_relay("http://tablo/pl.m3u8"))

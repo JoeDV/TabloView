@@ -7,7 +7,13 @@ Here the export's playlist is rewritten so every piece comes through /api/export
 piece of video is held back just long enough to keep to the current pace.
 
 A Tablo recording is one large file, its playlist naming byte ranges in it (#EXT-X-BYTERANGE, about
-2.4 seconds each). Each range gets its own name here, and only its bytes are fetched from the Tablo."""
+2.4 seconds each). Each range gets its own name here, and only its bytes are fetched from the Tablo.
+
+Playback of recordings reads through a relay too, unpaced (paced=False): a recording is a chain of
+files about 5.5 minutes long, and FFmpeg reading the Tablo's playlist straight from the Tablo lost a
+video packet at every join (a 1-2 s glitch every few minutes). The same bytes fetched by TabloView
+and handed over piece by piece come out clean (checked on a Tracker recording: 3 damaged packets at
+a join read directly, none through TabloView), so the relay hands FFmpeg exactly that."""
 
 import asyncio
 import re
@@ -39,9 +45,10 @@ def note_port(server: Optional[Tuple[str, int]]) -> None:
 class Relay:
     """One export's view of a recording: the Tablo's playlists and pieces under short local names."""
 
-    def __init__(self, playlist_url: str, clock: Callable[[], float] = time.monotonic):
+    def __init__(self, playlist_url: str, clock: Callable[[], float] = time.monotonic, paced: bool = True):
         self.id = secrets.token_hex(8)
         self.clock = clock
+        self.paced = paced
         self.targets: Dict[str, Piece] = {"playlist.m3u8": (playlist_url, 0.0, None)}
         self.names: Dict[Any, str] = {playlist_url: "playlist.m3u8"}  # url, or (url, offset, length)
         self.next_at = clock() - BURST_SECONDS  # the head start
@@ -99,11 +106,12 @@ class Relay:
         return wait
 
 
-def open_relay(playlist_url: str) -> Optional[Relay]:
-    """A relay for one export, or None if TabloView's port isn't known yet (it then reads directly)."""
+def open_relay(playlist_url: str, paced: bool = True) -> Optional[Relay]:
+    """A relay for one export (paced) or one recording's playback (not), or None if TabloView's port
+    isn't known yet (it then reads directly)."""
     if not local_port:
         return None
-    relay = Relay(playlist_url)
+    relay = Relay(playlist_url, paced=paced)
     relays[relay.id] = relay
     return relay
 
@@ -139,7 +147,7 @@ async def serve(relay_id: str, name: str) -> Response:
     if not target:
         return Response("Not found", status_code=404)
     url, seconds, rng = target
-    if seconds:
+    if seconds and relay.paced:
         rate = BUSY_RATE if await something_playing() else FAST_RATE
         wait = relay.wait_for(seconds, rate)
         if wait:
