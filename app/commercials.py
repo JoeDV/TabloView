@@ -47,13 +47,16 @@ SNAP_SECONDS = 8  # move a break edge to a black frame this close
 UNANCHORED_TRIM = 3
 MIN_SEPARATION = 0.15  # show and ad scores must be at least this far apart to trust the result
 MAX_AD_PIECE_SECONDS = 300  # between two black-and-silent moments: longer than this is show
-SHORT_PIECE_SECONDS = 45
+# A piece this short next to an ad piece is part of the same break, whatever it looks like: a dim
+# one-minute drug ad opened a Tracker break and scored like the show (2026-10-25, 62 s). Raising this
+# from 45 changed nothing on the five test recordings
+SHORT_PIECE_SECONDS = 65
 AD_PIECE_SHARE = 0.85  # a piece averaging below this share of the show's long pieces is ads
 LEVEL_SECONDS = 0.05  # the sound's loudness is measured this often (speech dips between syllables)
 
 # The detector, saved with each result: results from an older one are redone (1: colour only;
-# 2: the channel logo, black frames and silences)
-METHOD = 2
+# 2: the channel logo, black frames and silences; 3: up to a minute of show-like ad next to a break)
+METHOD = 3
 
 # The channel logo: the bottom-right corner of a 160x90 copy of each second's frame (the logo is a few
 # pixels of light text there, still clear at that size)

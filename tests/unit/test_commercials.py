@@ -116,6 +116,23 @@ class LogoTests(unittest.TestCase):
         corners = [corner(False, rnd) for _ in hists]
         self.assertEqual(c.find_breaks(hists, blacks, corners, quiet), [{"start": 300.0, "end": 430.0}])
 
+    def test_an_ad_that_looks_like_the_show_next_to_a_break_is_part_of_it(self):
+        # Tracker, CBS (2026-10-25): the break opened with a dim one-minute drug ad (62 s between two
+        # black-and-silent moments) that scored like the show, so the first minute of ads played
+        rnd = random.Random(11)
+        layout = [(400, "show"), (62, "show-like ad"), (90, "ad"), (400, "show")]
+        hists, blacks, quiet, t = [], [], [], 0
+        for secs, kind in layout:
+            if t:
+                blacks.append(float(t))
+                quiet.append((t - 0.3, t + 0.3))
+            for _ in range(secs):
+                rgb = (30, 60, 200) if kind != "ad" else (rnd.randint(0, 255), rnd.randint(0, 255), rnd.randint(0, 255))
+                hists.append(c.histogram(frame(rgb, 20, rnd)))
+            t += secs
+        corners = [corner(False, rnd) for _ in hists]
+        self.assertEqual(c.find_breaks(hists, blacks, corners, quiet), [{"start": 400.0, "end": 552.0}])
+
     def test_no_logo_falls_back_to_colour(self):
         hists, blacks = recording([(300, "show"), (120, "ad"), (330, "show"), (150, "ad"), (400, "show")])
         rnd = random.Random(5)
