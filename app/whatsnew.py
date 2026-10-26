@@ -13,6 +13,15 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.2.7": [
+        "Smoother recordings: the small glitch every 5 or 6 minutes of playback is gone.",
+        "Commercials are found much sooner: about 3 minutes per half hour of recording instead of 8, while nothing else is playing.",
+        "Network status on the Device page (Desktop & network): how your Tablo and this PC are connected, with a Test connection button that checks the speed between them.",
+        "Live TV favourites: the favourite channels you set in Tablo's own apps now show under Favorites.",
+        "TV view: commercial breaks are marked and skipped as on the PC, a CC button turns captions on, and the next episode of a show plays when one ends. A TV view button at the top right of the PC page switches to it.",
+        "Mac and Linux: Network access lets your other devices use TabloView, as on Windows.",
+        "Fixed: if your Tablo got a new address on your network, TabloView now finds it again instead of saying the Tablo isn't responding. Help has steps for when it still doesn't respond.",
+    ],
     "1.2.6": [
         "Commercial skip finds whole breaks now, not just part of them. It looks for the channel's logo in the corner of the picture (most networks take it off during ads), the moment of black and silence at each break's edges, and, on channels without a logo, how different the picture looks from the show. In our tests it skips 80-100% of the ads during a show, and it never skips past the end of a show.",
         "Recordings whose breaks were found the old way are looked at again once, in the background, unless you've already watched them.",
