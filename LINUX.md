@@ -36,7 +36,7 @@ The first time it spends a minute setting itself up, adds **TabloView** to your 
 ## Good to know
 
 - Your password goes only to Tablo's sign-in service and is never saved. TabloView keeps its sign-in and cache in a `data` folder inside the TabloView folder, and MP4 exports go to its `downloads` folder (choose another under **Device → Storage → Exports**).
-- Only this computer can open TabloView; other devices on your network can't.
+- At first only this computer can open TabloView. To use it on other devices at home (a phone, a tablet, a TV's browser), turn on **Device → Desktop & network → Allow other devices on my network**, set a PIN, then stop TabloView (**Stop TabloView** on that page, or Ctrl+C) and run the start script again. The same page shows the address to open on the other devices. If you use a firewall (such as `ufw`), allow port 7070 from your home network.
 - Video is converted for the browser by the CPU, or by an NVIDIA graphics card if FFmpeg supports it. On older or low-power computers, set **Device → Playback → Video quality** to *Fastest*.
 - Windows-only for now: start with Windows / tray icon and desktop notifications.
 - **Open in VLC** downloads a small playlist file; open it with VLC.

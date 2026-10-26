@@ -2979,7 +2979,7 @@ PAGES.device = async (r, token) => {
   const network = `
     <div class="panel">
       <h3>Network access</h3><div class="panel-sub">Let phones, tablets and other computers on your home network open TabloView.</div>
-      ${info.packaged ? `
+      ${`
         <label class="switch-row">
           <input type="checkbox" class="switch" data-change="allow-lan" ${settings.allow_lan ? 'checked' : ''}>
           <span>Allow other devices on my network</span>
@@ -2989,8 +2989,8 @@ PAGES.device = async (r, token) => {
         <div class="panel-actions">
           <button class="btn btn-sm" data-action="set-pin">${info.lan_pin_set ? 'Change PIN' : 'Set PIN'}</button>
           ${info.lan_pin_set ? '<button class="btn btn-sm btn-ghost" data-action="pin-signout">Sign out other devices</button>' : ''}
-        </div>`
-      : '<p class="dim" style="font-size:13px">When TabloView is started with its start script, only this computer can open it.</p>'}
+        </div>
+        ${!info.packaged && !!settings.allow_lan !== !!info.listening_on_network ? `<p style="margin-top:10px;color:var(--warn);font-size:13px;font-weight:600">To apply this, stop TabloView (above) and run its start script again.</p>` : ''}`}
       ${info.listening_on_network && info.network_url ? `<p style="margin-top:12px">On other devices, open <b>${esc(info.network_url)}</b></p>
         <p class="dim" style="margin-top:6px;font-size:12.5px">In a TV's browser (Silk on Fire TV, TV Bro on Google TV), open <b>${esc(info.network_url)}/tv</b> for big screens you can use with the remote.</p>` : ''}
     </div>`;
@@ -5296,7 +5296,13 @@ const CHANGES = {
     el.disabled = true;
     try {
       const res = await api('/api/settings', { method: 'POST', body: JSON.stringify({ allow_lan: enable }) });
-      if (!res.restarting) { toast('Saved. Restart TabloView to apply.'); el.disabled = false; return; }
+      if (!res.restarting) {
+        // Run from a start script: the script reads this setting when it starts TabloView
+        toast('Saved. Stop TabloView and run its start script again to apply.');
+        el.disabled = false;
+        route();
+        return;
+      }
       toast('Restarting TabloView to apply…');
       await waitForServer();
       route();

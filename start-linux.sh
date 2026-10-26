@@ -81,4 +81,10 @@ fi
 
 echo "TabloView is starting at $URL  (press Ctrl+C to stop)"
 ( sleep 3 && open_browser ) &
-exec .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port "$PORT"
+# Device -> Desktop & network -> "Allow other devices on my network" (saved in TabloView's settings):
+# listen on the home network too; other devices still need the PIN. Off if it can't be read
+HOST=$(.venv/bin/python -c 'import json, os
+p = os.path.join(os.environ.get("TABLOVIEW_HOME") or ".", "data", "settings.json")
+print("0.0.0.0" if os.path.exists(p) and json.load(open(p, encoding="utf-8")).get("allow_lan") else "127.0.0.1")' 2>/dev/null || echo 127.0.0.1)
+[ "$HOST" = "0.0.0.0" ] && echo "Other devices on your network can open TabloView too (Device -> Desktop & network shows the address)."
+exec .venv/bin/python -m uvicorn app.main:app --host "$HOST" --port "$PORT"

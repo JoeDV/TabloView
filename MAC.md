@@ -26,7 +26,7 @@ The first time, it spends a minute setting itself up. Then TabloView opens in yo
 ## Good to know
 
 - Your password goes only to Tablo's sign-in service and is never saved. TabloView keeps its sign-in and cache in a `data` folder inside the TabloView folder, and MP4 exports go to its `downloads` folder (choose another under **Device → Storage → Exports**).
-- Only your Mac can open TabloView; other devices on your network can't.
+- At first only your Mac can open TabloView. To use it on other devices at home (a phone, a tablet, a TV's browser), turn on **Device → Desktop & network → Allow other devices on my network**, set a PIN, then stop TabloView (**Stop TabloView** on that page, or Ctrl+C) and run start-mac.sh again. The same page shows the address to open on the other devices. If macOS asks whether Python may accept incoming network connections, click **Allow**.
 - **Open in VLC** downloads a small playlist file; open it with VLC (https://www.videolan.org) or IINA.
 - **To update**, see [Updating](#updating) below.
 - **To remove it**, delete the TabloView folder. Python and FFmpeg can be removed with `brew uninstall python@3.12 ffmpeg`.
