@@ -34,7 +34,14 @@ const state = {
   liveTab: 'ota',    // Antenna or Streaming channels
   shapes: {},        // picture shapes per channel, chosen on the PC (Device page player)
   focus: {},         // screen -> data-key focused last, so Back returns to the same tile
+  // Shared with the PC page in the same browser: captions on or off, and playing the next episode
+  captions: stored('tablo_cc', '0') === '1',
+  autoplay: stored('tablo_autoplay', '1') !== '0',
 };
+
+function stored(key, fallback) {
+  try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
+}
 
 // ---------------------------------------------------------------------------
 // Moving with the arrows: to the nearest focusable thing in that direction
@@ -314,14 +321,14 @@ const player = {
     this.wake();
   },
 
-  // OK: Pause, skip, Back to live, Close
-  // OK: Pause, skip, Back to live, Shape, Close
+  // OK: Pause, skip, Back to live, Captions, Shape, Close
   showControls(index = 0) {
     const live = this.s.kind === 'live';
     const shape = this.s.shapeKey ? [['shape', `Shape: ${SHAPE_NAMES[shapeOf(this.s.shapeKey)]}`]] : [];
+    const cc = ['cc', state.captions ? 'CC: On' : 'CC: Off'];
     this.controlList = live
-      ? [['pause', this.video().paused ? '▶ Play' : '❚❚ Pause'], ['live', 'Back to live'], ...shape, ['close', '✕ Close']]
-      : [['pause', this.video().paused ? '▶ Play' : '❚❚ Pause'], ['back', '◀◀ 10 s'], ['fwd', '30 s ▶▶'], ...shape, ['close', '✕ Close']];
+      ? [['pause', this.video().paused ? '▶ Play' : '❚❚ Pause'], ['live', 'Back to live'], cc, ...shape, ['close', '✕ Close']]
+      : [['pause', this.video().paused ? '▶ Play' : '❚❚ Pause'], ['back', '◀◀ 10 s'], ['fwd', '30 s ▶▶'], cc, ...shape, ['close', '✕ Close']];
     this.controlIndex = Math.min(index, this.controlList.length - 1);
     this.controls = true;
     this.shapeMenu = false;
@@ -372,7 +379,10 @@ const player = {
     if (this.shapeMenu) { this.pickShape(what); return; }
     if (what === 'shape') { this.showShapes(); return; }
     if (what === 'close') { this.hideControls(); this.exit(); return; }
-    if (what === 'pause') this.togglePlay();
+    if (what === 'cc') {
+      this.toggleCaptions();
+      this.controlList[this.controlIndex][1] = state.captions ? 'CC: On' : 'CC: Off';
+    } else if (what === 'pause') this.togglePlay();
     else if (what === 'back') this.skip(-10);
     else if (what === 'fwd') this.skip(30);
     else if (what === 'live') { const w = this.liveWindow(); if (w) this.video().currentTime = Math.max(w.start, w.end - 6); this.video().play().catch(() => {}); }
@@ -404,8 +414,38 @@ const player = {
   wake() {
     const p = $('#player');
     p.classList.remove('idle');
+    this.placeCaptions();
     clearTimeout(this.idleTimer);
-    this.idleTimer = setTimeout(() => { if (!this.video().paused && !this.controls) p.classList.add('idle'); }, 4000);
+    this.idleTimer = setTimeout(() => {
+      if (!this.video().paused && !this.controls) { p.classList.add('idle'); this.placeCaptions(); }
+    }, 4000);
+  },
+
+  // Closed captions: the broadcast's own, carried in the converted video; hls.js makes them a text
+  // track, which this shows or hides (the same switch as the PC page's CC button)
+  toggleCaptions() {
+    state.captions = !state.captions;
+    try { localStorage.setItem('tablo_cc', state.captions ? '1' : '0'); } catch { /* this visit only */ }
+    this.applyCaptions();
+    if (state.captions && !this.video().textTracks.length) this.banner('Captions appear as soon as the broadcast sends them');
+  },
+
+  applyCaptions() {
+    for (const t of this.video().textTracks) {
+      t.mode = state.captions ? 'showing' : 'hidden';
+      if (t.__raised) continue;
+      t.__raised = true;
+      t.addEventListener('cuechange', () => this.placeCaptions());
+    }
+  },
+
+  // Broadcast captions sit on the bottom rows: above the title and bar while they're up, low
+  // down once they fade
+  placeCaptions() {
+    const line = $('#player').classList.contains('idle') ? 84 : 64;
+    for (const t of this.video().textTracks) {
+      for (const c of t.activeCues || []) if (c.line !== line) { c.snapToLines = false; c.line = line; }
+    }
   },
 
   message(text) {
@@ -415,13 +455,14 @@ const player = {
     m.classList.toggle('hidden', !text);
   },
 
-  // run: playing the Watch list (picks up where you left off, without asking)
-  async playEpisode(id, { run = false } = {}) {
-    const ep = (run ? state.run.eps : state.episodes || []).find(e => e.id === id);
+  // run: playing the Watch list; next: the episode after one that just ended. Both pick up where
+  // you left off, without asking
+  async playEpisode(id, { run = false, next = null } = {}) {
+    const ep = next || (run ? state.run.eps : state.episodes || []).find(e => e.id === id);
     if (!ep) return;
     if (!run) state.run = null;
     let start = ep.program_start || 0;
-    if (run) {
+    if (run || next) {
       if (ep.status !== 'Watched' && ep.position > 30) start = ep.position;
     } else if (ep.status !== 'Watched' && ep.position > 30) {
       const pick = await choose(ep.show_title || 'Recording', `You stopped at ${fmt.clock(ep.position)}.`,
@@ -433,9 +474,19 @@ const player = {
     this.s = { kind: 'rec', id, ep, duration: ep.actual_duration || ep.duration || 0, shapeKey: ep.channel_identifier || ep.channel_name };
     if (previous) { this.teardown(); await this.stopById(previous); }
     this.loadBreaks(this.s);
+    if (!run) this.findNext(this.s);
     const counter = run && state.run.eps.length > 1 ? ` · ${state.run.index + 1} of ${state.run.eps.length}` : '';
     this.show(ep.show_title || 'Recording', [fmt.se(ep.season_number, ep.episode_number), ep.title !== ep.show_title ? ep.title : ''].filter(Boolean).join(' · ') + counter);
     await this.startRecording(start);
+  },
+
+  // The show's next episode not yet watched (in the show's own order, as on the PC), for Up next
+  async findNext(s) {
+    if (!s.ep.show_id) return;
+    let list;
+    try { list = (await api(`/api/shows/episodes?show_id=${encodeURIComponent(s.ep.show_id)}`)).episodes || []; } catch { return; }
+    const i = list.findIndex(e => e.id === s.id);
+    if (this.s === s && i >= 0) s.nextEp = list.slice(i + 1).find(e => e.status !== 'Watched' && e.recording_state !== 'recording') || null;
   },
 
   // Commercial breaks found in this recording, and signal dropouts: marked on the bar, skipped
@@ -675,16 +726,18 @@ const player = {
   ended() {
     if (this.s.kind !== 'rec') return;
     this.saveProgress(true);
-    const next = state.run && state.run.eps[state.run.index + 1];
+    const next = state.run ? state.run.eps[state.run.index + 1] : state.autoplay && this.s.nextEp;
     if (!next) {
       if (state.run) this.runFinished();
       this.message(state.run ? 'That was the last one on your Watch list' : 'Finished');
+
       setTimeout(() => { if (this.open && location.hash === '#/play') history.back(); }, 3000);
       return;
     }
-    // Watch list: the next one starts by itself in a few seconds (OK starts it now, Back stops)
+    // The Watch list's next one, or the show's next episode, starts by itself in a few seconds (OK
+    // starts it now, Back stops)
     let left = 8;
-    const title = [next.show_title, fmt.se(next.season_number, next.episode_number)].filter(Boolean).join(' · ');
+    const title = [next.show_title || this.s.ep.show_title, fmt.se(next.season_number, next.episode_number)].filter(Boolean).join(' · ');
     const say = () => this.message(`Up next: ${title} in ${left} s\nOK to play it now · Back to stop`);
     say();
     this.upNext = setInterval(() => { left -= 1; if (left <= 0) this.playNext(); else say(); }, 1000);
@@ -693,7 +746,11 @@ const player = {
   playNext() {
     clearInterval(this.upNext);
     this.upNext = null;
-    if (!state.run || !state.run.eps[state.run.index + 1]) return;
+    if (!state.run) {
+      if (this.s.nextEp) this.playEpisode(this.s.nextEp.id, { next: this.s.nextEp });
+      return;
+    }
+    if (!state.run.eps[state.run.index + 1]) return;
     this.runFinished();
     state.run.index += 1;
     this.playEpisode(state.run.eps[state.run.index].id, { run: true });
@@ -892,6 +949,8 @@ function init() {
     clearTimeout(player.controlsTimer);  // still in use: keep them up
     player.controlsTimer = setTimeout(() => player.hideControls(), 8000);
   });
+  // A caption track appears once the stream's first captions arrive: show it if captions are on
+  player.video().textTracks.addEventListener('addtrack', () => player.applyCaptions());
   window.addEventListener('hashchange', route);
   window.addEventListener('resize', () => player.open && applyShape(player.video(), player.s.shapeKey));
   // Leaving the page: save where the recording got to and free the stream (and its tuner)
