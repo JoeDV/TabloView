@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from unittest import mock
 
@@ -54,6 +55,37 @@ class CommercialQueueTests(unittest.TestCase):
         self.assertEqual(self.ids(), ["a1"])
         db.save_commercials("a1", "done", [{"start": 10.0, "end": 250.0}], method=commercials.METHOD)
         self.assertEqual(self.ids(), [])
+
+
+class ReadSpeedTests(unittest.TestCase):
+    """Recordings are read as fast as they come, unless another app is watching live TV from the Tablo."""
+
+    def rate(self, tablo_busy):
+        seen = []
+
+        def fake_analyze(url, log_path, stop, progress=None, rate=None):
+            seen.append(rate)
+            return None  # as if stopped: nothing saved
+
+        with mock.patch("app.tablo_client.tablo_manager.get_airing_watch_url", new=mock.AsyncMock(return_value={"playlist_url": "http://tablo/pl.m3u8"})),                 mock.patch("app.export_pace.something_playing", new=mock.AsyncMock(return_value=tablo_busy)),                 mock.patch.object(commercials, "_analyze", side_effect=fake_analyze),                 mock.patch.object(commercials, "_busy", return_value=False):
+            asyncio.run(commercials.analyze({"id": "e1", "path": "/recordings/series/episodes/e1", "show_title": "s"}))
+        return seen[0]
+
+    def test_uncapped_when_nothing_else_is_watching(self):
+        self.assertIsNone(self.rate(False))
+
+    def test_real_time_multiple_while_live_tv_plays_elsewhere(self):
+        self.assertEqual(self.rate(True), commercials.READ_RATE)
+
+    def test_ffmpeg_gets_readrate_only_when_capped(self):
+        made = []
+        fake = mock.Mock(stdout=mock.Mock(read=lambda n: b""), returncode=0, wait=lambda: 0, poll=lambda: 0)
+        with mock.patch.object(commercials.subprocess, "Popen", side_effect=lambda cmd, **k: made.append(cmd) or fake),                 mock.patch.object(commercials.childproc, "tie_to_app"):
+            for rate in (None, 4):
+                commercials._analyze("http://x/pl.m3u8", commercials.TRANSCODE_DIR / "t_rate.log", __import__("threading").Event(), None, rate)
+        (commercials.TRANSCODE_DIR / "t_rate.log").unlink(missing_ok=True)
+        self.assertNotIn("-readrate", made[0])
+        self.assertEqual(made[1][made[1].index("-readrate") + 1], "4")
 
 
 if __name__ == "__main__":

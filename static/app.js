@@ -1266,7 +1266,7 @@ async function findCommercials(id) {
     const ep = findEpisode(id);
     if (ep && res.queued) ep.commercials = 'queued';
     toast(res.queued
-      ? `TabloView will find the commercials in this recording${res.ahead ? ` after ${plural(res.ahead, 'other')}` : ''} (about 8 minutes per half hour, while nothing is playing)`
+      ? `TabloView will find the commercials in this recording${res.ahead ? ` after ${plural(res.ahead, 'other')}` : ''} (about 3 minutes per half hour, while nothing is playing)`
       : 'Its commercial breaks are already marked', 'success');
     rerenderAfterProgress();
   } catch (err) { toast(err.message, 'error'); }
@@ -5327,7 +5327,7 @@ const CHANGES = {
       const res = await api(`/api/shows/commercials?show_id=${encodeURIComponent(s.id)}`, { method: 'POST', body: JSON.stringify({ on: el.checked }) });
       if (res.show) mergeShow(res.show);
       toast(el.checked
-        ? `TabloView will find the commercials in ${s.title}${res.waiting ? ` (${plural(res.waiting, 'recording')} to go; about 8 minutes per half hour, while nothing is playing)` : ''}`
+        ? `TabloView will find the commercials in ${s.title}${res.waiting ? ` (${plural(res.waiting, 'recording')} to go; about 3 minutes per half hour, while nothing is playing)` : ''}`
         : `Commercials in ${s.title} won’t be looked for any more`, 'success');
     } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
   },

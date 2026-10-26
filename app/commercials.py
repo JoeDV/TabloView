@@ -327,8 +327,9 @@ def _join(breaks: List[Dict[str, float]]) -> List[Dict[str, float]]:
 # ---------------------------------------------------------------------------------------------------
 # Background analysis of recordings from the shows it's turned on for (settings "commercial_shows")
 # ---------------------------------------------------------------------------------------------------
-# Read the recording at 4x real time: a 30-minute show takes about 8 minutes, without hurrying the
-# Tablo (it serves this like someone watching)
+# Read the recording as fast as the Tablo sends it and the PC keeps up (about 14x: a 30-minute show
+# in 2 minutes, 2026-10-25). While another app watches live TV from the Tablo, 4x real time instead,
+# so this doesn't compete with it. Anything TabloView plays or exports stops the analysis altogether.
 READ_RATE = 4
 WORKER_INTERVAL = 30
 # Below normal priority: Windows process class, nice 10 elsewhere
@@ -455,10 +456,12 @@ def _split_frame(frame: bytes) -> Tuple[bytes, Tuple[bytes, ...]]:
     return thumb, corners
 
 
-def _analyze(url: str, log_path, stop: threading.Event, progress: Optional[Dict[str, object]] = None) -> Optional[Tuple[List[List[float]], List[Tuple[bytes, ...]]]]:
+def _analyze(url: str, log_path, stop: threading.Event, progress: Optional[Dict[str, object]] = None,
+             rate: Optional[float] = None) -> Optional[Tuple[List[List[float]], List[Tuple[bytes, ...]]]]:
     """One FFmpeg pass: black frames, silences and loudness to the log, and per second a colour
-    histogram and the four corners to us. None if stopped."""
-    cmd = [FFMPEG_PATH, "-hide_banner", "-nostats", "-readrate", str(READ_RATE), "-i", url,
+    histogram and the four corners to us, read at rate x real time (None: as fast as it comes).
+    None if stopped."""
+    cmd = [FFMPEG_PATH, "-hide_banner", "-nostats", *(["-readrate", str(rate)] if rate else []), "-i", url,
            "-filter_complex", analysis_graph(),
            "-map", "[bd]", "-f", "null", "-",
            "-map", "[sd]", "-f", "null", "-",
@@ -495,12 +498,14 @@ async def analyze(ep: Dict[str, str]) -> Optional[str]:
     """Find the breaks in one recording and save them. Returns the status, or None if it was
     interrupted (something started playing) and should be tried again later."""
     from .tablo_client import tablo_manager
+    from .export_pace import something_playing
     url = (await tablo_manager.get_airing_watch_url(ep["path"])).get("playlist_url")
     if not url:
         raise RuntimeError("the Tablo didn't return a stream")
     log_path = TRANSCODE_DIR / f"ads_{ep['id']}.log"
     stop = threading.Event()
-    job = asyncio.get_running_loop().run_in_executor(None, _analyze, url, log_path, stop, status)
+    rate = READ_RATE if await something_playing() else None
+    job = asyncio.get_running_loop().run_in_executor(None, _analyze, url, log_path, stop, status, rate)
     while not job.done():
         await asyncio.sleep(2)
         if _busy():
