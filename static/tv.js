@@ -152,8 +152,13 @@ async function showShow(id) {
   loading('#/library');
   let d;
   try { d = await api(`/api/shows/episodes?show_id=${encodeURIComponent(id)}`); } catch (err) { return failed(err, '#/library'); }
-  const eps = (d.episodes || []).slice().sort((a, b) => String(b.air_date || '').localeCompare(String(a.air_date || '')));
+  // In the show's own order, oldest first, as on the PC
+  const eps = d.episodes || [];
   state.episodes = eps;
+  // Opening a show the first time: start at the first one not watched yet, not the oldest
+  const firstNew = eps.find(e => e.status !== 'Watched' && e.recording_state !== 'recording');
+  const at = location.hash;
+  if (firstNew && at.startsWith('#/show/') && !state.focus[at]) state.focus[at] = `ep-${firstNew.id}`;
   setScreen(`<h1>${esc(d.show_title || (d.show && d.show.title) || '')}</h1><div class="rows">${eps.map(e => {
     const watched = e.status === 'Watched';
     const left = e.position > 30 && !watched && e.duration ? ` · ${fmt.mins(e.duration - e.position)} left` : '';
