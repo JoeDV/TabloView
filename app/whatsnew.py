@@ -13,6 +13,14 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.2.8": [
+        "New: the TabloView app for Google TV and Fire TV. It puts TV view on your TV's home screen, and the remote moves from tile to tile like any other app, with no pointer to drag around. To install it, get the Downloader app on the TV and enter this PC's address with /app on the end; Help → Watching on your TV has the steps.",
+        "Away from home: with Tailscale (free) on this PC and your phone or laptop, you can watch from anywhere. The Device page shows the address to use, and Help explains it.",
+        "The Device page now warns when Windows Firewall is keeping your TV and other devices out, and says how to fix it.",
+        "Commercial skip catches more: a dark ad at the start or end of a break that looks like the show is now skipped too. Recordings you haven't watched are looked at again once, in the background.",
+        "TV view lists a show's episodes oldest first, as on the PC, and opens at the first one you haven't watched.",
+        "Help has an About and licenses section.",
+    ],
     "1.2.7": [
         "Smoother recordings: the small glitch every 5 or 6 minutes of playback is gone.",
         "Commercials are found much sooner: about 3 minutes per half hour of recording instead of 8, while nothing else is playing.",
