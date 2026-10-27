@@ -281,6 +281,15 @@ class TabloManager:
         except Exception as e:
             return {"connected": False, "error": str(e), "drives": []}
 
+    def playlist_getter(self, airing_path: str):
+        """For an MP4 export: starts the Tablo's watch session when the export's turn in the queue comes."""
+        async def get() -> str:
+            url = (await self.get_airing_watch_url(airing_path)).get("playlist_url")
+            if not url:
+                raise RuntimeError("the Tablo didn't return a stream")
+            return url
+        return get
+
     async def get_airing_watch_url(self, airing_path: str) -> Dict[str, Any]:
         """Request watch session for an airing or channel. Returns playlist_url."""
         if not self.device:

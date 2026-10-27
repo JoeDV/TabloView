@@ -38,6 +38,7 @@ DEFAULTS: Dict[str, Any] = {
     "rerecord_failed": True,  # schedule a rerun of a recording that failed or came out short (app/rerecord.py)
     "commercial_shows": [],  # show ids whose recordings get commercial breaks found (app/commercials.py)
     "commercial_episodes": [],  # single recordings asked for from the episode menu
+    "auto_export_shows": [],  # show ids whose new recordings are exported to MP4 automatically (app/autoexport.py)
     "skip_commercials": False,  # skip breaks automatically in the player (otherwise a Skip button)
     "skip_dropouts": False,  # skip signal dropouts in recordings automatically (otherwise a Skip button)
     "picture_shapes": {},  # channel identifier -> "4:3", "16:9" or "zoom" in the player (no entry = as broadcast)

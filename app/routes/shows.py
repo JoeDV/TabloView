@@ -17,7 +17,7 @@ from ..database import (
     set_show_keep,
 )
 from ..tablo_client import tablo_manager
-from .. import cleanup, commercials
+from .. import autoexport, cleanup, commercials
 
 router = APIRouter(prefix="/api/shows", tags=["shows"])
 
@@ -30,6 +30,11 @@ class CommercialsRequest(BaseModel):
     on: bool
 
 
+class AutoExportRequest(BaseModel):
+    on: bool
+    existing: bool = False  # also the recordings already there (otherwise only new ones)
+
+
 class CleanupRequest(BaseModel):
     days: Optional[int] = Field(default=None, ge=1, le=365)  # None = off
 
@@ -38,7 +43,8 @@ def _with_rules(show: Optional[dict]) -> Optional[dict]:
     """Add the show's keep rule (on the Tablo) and cleanup rule (in TabloView)."""
     if show:
         show = {**show, "keep": show_keep(show), "cleanup_days": cleanup.rules().get(show["id"]),
-                "find_commercials": show["id"] in commercials.enabled_shows()}
+                "find_commercials": show["id"] in commercials.enabled_shows(),
+                "auto_export": show["id"] in autoexport.enabled_shows()}
     return show
 
 
@@ -67,7 +73,9 @@ async def get_show_episodes_query(show_id: str = Query(...)):
         "show_id": show_id,
         "show_title": show["title"],
         "count": len(episodes),
-        "episodes": episodes
+        "episodes": episodes,
+        # Recorded already and not exported: what turning on automatic export would ask about
+        "auto_export_existing": autoexport.already_recorded(show_id),
     }
 
 
@@ -176,6 +184,15 @@ async def set_commercials(req: CommercialsRequest, show_id: str = Query(...)):
     commercials.set_show(show_id, req.on)
     return {"success": True, "show": _with_rules(get_show_by_id(show_id)),
             "waiting": len(commercials.pending()) if req.on else 0}
+
+
+@router.post("/auto_export")
+async def set_auto_export(req: AutoExportRequest, show_id: str = Query(...)):
+    """Export this show's recordings to MP4 automatically, each once it has finished recording."""
+    if not get_show_by_id(show_id):
+        raise HTTPException(status_code=404, detail="Show not found")
+    waiting = autoexport.set_show(show_id, req.on, req.existing)
+    return {"success": True, "show": _with_rules(get_show_by_id(show_id)), "waiting": waiting}
 
 
 @router.post("/cleanup")

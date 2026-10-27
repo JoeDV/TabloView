@@ -78,6 +78,20 @@ def init_db():
             )
         """)
 
+        # Recordings of the shows set to export automatically (app/autoexport.py): each one once.
+        # state: queued (job_id running or waiting), done, skipped (already recorded when it was
+        # turned on), cancelled (by hand: not again), gave_up (failed AUTO_EXPORT_TRIES times)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS auto_exports (
+                episode_id TEXT PRIMARY KEY,
+                show_id TEXT,
+                job_id TEXT,
+                state TEXT,
+                tries INTEGER DEFAULT 0,
+                updated_at TEXT
+            )
+        """)
+
         # Metadata table (last sync, hard drive stats, etc.)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS sync_meta (
@@ -746,6 +760,36 @@ def fail_interrupted_exports() -> List[Dict[str, Any]]:
         """, (datetime.now(timezone.utc).isoformat(),))
         conn.commit()
     return rows
+
+
+def get_export_job(job_id: str) -> Optional[Dict[str, Any]]:
+    with get_connection() as conn:
+        row = conn.execute("SELECT * FROM exports WHERE job_id = ?", (job_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def get_auto_exports(show_ids: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
+    """Automatic-export records by episode ID (of these shows, or all)."""
+    with get_connection() as conn:
+        if show_ids is None:
+            rows = conn.execute("SELECT * FROM auto_exports").fetchall()
+        else:
+            marks = ",".join("?" * len(show_ids)) or "''"
+            rows = conn.execute(f"SELECT * FROM auto_exports WHERE show_id IN ({marks})", show_ids).fetchall()
+        return {r["episode_id"]: dict(r) for r in rows}
+
+
+def save_auto_export(episode_id: str, show_id: str, state: str, job_id: Optional[str] = None, tries: Optional[int] = None):
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT INTO auto_exports (episode_id, show_id, job_id, state, tries, updated_at)
+            VALUES (?, ?, ?, ?, COALESCE(?, 0), ?)
+            ON CONFLICT(episode_id) DO UPDATE SET
+                show_id = excluded.show_id, state = excluded.state,
+                job_id = COALESCE(excluded.job_id, auto_exports.job_id),
+                tries = COALESCE(?, auto_exports.tries), updated_at = excluded.updated_at
+        """, (episode_id, show_id, job_id, state, tries, datetime.now(timezone.utc).isoformat(), tries))
+        conn.commit()
 
 
 def get_export_jobs() -> List[Dict[str, Any]]:

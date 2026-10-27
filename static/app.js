@@ -996,7 +996,7 @@ PAGES.show = async (r, token) => {
   paint(`<div class="page">${skeletonGrid(1)}</div>`);
   const res = await api(`/api/shows/episodes?show_id=${encodeURIComponent(r.arg)}`);
   if (stale(token)) return;
-  state.show = res.show;
+  state.show = { ...res.show, auto_export_existing: res.auto_export_existing || 0 };
   state.episodes = res.episodes || [];
   state.selected.clear();
   state.seriesLink = null;
@@ -1076,6 +1076,10 @@ function showRules(s, eps) {
         <input type="checkbox" class="switch" data-change="show-commercials" ${s.find_commercials ? 'checked' : ''}>
         <span>Skip commercials</span>
       </label>
+      <label class="rule-field" title="A backup: TabloView exports each new recording of this show to MP4, once it has finished recording, while TabloView is running. They go where your exports go (Downloads).">
+        <input type="checkbox" class="switch" data-change="show-auto-export" ${s.auto_export ? 'checked' : ''}>
+        <span>Export to MP4</span>
+      </label>
       ${keep}
       <label class="rule-field" title="TabloView deletes watched recordings of this show this long after you watch them, while it’s running (also in the tray). Protected recordings are kept.">
         <span>Delete watched</span>
@@ -1085,6 +1089,35 @@ function showRules(s, eps) {
         </select>
       </label>
     </div>`;
+}
+
+// Export a show's recordings to MP4 automatically. Turning it on asks about the ones recorded already
+async function setAutoExport(el) {
+  const s = state.show;
+  let existing = false;
+  if (el.checked && s.auto_export_existing) {
+    const n = s.auto_export_existing;
+    const pick = await openModal(`
+      <div class="dialog-body">
+        <div class="dialog-title">Export ${esc(s.title)} to MP4 automatically?</div>
+        <div class="dialog-text">Each new recording is exported once it has finished recording, while TabloView is running. ${esc(plural(n, 'recording'))} of this show ${n === 1 ? 'is' : 'are'} here already: export ${n === 1 ? 'it' : 'those'} too?</div>
+      </div>
+      <div class="dialog-foot">
+        <button class="btn" data-action="modal-cancel">Cancel</button>
+        <button class="btn" data-action="modal-choice" data-value="new">New ones only</button>
+        <button class="btn btn-primary" data-action="modal-choice" data-value="all" data-autofocus>Those too</button>
+      </div>`);
+    if (!pick) { el.checked = false; return; }
+    existing = pick === 'all';
+  }
+  try {
+    const res = await api(`/api/shows/auto_export?show_id=${encodeURIComponent(s.id)}`, { method: 'POST', body: JSON.stringify({ on: el.checked, existing }) });
+    if (res.show) mergeShow(res.show);
+    if (!el.checked) toast(`New recordings of ${s.title} won’t be exported any more`, 'success');
+    else toast(res.waiting
+      ? `Exporting ${plural(res.waiting, 'recording')} of ${s.title}, one at a time; new ones follow as they finish recording. Track them under Downloads.`
+      : `New recordings of ${s.title} will be exported to MP4 once they finish recording`, 'success');
+  } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
 }
 
 function mergeShow(show) {
@@ -2905,7 +2938,7 @@ PAGES.help = async (r, token) => {
     <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
   let html;
   try {
-    const res = await fetch('/static/help.html?v=12');
+    const res = await fetch('/static/help.html?v=13');
     if (!res.ok) throw new Error(res.status);
     html = await res.text();
   } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
@@ -5173,6 +5206,7 @@ const ACTIONS = {
   'watch-live': el => watchLiveChecked(el.dataset.id, el.dataset.name, el.dataset.kind),
 
   'modal-ok': () => closeModal(true),
+  'modal-choice': el => closeModal(el.dataset.value),
   'modal-value': el => closeModal(el.dataset.value),
   'mark-show-watched': el => markShowWatched(el.dataset.value !== 'false'),
   'modal-cancel': () => closeModal(false),
@@ -5421,6 +5455,7 @@ const CHANGES = {
     } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
   },
   'show-cleanup': el => setCleanup(el),
+  'show-auto-export': el => setAutoExport(el),
   'buffer': el => { state.bufferTarget = parseInt(el.value, 10) || 8; save('tablo_buffer_target', state.bufferTarget); toast(`Buffer set to ${state.bufferTarget} seconds`); },
   'autoplay': el => { state.autoplay = el.checked; save('tablo_autoplay', el.checked ? '1' : '0'); },
   'start-page': el => {

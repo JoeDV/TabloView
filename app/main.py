@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, Response, JSONResponse, RedirectResp
 from .config import (
     APP_NAME, APP_VERSION, BASE_DIR, RESOURCE_DIR, STATIC_DIR, TRANSCODE_DIR, DOWNLOADS_DIR, IMAGE_CACHE_DIR, HOST, PORT,
 )
-from . import commercials, dropouts, encoders, export_pace, lanauth, netcheck, redact, streaming, whatsnew
+from . import autoexport, commercials, dropouts, encoders, export_pace, lanauth, netcheck, redact, streaming, whatsnew
 from .settings import exports_dir
 from .database import get_export_jobs, fail_interrupted_exports
 from .database import init_db
@@ -58,6 +58,7 @@ async def lifespan(app: FastAPI):
 
     auto_sync = asyncio.create_task(auto_sync_loop(sync_service))
     ad_finder = asyncio.create_task(commercials.worker_loop())
+    auto_exports = asyncio.create_task(autoexport.worker_loop())
     dropout_finder = asyncio.create_task(dropouts.worker_loop())
     streaming_guide = asyncio.create_task(streaming.worker_loop())
     unused_streams = asyncio.create_task(transcode_manager.abandoned_loop())
@@ -66,6 +67,7 @@ async def lifespan(app: FastAPI):
 
     auto_sync.cancel()
     ad_finder.cancel()
+    auto_exports.cancel()
     dropout_finder.cancel()
     streaming_guide.cancel()
     unused_streams.cancel()
