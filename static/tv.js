@@ -1,7 +1,8 @@
-// TabloView TV: Continue watching, Library, Live TV and the Watch list for a TV's browser (TV Bro, Silk...),
-// driven by a remote: arrows move between big tiles, OK picks, Back goes back. Screens are hash
-// routes, so the browser's own Back button works too. Everything else (Guide, scheduling,
-// settings, exports) stays on the PC page. Uses the same API and streams as the PC page.
+// TabloView TV: Home, Library, Live TV, the Watch list and Coming up for the TabloView TV app and TV
+// browsers (TV Bro, Silk...), driven by a remote: arrows move between big tiles, Left past the first
+// one opens the menu, OK picks, Back goes back. Screens are hash routes, so the browser's own Back
+// button works too. The Guide, series scheduling, settings and exports stay on the PC page. Uses the
+// same API and streams as the PC page.
 
 const $ = sel => document.querySelector(sel);
 const API_HEADERS = { 'Content-Type': 'application/json', 'X-TabloView': '1' };
@@ -27,13 +28,34 @@ const fmt = {
   day: iso => new Date(iso).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }),
   time: d => new Date(d).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }),
   se: (s, e) => (s > 0 && e > 0 ? `S${s} E${e}` : ''),
+  // Today, Tomorrow, or the day
+  dayLabel: iso => {
+    const d = new Date(iso), today = new Date();
+    const days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - new Date(today.getFullYear(), today.getMonth(), today.getDate())) / 86400000);
+    return days === 0 ? 'Today' : days === 1 ? 'Tomorrow' : d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+  },
 };
+
+// The menu's pictures (the PC page's icons)
+const ICONS = {
+  logo: '<rect x="2" y="6" width="20" height="15" rx="3" fill="currentColor" stroke="none"/><path d="m8 2 4 4 4-4"/>',
+  home: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>',
+  library: '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>',
+  live: '<path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/>',
+  queue: '<path d="M3 6h13M3 12h9M3 18h9"/><path d="M16 12.5v6.8a.5.5 0 0 0 .77.42l5-3.4a.5.5 0 0 0 0-.84l-5-3.4a.5.5 0 0 0-.77.42z" fill="currentColor" stroke="none"/>',
+  calendar: '<rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+  monitor: '<rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8M12 17v4"/>',
+};
+const svg = name => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;
 
 const state = {
   live: null,        // /api/live/epg
   liveTab: 'ota',    // Antenna or Streaming channels
   shapes: {},        // picture shapes per channel, chosen on the PC (Device page player)
   focus: {},         // screen -> data-key focused last, so Back returns to the same tile
+  eps: new Map(),    // recordings seen on any screen, by ID: what a recording's page shows
+  shows: {},         // show ID -> /api/shows/episodes, for switching seasons without asking again
+  season: {},        // show ID -> the season showing
   // Shared with the PC page in the same browser: captions on or off, and playing the next episode
   captions: stored('tablo_cc', '0') === '1',
   autoplay: stored('tablo_autoplay', '1') !== '0',
@@ -55,23 +77,43 @@ function focusEl(el) {
   if (!el) return;
   el.focus({ preventScroll: true });
   el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
-  if (el.dataset.key && !el.closest('.top') && !el.closest('.dialog')) state.focus[location.hash || '#/'] = el.dataset.key;
+  if (el.dataset.key && !el.closest('.rail') && !el.closest('.dialog')) state.focus[location.hash || '#/'] = el.dataset.key;
+}
+
+const inRail = el => !!(el && el.closest && el.closest('.rail'));
+const dialogOpen = () => !$('#dialog').classList.contains('hidden');
+
+// Into the menu, on the page showing
+function focusRail() {
+  const items = [...document.querySelectorAll('.rail .f')];
+  focusEl(items.find(el => el.classList.contains('active')) || items[0]);
+}
+
+// Back onto the page, where it was
+function focusContent() {
+  const all = focusables().filter(el => !inRail(el));
+  const key = state.focus[location.hash || '#/'];
+  focusEl((key && all.find(el => el.dataset.key === key)) || all[0]);
 }
 
 function move(dir) {
   const all = focusables();
   const cur = document.activeElement && all.includes(document.activeElement) ? document.activeElement : null;
-  if (!cur) { focusEl(all.find(el => !el.closest('.top')) || all[0]); return; }
+  if (!cur) { focusEl(all.find(el => !inRail(el)) || all[0]); return; }
+  // The menu goes up and down; Right goes back onto the page. The page's arrows stay on the page,
+  // except Left past the first thing in a row, which opens the menu.
+  const rail = !dialogOpen() && inRail(cur);
+  if (rail && dir === 'right') { focusContent(); return; }
+  if (rail && dir === 'left') return;
   const a = cur.getBoundingClientRect();
   const ax = a.left + a.width / 2, ay = a.top + a.height / 2;
   let best = null, bestScore = Infinity;
   for (const el of all) {
-    if (el === cur) continue;
+    if (el === cur || inRail(el) !== rail) continue;
     const b = el.getBoundingClientRect();
     const bx = b.left + b.width / 2, by = b.top + b.height / 2;
     let main, cross;
-    // Left and right stay in the same row: off the end of a row, nothing happens (instead of
-    // jumping up to the tabs)
+    // Left and right stay in the same row
     const sameRow = b.top < a.bottom - 2 && b.bottom > a.top + 2;
     if (dir === 'right') { if (b.left < a.right - 2 || !sameRow) continue; main = b.left - a.right; cross = Math.abs(by - ay); }
     else if (dir === 'left') { if (b.right > a.left + 2 || !sameRow) continue; main = a.left - b.right; cross = Math.abs(by - ay); }
@@ -82,19 +124,28 @@ function move(dir) {
     if (score < bestScore) { bestScore = score; best = el; }
   }
   if (best) focusEl(best);
+  else if (dir === 'left' && !rail && !dialogOpen()) focusRail();
 }
 
 // ---------------------------------------------------------------------------
 // Screens
 // ---------------------------------------------------------------------------
+// The screens the menu opens; others (a show, a recording) are reached from them, and Back returns
+const TOP_SCREENS = ['#/', '#/library', '#/live', '#/watchlist', '#/upcoming'];
+
 function setScreen(html, tab) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.go === tab));
+  document.querySelectorAll('.nav').forEach(t => t.classList.toggle('active', t.dataset.go === tab));
   $('#screen').innerHTML = html;
   $('#screen').scrollTop = 0;
+  // Onto the page where it was last, or its first tile. While it's loading (nothing to pick yet),
+  // the highlight stays where it is: in the menu, if a page was just picked there
   const key = state.focus[location.hash || '#/'];
-  const all = focusables();
-  focusEl((key && all.find(el => el.dataset.key === key)) || all.find(el => !el.closest('.top')) || all[0]);
+  const all = focusables().filter(el => !inRail(el));
+  const el = (key && all.find(x => x.dataset.key === key)) || all[0];
+  if (el && !dialogOpen()) focusEl(el);
 }
+
+function remember(eps) { for (const e of eps) state.eps.set(e.id, e); return eps; }
 
 function loading(tab) { setScreen('<div class="empty">Loading…</div>', tab); }
 
@@ -106,78 +157,214 @@ function failed(err, tab) {
 const progressBar = (pos, dur) => (pos > 30 && dur ? `<div class="progress"><div style="width:${Math.min(100, (pos / dur) * 100)}%"></div></div>` : '');
 const art = url => (url ? `style="background-image:url('${esc(url)}')"` : '');
 
+const epLine = e => [fmt.se(e.season_number, e.episode_number), e.title && e.title !== e.show_title ? e.title : ''].filter(Boolean).join(' · ');
+const timeLeft = e => (e.position > 30 && e.status !== 'Watched' && e.duration ? `${fmt.mins((e.actual_duration || e.duration) - e.position)} left` : '');
+const chNum = c => (c.major > 0 ? `${c.major}.${c.minor}` : '');
+
+// Home: rows to scroll along (Continue watching, On now, Recently recorded, Recording soon), as on the PC
 async function showHome() {
   loading('#/');
-  let eps;
-  try { eps = (await api('/api/episodes/in_progress')).episodes || []; } catch (err) { return failed(err, '#/'); }
-  state.episodes = eps;
-  if (!eps.length) {
-    return setScreen(`<div class="empty">Nothing to continue right now.<br>
-      <button class="btn primary f" data-go="#/library" data-key="go-lib">Go to your Library</button></div>`, '#/');
-  }
-  setScreen(`<h1>Continue watching</h1><div class="grid wide">${eps.map(e => `
-    <button class="tile f" data-act="play" data-id="${esc(e.id)}" data-key="cw-${esc(e.id)}">
+  const [progress, shows, , upcoming] = await Promise.allSettled([
+    api('/api/episodes/in_progress'), api('/api/shows'), loadLive(), api('/api/guide/upcoming'),
+  ]);
+  if (progress.status === 'rejected' && shows.status === 'rejected') return failed(progress.reason, '#/');
+  const shelves = [];
+  const shelf = (title, tiles) => tiles.length && shelves.push(`<section class="shelf"><h2>${esc(title)}</h2><div class="strip">${tiles.join('')}</div></section>`);
+
+  const eps = remember(progress.status === 'fulfilled' ? progress.value.episodes || [] : []);
+  shelf('Continue watching', eps.map(e => `
+    <button class="tile f" data-go="#/ep/${encodeURIComponent(e.id)}" data-key="cw-${esc(e.id)}">
       <div class="art" ${art(e.snapshot_url || e.backdrop_url || e.cover_url)}>${progressBar(e.position, e.duration)}</div>
       <div class="label"><div class="name">${esc(e.show_title)}</div>
-        <div class="meta">${esc([fmt.se(e.season_number, e.episode_number), e.title !== e.show_title ? e.title : ''].filter(Boolean).join(' · '))}${e.duration ? ` · ${fmt.mins(e.duration - e.position)} left` : ''}</div></div>
-    </button>`).join('')}</div>`, '#/');
+        <div class="meta">${esc([epLine(e), timeLeft(e)].filter(Boolean).join(' · '))}</div></div>
+    </button>`));
+
+  // On now: the favorite channels if there are any (chosen on the PC), else the antenna ones
+  const channels = (state.live && state.live.channels) || [];
+  const fav = channels.some(c => c.favorite);
+  const now = Date.now();
+  shelf(fav ? 'On now · Your favorite channels' : 'On now', channels.filter(c => (fav ? c.favorite : c.kind !== 'fast') && nowNext(c, now).now).slice(0, 16).map(c => {
+    const on = nowNext(c, now).now;
+    const start = new Date(on.air_datetime).getTime();
+    const pct = on.duration ? Math.min(100, ((now - start) / (on.duration * 1000)) * 100) : 0;
+    return `<button class="tile f" data-act="tune" data-id="${esc(c.channel_id)}" data-key="on-${esc(c.channel_id)}">
+      <div class="art"><div class="logo">${c.logo_url ? `<img src="${esc(c.logo_url)}" alt="">` : esc(c.call_sign || c.name)}</div>
+        <div class="now-bar"><div style="width:${pct}%"></div></div></div>
+      <div class="label"><div class="name">${esc(on.title)}${on.recording_now ? '<span class="rec">● REC</span>' : ''}</div>
+        <div class="meta">${esc([chNum(c), c.name].filter(Boolean).join(' '))} · until ${esc(fmt.time(start + on.duration * 1000))}</div></div>
+    </button>`;
+  }));
+
+  const recent = (shows.status === 'fulfilled' ? shows.value.shows || [] : [])
+    .sort((a, b) => String(b.latest_recording_date || '').localeCompare(String(a.latest_recording_date || ''))).slice(0, 20);
+  shelf('Recently recorded', recent.map(s => showTile(s, 'wide', 'rr')));
+
+  // What the Tablo will record in the next 48 hours
+  const horizon = now + 48 * 3600000;
+  const soon = (upcoming.status === 'fulfilled' ? upcoming.value.recordings || [] : []).filter(a => new Date(a.air_datetime).getTime() < horizon).slice(0, 12);
+  shelf('Recording soon', soon.map((a, i) => {
+    const t = new Date(a.air_datetime).getTime();
+    const when = t <= now ? '<span class="tag live">REC</span>' : esc(`${fmt.dayLabel(a.air_datetime)} ${fmt.time(t)}`);
+    return `<button class="tile f" data-go="#/upcoming" data-key="rs-${i}">
+      <div class="art" ${art(a.backdrop_url || a.cover_url)}></div>
+      <div class="label"><div class="name">${esc(a.show_title)}${a.wont_record || a.missed_new ? '<span class="tag warn">Won\'t record</span>' : ''}</div>
+        <div class="meta">${when} · ${esc([a.channel_number, a.channel_call_sign].filter(Boolean).join(' '))}</div></div>
+    </button>`;
+  }));
+
+  if (!shelves.length) {
+    return setScreen(`<div class="empty">Nothing here yet.<br>
+      <button class="btn primary f" data-go="#/library" data-key="go-lib">Go to your Library</button></div>`, '#/');
+  }
+  setScreen(shelves.join(''), '#/');
 }
 
-// Wide pictures or posters: the same per-browser choice as the PC Library's
-function libraryLayout() {
-  try { return localStorage.getItem('tv_lib_layout') === 'posters' ? 'posters' : 'wide'; } catch { return 'wide'; }
+function showTile(s, layout, prefix) {
+  return `<button class="tile f" data-go="#/show/${encodeURIComponent(s.id)}" data-key="${prefix}-${esc(s.id)}">
+    <div class="art" ${art(layout === 'wide' ? s.backdrop_url || s.cover_url : s.cover_url || s.backdrop_url)}>${s.unwatched_count ? `<span class="badge">${s.unwatched_count}</span>` : ''}</div>
+    <div class="label"><div class="name">${esc(s.title)}</div>
+      <div class="meta">${s.episode_count === 1 ? '1 recording' : `${s.episode_count} recordings`}</div></div>
+  </button>`;
+}
+
+// The Library's choices, kept in this browser: wide pictures or posters (the same choice as the PC
+// Library's), newest first or A to Z, and all shows or only ones with something not watched yet
+function libraryPrefs() {
+  const get = (k, d) => stored(k, d);
+  return { layout: get('tv_lib_layout', 'wide') === 'posters' ? 'posters' : 'wide', sort: get('tv_lib_sort', 'recent') === 'az' ? 'az' : 'recent', unwatched: get('tv_lib_unwatched', '0') === '1' };
 }
 
 async function showLibrary() {
   loading('#/library');
   let shows;
   try { shows = (await api('/api/shows')).shows || []; } catch (err) { return failed(err, '#/library'); }
-  shows.sort((a, b) => String(b.latest_recording_date || '').localeCompare(String(a.latest_recording_date || '')));
   if (!shows.length) return setScreen('<div class="empty">No recordings yet.</div>', '#/library');
-  const layout = libraryLayout();
+  const p = libraryPrefs();
+  if (p.unwatched) shows = shows.filter(s => s.unwatched_count > 0);
+  if (p.sort === 'az') shows.sort((a, b) => String(a.title || '').replace(/^the\s+/i, '').localeCompare(String(b.title || '').replace(/^the\s+/i, '')));
+  else shows.sort((a, b) => String(b.latest_recording_date || '').localeCompare(String(a.latest_recording_date || '')));
+  const opt = (key, value, label, on) => `<button class="btn f ${on ? 'primary' : ''}" data-act="lib-opt" data-opt="${key}" data-value="${value}" data-key="lib-${key}-${value}">${label}</button>`;
   setScreen(`<h1>Library</h1>
     <div class="subtabs">
-      <button class="btn f ${layout === 'wide' ? 'primary' : ''}" data-act="lib-layout" data-layout="wide" data-key="lib-wide">Wide</button>
-      <button class="btn f ${layout === 'posters' ? 'primary' : ''}" data-act="lib-layout" data-layout="posters" data-key="lib-posters">Posters</button>
+      ${opt('layout', 'wide', 'Wide', p.layout === 'wide')}${opt('layout', 'posters', 'Posters', p.layout === 'posters')}<span class="gap"></span>
+      ${opt('sort', 'recent', 'Newest', p.sort === 'recent')}${opt('sort', 'az', 'A to Z', p.sort === 'az')}<span class="gap"></span>
+      ${opt('unwatched', p.unwatched ? '0' : '1', p.unwatched ? '✓ Not watched only' : 'Not watched only', p.unwatched)}
     </div>
-    <div class="grid ${layout}">${shows.map(s => `
-    <button class="tile f" data-go="#/show/${encodeURIComponent(s.id)}" data-key="show-${esc(s.id)}">
-      <div class="art" ${art(layout === 'wide' ? s.backdrop_url || s.cover_url : s.cover_url || s.backdrop_url)}>${s.unwatched_count ? `<span class="badge">${s.unwatched_count}</span>` : ''}</div>
-      <div class="label"><div class="name">${esc(s.title)}</div>
-        <div class="meta">${s.episode_count === 1 ? '1 recording' : `${s.episode_count} recordings`}</div></div>
-    </button>`).join('')}</div>`, '#/library');
+    ${shows.length ? `<div class="grid ${p.layout}">${shows.map(s => showTile(s, p.layout, 'show')).join('')}</div>`
+      : '<div class="empty">Everything here has been watched.</div>'}`, '#/library');
 }
+
+const seasonOf = e => (Number(e.season_number) > 0 ? Number(e.season_number) : 0);
 
 async function showShow(id) {
   loading('#/library');
   let d;
   try { d = await api(`/api/shows/episodes?show_id=${encodeURIComponent(id)}`); } catch (err) { return failed(err, '#/library'); }
-  // In the show's own order, oldest first, as on the PC
-  const eps = d.episodes || [];
-  state.episodes = eps;
+  state.shows[id] = d;
+  renderShow(id);
+}
+
+// A show: its picture and description, then its episodes in the show's own order (oldest first, as
+// on the PC), a season at a time when there are several
+function renderShow(id) {
+  const d = state.shows[id];
+  const show = d.show || {};
+  const all = remember(d.episodes || []);
+  const seasons = [...new Set(all.map(seasonOf))].sort((a, b) => a - b);
   // Opening a show the first time: start at the first one not watched yet, not the oldest
-  const firstNew = eps.find(e => e.status !== 'Watched' && e.recording_state !== 'recording');
+  const firstNew = all.find(e => e.status !== 'Watched' && e.recording_state !== 'recording');
+  if (!(id in state.season) || !seasons.includes(state.season[id])) state.season[id] = firstNew ? seasonOf(firstNew) : seasons[seasons.length - 1];
+  const season = state.season[id];
+  const eps = seasons.length > 1 ? all.filter(e => seasonOf(e) === season) : all;
   const at = location.hash;
-  if (firstNew && at.startsWith('#/show/') && !state.focus[at]) state.focus[at] = `ep-${firstNew.id}`;
-  setScreen(`<h1>${esc(d.show_title || (d.show && d.show.title) || '')}</h1><div class="rows">${eps.map(e => {
-    const watched = e.status === 'Watched';
-    const left = e.position > 30 && !watched && e.duration ? ` · ${fmt.mins(e.duration - e.position)} left` : '';
-    return `<button class="row f" data-act="play" data-id="${esc(e.id)}" data-key="ep-${esc(e.id)}">
-      <div class="thumb" ${art(e.snapshot_url)}>${progressBar(watched ? 0 : e.position, e.duration)}</div>
-      <div class="body"><div class="name">${watched ? '' : '<span class="dot"></span>'}${esc([fmt.se(e.season_number, e.episode_number), e.title].filter(Boolean).join(' · '))}</div>
-        <div class="meta">${e.air_date ? esc(fmt.day(e.air_date)) : ''}${e.duration ? ` · ${fmt.mins(e.actual_duration || e.duration)}` : ''}${left}${e.channel_name ? ` · ${esc(e.channel_name)}` : ''}</div></div>
-    </button>`;
-  }).join('')}</div>`, '#/library');
+  if (firstNew && eps.includes(firstNew) && !state.focus[at]) state.focus[at] = `ep-${firstNew.id}`;
+  const unwatched = all.filter(e => e.status !== 'Watched').length;
+  setScreen(`<div class="show-head" ${art(show.backdrop_url || show.cover_url)}>
+      <h1>${esc(d.show_title || show.title || '')}</h1>
+      <div class="dim">${all.length === 1 ? '1 recording' : `${all.length} recordings`}${unwatched ? ` · ${unwatched} not watched` : ''}</div>
+      ${show.description ? `<p class="desc">${esc(show.description)}</p>` : ''}
+    </div>
+    ${seasons.length > 1 ? `<div class="subtabs">${seasons.map(n => `<button class="btn f ${n === season ? 'primary' : ''}" data-act="season" data-show="${esc(id)}" data-season="${n}" data-key="season-${n}">${n ? `Season ${n}` : 'Other'}</button>`).join('')}</div>` : ''}
+    ${eps.length ? `<div class="rows">${eps.map(e => {
+      const watched = e.status === 'Watched';
+      return `<button class="row f" data-go="#/ep/${encodeURIComponent(e.id)}" data-key="ep-${esc(e.id)}">
+        <div class="thumb" ${art(e.snapshot_url)}>${progressBar(watched ? 0 : e.position, e.duration)}</div>
+        <div class="body"><div class="name">${watched ? '' : '<span class="dot"></span>'}${esc([fmt.se(e.season_number, e.episode_number), e.title].filter(Boolean).join(' · '))}${e.recording_state === 'recording' ? '<span class="rec">● REC</span>' : ''}</div>
+          <div class="meta">${esc([e.air_date ? fmt.day(e.air_date) : '', e.duration ? fmt.mins(e.actual_duration || e.duration) : '', timeLeft(e), e.channel_name].filter(Boolean).join(' · '))}</div></div>
+      </button>`;
+    }).join('')}</div>` : '<div class="empty">No recordings left.</div>'}`, '#/library');
+}
+
+// A recording: what it is, and what you can do with it (play, the Watch list, watched, protect, delete)
+async function showEpisode(id) {
+  const e = state.eps.get(id);
+  if (!e) { location.replace('#/library'); return; }
+  let inList = false;
+  try { inList = ((await api('/api/watchlist')).episodes || []).some(x => x.id === id); } catch { /* shown as not on it */ }
+  if (location.hash !== `#/ep/${encodeURIComponent(id)}`) return;  // moved on meanwhile
+  const watched = e.status === 'Watched';
+  const resume = !watched && e.position > 30;
+  const facts = [e.air_date ? fmt.day(e.air_date) : '', e.channel_name, e.duration ? fmt.mins(e.actual_duration || e.duration) : '',
+    watched ? 'Watched' : timeLeft(e), e.protected ? 'Protected' : '', inList ? 'On your Watch list' : ''].filter(Boolean);
+  const btn = (act, label, extra = '') => `<button class="btn f ${extra}" data-act="${act}" data-id="${esc(id)}" data-key="${act}">${label}</button>`;
+  setScreen(`<div class="detail">
+      <div class="detail-body">
+        <div class="kicker">${esc(e.show_title || '')}</div>
+        <h1>${esc(epLine(e) || e.show_title || 'Recording')}</h1>
+        <div class="meta">${esc(facts.join(' · '))}${e.recording_state === 'recording' ? '<span class="rec">● Recording now</span>' : ''}</div>
+        ${e.description ? `<p class="desc">${esc(e.description)}</p>` : ''}
+        <div class="actions">
+          ${resume ? `<div class="pair">${btn('play-resume', `▶ Resume at ${fmt.clock(e.position)}`, 'primary')}${btn('play-start', 'Start over')}</div>` : btn('play-start', '▶ Play', 'primary')}
+          ${btn('watchlist', inList ? 'Remove from Watch list' : 'Add to Watch list')}
+          ${btn('watched', watched ? 'Mark as not watched' : 'Mark as watched')}
+          ${btn('protect', e.protected ? 'Unprotect' : 'Protect')}
+          ${btn('delete', 'Delete')}
+        </div>
+      </div>
+      <div class="detail-art" ${art(e.snapshot_url || e.backdrop_url || e.cover_url)}>${progressBar(watched ? 0 : e.position, e.duration)}</div>
+    </div>`, '#/library');
+}
+
+// The recording page's buttons; the page is drawn again afterwards, on the same button
+async function episodeAction(act, id) {
+  const e = state.eps.get(id);
+  if (!e) return;
+  try {
+    if (act === 'watchlist') {
+      const on = ((await api('/api/watchlist')).episodes || []).some(x => x.id === id);
+      if (on) await api(`/api/watchlist/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      else await api('/api/watchlist', { method: 'POST', body: JSON.stringify({ episode_ids: [id] }) });
+    } else if (act === 'watched') {
+      const watched = e.status !== 'Watched';
+      await api(`/api/episodes/${encodeURIComponent(id)}/watched`, { method: 'POST', body: JSON.stringify({ watched }) });
+      Object.assign(e, { status: watched ? 'Watched' : 'Unwatched', position: watched ? e.position : 0 });
+    } else if (act === 'protect') {
+      await api(`/api/episodes/${encodeURIComponent(id)}/protected`, { method: 'POST', body: JSON.stringify({ protected: !e.protected }) });
+      e.protected = !e.protected;
+    } else if (act === 'delete') {
+      const ok = await choose(e.protected ? 'Delete this protected recording?' : 'Delete this recording?',
+        `${[e.show_title, epLine(e)].filter(Boolean).join(' · ')} will be removed from your Tablo for good.${e.protected ? ' It\'s protected, so it would otherwise be kept.' : ''}`,
+        [{ label: 'Cancel', value: false }, { label: 'Delete', value: true, danger: true }]);
+      if (!ok) return;
+      await api(`/api/episodes/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      state.eps.delete(id);
+      history.back();
+      return;
+    }
+  } catch (err) {
+    await choose("Couldn't do that", err.message, [{ label: 'OK', value: 1 }]);
+  }
+  if (location.hash === `#/ep/${encodeURIComponent(id)}`) showEpisode(id);
 }
 
 async function showWatchlist() {
   loading('#/watchlist');
   let eps;
   try { eps = (await api('/api/watchlist')).episodes || []; } catch (err) { return failed(err, '#/watchlist'); }
-  eps = eps.filter(e => e.recording_state !== 'recording');
+  eps = remember(eps.filter(e => e.recording_state !== 'recording'));
   state.watchList = eps;
   if (!eps.length) {
-    return setScreen(`<div class="empty">Your Watch list is empty.<br>Add recordings to it on the PC (a recording's … menu, or select several),<br>then play them here one after another.</div>`, '#/watchlist');
+    return setScreen(`<div class="empty">Your Watch list is empty.<br>Add recordings to it from a recording's page (pick one in a show in your Library),<br>then play them here one after another.</div>`, '#/watchlist');
   }
   setScreen(`<h1>Watch list</h1>
     <div class="subtabs">
@@ -209,6 +396,8 @@ async function startRun(from, how) {
   state.run = { eps, index: 0, deleteAfter: how === 'delete' };
   player.playEpisode(eps[0].id, { run: true });
 }
+
+const isRecording = a => a.schedule_state === 'scheduled' || !!a.recording_now || !!a.recording;
 
 function nowNext(c, now = Date.now()) {
   const list = c.airings || [];
@@ -251,14 +440,76 @@ async function showLive() {
     ${rows.length ? `<div class="rows">${rows.join('')}</div>` : '<div class="empty">No channels here.</div>'}`, '#/live');
 }
 
+// Coming up: what the Tablo will record, by day. OK on one skips it (or records one the Tablo
+// skipped as not new); changing what a series records stays on the PC's Guide.
+async function showUpcoming() {
+  loading('#/upcoming');
+  let u;
+  try { u = await api('/api/guide/upcoming'); } catch (err) { return failed(err, '#/upcoming'); }
+  state.upcoming = u.recordings || [];
+  if (!state.upcoming.length) return setScreen('<div class="empty">Nothing is set to record.<br>Choose shows to record in the Guide on the PC.</div>', '#/upcoming');
+  const now = Date.now();
+  const days = [];
+  state.upcoming.forEach((a, i) => {
+    const day = fmt.dayLabel(a.air_datetime);
+    if (!days.length || days[days.length - 1].day !== day) days.push({ day, rows: [] });
+    const start = new Date(a.air_datetime).getTime();
+    const tags = (start <= now && !a.wont_record && !a.missed_new ? '<span class="tag live">REC</span>' : '')
+      + (a.wont_record || a.missed_new ? '<span class="tag warn">Won\'t record</span>' : a.conflict ? '<span class="tag warn">Conflict</span>' : '')
+      + (a.is_new ? '<span class="tag new">NEW</span>' : '');
+    days[days.length - 1].rows.push(`<button class="row f" data-act="upcoming" data-i="${i}" data-key="up-${esc(a.path)}">
+      <div class="when">${esc(fmt.time(start))}</div>
+      <div class="thumb" ${art(a.backdrop_url || a.cover_url)}></div>
+      <div class="body"><div class="name">${esc(a.show_title)}${tags}</div>
+        <div class="meta">${esc([fmt.se(a.season_number, a.episode_number), a.episode_title, [a.channel_number, a.channel_call_sign].filter(Boolean).join(' '), `until ${fmt.time(start + (a.duration || 0) * 1000)}`].filter(Boolean).join(' · '))}</div></div>
+    </button>`);
+  });
+  const wont = state.upcoming.filter(a => a.wont_record || a.missed_new).length;
+  setScreen(`<h1>Coming up</h1>
+    ${wont ? `<div class="dim" style="margin-bottom:1.6vw">${wont === 1 ? '1 recording' : `${wont} recordings`} won't record: more shows overlap than your Tablo has tuners, or the Tablo decided an episode isn't new. The PC's Scheduled page can fix overlaps.</div>` : ''}
+    ${days.map(d => `<h2>${esc(d.day)}</h2><div class="rows">${d.rows.join('')}</div>`).join('')}`, '#/upcoming');
+}
+
+async function upcomingAction(i) {
+  const a = state.upcoming && state.upcoming[i];
+  if (!a) return;
+  const schedule = scheduled => (a.streaming
+    ? api('/api/streaming/record', { method: 'POST', body: JSON.stringify({ airing_id: a.path, scheduled }) })
+    : api('/api/guide/episodes/schedule', { method: 'POST', body: JSON.stringify({ path: a.path, scheduled }) }));
+  const title = [a.show_title, fmt.se(a.season_number, a.episode_number)].filter(Boolean).join(' · ');
+  try {
+    if (a.missed_new) {
+      const go = await choose(title, "The guide calls this episode new, but your Tablo decided it isn't, so the series' Record New skips it.",
+        [{ label: 'Record it anyway', value: true }, { label: 'Cancel', value: false }]);
+      if (!go) return;
+      await schedule(true);
+    } else if (new Date(a.air_datetime).getTime() <= Date.now() && !a.wont_record) {
+      await choose(title, 'This is recording now.', [{ label: 'OK', value: 1 }]);
+      return;
+    } else {
+      const skip = await choose(`Skip this recording of ${a.show_title}?`,
+        a.streaming ? "Your Tablo won't record this airing." : 'Only this airing is skipped. The series stays scheduled.',
+        [{ label: 'Keep it', value: false }, { label: 'Skip recording', value: true, danger: true }]);
+      if (!skip) return;
+      await schedule(false);
+    }
+  } catch (err) {
+    await choose("Couldn't do that", err.message, [{ label: 'OK', value: 1 }]);
+    return;
+  }
+  showUpcoming();
+}
+
 function route() {
   const h = location.hash || '#/';
   if (h !== '#/play' && player.open) player.close();
   if (h === '#/play') { if (!player.open) location.replace('#/'); return; }
   if (h === '#/library' || h === '#/recordings') return showLibrary();  // #/recordings: its 1.2.5 name
   if (h.startsWith('#/show/')) return showShow(decodeURIComponent(h.slice(7)));
+  if (h.startsWith('#/ep/')) return showEpisode(decodeURIComponent(h.slice(5)));
   if (h === '#/live') return showLive();
   if (h === '#/watchlist') return showWatchlist();
+  if (h === '#/upcoming') return showUpcoming();
   return showHome();
 }
 
@@ -270,7 +521,8 @@ function choose(title, text, buttons) {
   const box = $('#dialog');
   box.innerHTML = `<div class="dialog-box"><div class="dialog-title">${esc(title)}</div>
     ${text ? `<div class="dialog-text">${esc(text)}</div>` : ''}
-    <div class="dialog-actions">${buttons.map((b, i) => `<button class="btn f ${i === 0 ? 'primary' : ''}" data-choice="${i}">${esc(b.label)}</button>`).join('')}</div></div>`;
+    <div class="dialog-actions">${buttons.map((b, i) => `<button class="btn f ${b.danger ? 'danger' : i === 0 ? 'primary' : ''}" data-choice="${i}">${esc(b.label)}</button>`).join('')}</div></div>`;
+  const was = document.activeElement;
   box.classList.remove('hidden');
   focusEl(box.querySelector('.f'));
   return new Promise(resolve => {
@@ -278,6 +530,7 @@ function choose(title, text, buttons) {
       box.classList.add('hidden');
       box.innerHTML = '';
       dialogDone = null;
+      if (was && was.isConnected && !player.open) was.focus({ preventScroll: true });  // back where it was
       resolve(i === null ? null : buttons[i].value);
     };
   });
@@ -332,8 +585,10 @@ const player = {
     const live = this.s.kind === 'live';
     const shape = this.s.shapeKey ? [['shape', `Shape: ${SHAPE_NAMES[shapeOf(this.s.shapeKey)]}`]] : [];
     const cc = ['cc', state.captions ? 'CC: On' : 'CC: Off'];
+    const hit = live && this.liveAiring();
+    const record = hit ? [['record', isRecording(hit.a) ? '● Recording' : '● Record']] : [];
     this.controlList = live
-      ? [['pause', this.video().paused ? '▶ Play' : '❚❚ Pause'], ['live', 'Back to live'], cc, ...shape, ['close', '✕ Close']]
+      ? [['pause', this.video().paused ? '▶ Play' : '❚❚ Pause'], ['live', 'Back to live'], ...record, cc, ...shape, ['close', '✕ Close']]
       : [['pause', this.video().paused ? '▶ Play' : '❚❚ Pause'], ['back', '◀◀ 10 s'], ['fwd', '30 s ▶▶'], cc, ...shape, ['close', '✕ Close']];
     this.controlIndex = Math.min(index, this.controlList.length - 1);
     this.controls = true;
@@ -385,6 +640,7 @@ const player = {
     if (this.shapeMenu) { this.pickShape(what); return; }
     if (what === 'shape') { this.showShapes(); return; }
     if (what === 'close') { this.hideControls(); this.exit(); return; }
+    if (what === 'record') { this.recordLive(); return; }
     if (what === 'cc') {
       this.toggleCaptions();
       this.controlList[this.controlIndex][1] = state.captions ? 'CC: On' : 'CC: Off';
@@ -462,15 +718,15 @@ const player = {
   },
 
   // run: playing the Watch list; next: the episode after one that just ended. Both pick up where
-  // you left off, without asking
-  async playEpisode(id, { run = false, next = null } = {}) {
-    const ep = next || (run ? state.run.eps : state.episodes || []).find(e => e.id === id);
+  // you left off, without asking. from: 'resume' or 'start', chosen on the recording's page
+  async playEpisode(id, { run = false, next = null, from = null } = {}) {
+    const ep = next || (run ? state.run.eps.find(e => e.id === id) : state.eps.get(id));
     if (!ep) return;
     if (!run) state.run = null;
     let start = ep.program_start || 0;
-    if (run || next) {
+    if (run || next || from === 'resume') {
       if (ep.status !== 'Watched' && ep.position > 30) start = ep.position;
-    } else if (ep.status !== 'Watched' && ep.position > 30) {
+    } else if (!from && ep.status !== 'Watched' && ep.position > 30) {
       const pick = await choose(ep.show_title || 'Recording', `You stopped at ${fmt.clock(ep.position)}.`,
         [{ label: `Resume at ${fmt.clock(ep.position)}`, value: 'resume' }, { label: 'Start over', value: 'start' }]);
       if (!pick) return;
@@ -604,6 +860,36 @@ const player = {
     }
   },
 
+  // What's on the channel playing, if the Tablo can record it (as the PC player's Record button):
+  // streaming channels that allow recording, by the airing's ID; antenna ones with guide data
+  liveAiring() {
+    const c = this.s.kind === 'live' && ((state.live && state.live.channels) || []).find(x => x.channel_id === this.s.id);
+    const a = c && nowNext(c).now;
+    if (!a) return null;
+    if (a.airing_id) return c.can_record ? { c, a } : null;
+    return a.path && !a.path.startsWith('/channel/') && !a.path.startsWith('/cloud/') ? { c, a } : null;
+  },
+
+  // Record what's on, from now until it ends
+  async recordLive() {
+    const hit = this.liveAiring();
+    if (!hit) return;
+    if (isRecording(hit.a)) { this.banner(`${hit.a.title} is recording on your Tablo`); return; }
+    try {
+      if (hit.a.airing_id) await api('/api/streaming/record', { method: 'POST', body: JSON.stringify({ airing_id: hit.a.airing_id, scheduled: true }) });
+      else await api('/api/guide/episodes/schedule', { method: 'POST', body: JSON.stringify({ path: hit.a.path, scheduled: true }) });
+      hit.a.schedule_state = 'scheduled';
+      this.banner(`Recording ${hit.a.title} until it ends. It'll be in your Library.`);
+    } catch (err) {
+      this.banner(`Couldn't record it: ${err.message}`);
+    }
+    if (this.controls) {
+      const i = this.controlList.findIndex(([v]) => v === 'record');
+      if (i >= 0) this.controlList[i][1] = isRecording(hit.a) ? '● Recording' : '● Record';
+      this.renderControls();
+    }
+  },
+
   // Channel up/down in live TV, through the list it was picked from
   surf(dir) {
     const list = liveChannels();
@@ -720,11 +1006,15 @@ const player = {
     if (s.kind !== 'rec' || s.markedWatched) return;
     const pos = this.position();
     const keepalive = final;
+    // The recording's page shows it straight away on coming back
+    const ep = state.eps.get(s.id) || s.ep;
     if (s.duration && pos >= s.duration - Math.max(120, s.duration * 0.05)) {
       s.markedWatched = true;
+      if (ep) Object.assign(ep, { status: 'Watched', position: 0 });
       fetch(`/api/episodes/${encodeURIComponent(s.id)}/watched`, { method: 'POST', headers: API_HEADERS, body: JSON.stringify({ watched: true }), keepalive }).catch(() => {});
     } else if (pos > 30 && Math.abs(pos - (s.lastSaved || 0)) >= 10) {
       s.lastSaved = pos;
+      if (ep) ep.position = pos;
       fetch(`/api/episodes/${encodeURIComponent(s.id)}/progress`, { method: 'POST', headers: API_HEADERS, body: JSON.stringify({ position: pos }), keepalive }).catch(() => {});
     }
   },
@@ -857,9 +1147,9 @@ const BACK_KEYS = ['Escape', 'Backspace', 'BrowserBack', 'GoBack'];
 const isBack = e => BACK_KEYS.includes(e.key) || [4, 8, 27, 166, 461, 10009].includes(e.keyCode);
 
 // The app's Back button: do what Back does here, or say there's nothing to go back to (the app
-// then closes, as Back on an app's first screen does)
+// then closes, as Back on an app's first screen does): on Home, with the menu open
 window.tvBack = () => {
-  const home = (location.hash || '#/') === '#/' && !player.open && !dialogDone;
+  const home = (location.hash || '#/') === '#/' && !player.open && !dialogDone && inRail(document.activeElement);
   if (home) return false;
   onKey({ key: 'GoBack', keyCode: 4, target: document.body, preventDefault() {} });
   return true;
@@ -908,8 +1198,13 @@ function onKey(e) {
     cur.click();
     return;
   }
-  // Back on a screen: to Continue watching; on Continue watching it's left to the browser (leaving)
-  if (isBack(e) && (location.hash || '#/') !== '#/') { e.preventDefault(); history.back(); }
+  // Back: from a show or a recording, to where it was opened from; on a page the menu opens, the
+  // menu first, then Home. Back in Home's menu is left to the browser (leaving).
+  if (!isBack(e)) return;
+  const h = location.hash || '#/';
+  if (!TOP_SCREENS.includes(h) && h !== '#/recordings') { e.preventDefault(); history.back(); return; }
+  if (!inRail(cur)) { e.preventDefault(); focusRail(); return; }
+  if (h !== '#/') { e.preventDefault(); history.back(); }
 }
 
 function onClick(e) {
@@ -922,21 +1217,31 @@ function onClick(e) {
   if (el.dataset.choice !== undefined && dialogDone) return dialogDone(Number(el.dataset.choice));
   if (el.dataset.go) {
     const home = (location.hash || '#/') === '#/';
-    if (el.classList.contains('tab') && !home) location.replace(el.dataset.go === '#/' ? '#/' : el.dataset.go);
+    // Between the menu's pages, Back goes to Home rather than through each one
+    if (el.classList.contains('nav') && !home) location.replace(el.dataset.go === '#/' ? '#/' : el.dataset.go);
     else location.hash = el.dataset.go;
     return;
   }
   const act = el.dataset.act;
   if (act === 'skip-break') { player.skipBreak(); return; }
-  if (act === 'play') player.playEpisode(el.dataset.id);
+  if (act === 'play-resume' || act === 'play-start') player.playEpisode(el.dataset.id, { from: act === 'play-resume' ? 'resume' : 'start' });
+  else if (['watchlist', 'watched', 'protect', 'delete'].includes(act)) episodeAction(act, el.dataset.id);
   else if (act === 'tune') player.tune(el.dataset.id);
   else if (act === 'run') startRun(Number(el.dataset.from), el.dataset.how);
   else if (act === 'run-from') startRun(Number(el.dataset.from));
   else if (act === 'live-tab') { state.liveTab = el.dataset.tab; state.focus['#/live'] = `lt-${el.dataset.tab}`; showLive(); }
   else if (act === 'reload') location.reload();
-  else if (act === 'lib-layout') {
-    try { localStorage.setItem('tv_lib_layout', el.dataset.layout); } catch { /* this visit only */ }
-    state.focus['#/library'] = `lib-${el.dataset.layout}`;
+  else if (act === 'upcoming') upcomingAction(Number(el.dataset.i));
+  else if (act === 'season') {
+    state.season[el.dataset.show] = Number(el.dataset.season);
+    state.focus[location.hash] = el.dataset.key;
+    renderShow(el.dataset.show);
+  }
+  else if (act === 'lib-opt') {
+    const { opt, value } = el.dataset;
+    try { localStorage.setItem(`tv_lib_${opt}`, value); } catch { /* this visit only */ }
+    // Stay on the choice (the Not watched only switch changes its own value)
+    state.focus['#/library'] = opt === 'unwatched' ? `lib-unwatched-${value === '1' ? '0' : '1'}` : el.dataset.key;
     showLibrary();
   }
   else if (act === 'app-address') APP.changeAddress();
@@ -952,7 +1257,8 @@ function init() {
   // In the app, PC view can't be used (no pointer): its place changes which PC the app uses (as the
   // remote's Menu button does; not every remote has one)
   const pcView = document.querySelector('[data-act="pc-view"]');
-  if (APP && pcView) Object.assign(pcView, { textContent: 'PC address' }).dataset.act = 'app-address';
+  if (APP && pcView) { pcView.querySelector('span').textContent = 'PC address'; pcView.dataset.act = 'app-address'; }
+  document.querySelectorAll('[data-icon]').forEach(i => { i.outerHTML = svg(i.dataset.icon); });
   // TV view is now this browser's view: the plain address opens it from here on (PC view undoes it)
   try { localStorage.setItem('tv_view', 'tv'); } catch { /* storage unavailable: /tv still works */ }
   document.addEventListener('keydown', onKey);
