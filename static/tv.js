@@ -103,6 +103,7 @@ function move(dir) {
   // The menu goes up and down; Right goes back onto the page. The page's arrows stay on the page,
   // except Left past the first thing in a row, which opens the menu.
   const rail = !dialogOpen() && inRail(cur);
+  if (!rail && !dialogOpen() && cur.closest('#epg') && guideMove(cur, dir)) return;
   if (rail && dir === 'right') { focusContent(); return; }
   if (rail && dir === 'left') return;
   const a = cur.getBoundingClientRect();
@@ -410,7 +411,8 @@ function nowNext(c, now = Date.now()) {
 async function loadLive() {
   const end = state.live ? new Date(state.live.window_end).getTime() : 0;
   if (end - Date.now() > 30 * 60000) return state.live;
-  state.live = await api('/api/live/epg?hours=3');
+  // From half an hour back (the guide's own start) to the Guide view's last slot
+  state.live = await api(`/api/live/epg?hours=${GUIDE_HOURS + 1}`);
   return state.live;
 }
 
@@ -418,9 +420,24 @@ function liveChannels() {
   return ((state.live && state.live.channels) || []).filter(c => (state.liveTab === 'fast' ? c.kind === 'fast' : c.kind !== 'fast'));
 }
 
+// Live TV as a list (what's on now, and next) or as the Guide (the next GUIDE_HOURS, a row per channel)
+const GUIDE_HOURS = 6;
+const GUIDE_SLOT = 15;  // vw per half hour
+const liveView = () => (stored('tv_live_view', 'list') === 'guide' ? 'guide' : 'list');
+
 async function showLive() {
   loading('#/live');
   try { await loadLive(); } catch (err) { return failed(err, '#/live'); }
+  const view = liveView();
+  const tab = (act, key, value, label, on) => `<button class="btn f ${on ? 'primary' : ''}" data-act="${act}" data-${key}="${value}" data-key="${act}-${value}">${label}</button>`;
+  setScreen(`<div class="subtabs">
+      ${tab('live-tab', 'tab', 'ota', 'Antenna', state.liveTab === 'ota')}${tab('live-tab', 'tab', 'fast', 'Streaming', state.liveTab === 'fast')}<span class="gap"></span>
+      ${tab('live-view', 'view', 'list', 'On now', view === 'list')}${tab('live-view', 'view', 'guide', 'Guide', view === 'guide')}
+    </div>
+    ${!liveChannels().length ? '<div class="empty">No channels here.</div>' : view === 'guide' ? guideGrid() : liveList()}`, '#/live');
+}
+
+function liveList() {
   const now = Date.now();
   const rows = liveChannels().map(c => {
     const { now: on, next } = nowNext(c, now);
@@ -435,11 +452,81 @@ async function showLive() {
         ${on ? `<div class="now-bar"><div style="width:${pct}%"></div></div>` : ''}</div>
     </button>`;
   });
-  setScreen(`<div class="subtabs">
-      <button class="btn f ${state.liveTab === 'ota' ? 'primary' : ''}" data-act="live-tab" data-tab="ota" data-key="lt-ota">Antenna</button>
-      <button class="btn f ${state.liveTab === 'fast' ? 'primary' : ''}" data-act="live-tab" data-tab="fast" data-key="lt-fast">Streaming</button>
-    </div>
-    ${rows.length ? `<div class="rows">${rows.join('')}</div>` : '<div class="empty">No channels here.</div>'}`, '#/live');
+  return `<div class="rows">${rows.join('')}</div>`;
+}
+
+// The Guide: channels down the side, the next hours across, starting at this half hour. Every row has
+// something to land on (a channel without listings is one long "No listings" that tunes it)
+function guideGrid() {
+  const now = Date.now();
+  const start = Math.floor(now / 1800000) * 1800000, end = start + GUIDE_HOURS * 3600000;
+  const x = t => Number((((t - start) / 1800000) * GUIDE_SLOT).toFixed(2));
+  const times = Array.from({ length: GUIDE_HOURS * 2 }, (_, i) => `<div class="g-time" style="left:${x(start + i * 1800000)}vw">${esc(fmt.time(start + i * 1800000))}</div>`).join('');
+  const rows = liveChannels().map(c => {
+    const cells = (c.airings || []).map((a, i) => {
+      const aStart = new Date(a.air_datetime).getTime(), aEnd = aStart + (a.duration || 0) * 1000;
+      if (aEnd <= start || aStart >= end) return '';
+      const s = Math.max(start, aStart), e = Math.min(end, aEnd);
+      const mark = a.recording_now ? '<span class="rec">● REC</span>' : isRecording(a) ? '<span class="rec">●</span>' : a.is_new ? '<span class="tag new">NEW</span>' : '';
+      return `<button class="g-cell f ${aStart <= now && now < aEnd ? 'now' : ''}" style="left:${x(s)}vw;width:${(x(e) - x(s)).toFixed(2)}vw"
+        data-act="g-air" data-ch="${esc(c.channel_id)}" data-i="${i}" data-start="${s}" data-end="${e}" data-key="g-${esc(c.channel_id)}-${aStart}">
+        <span class="g-title">${esc(a.title)}${mark}</span><span class="g-sub">${esc(fmt.time(aStart))} – ${esc(fmt.time(aEnd))}</span></button>`;
+    }).join('') || `<button class="g-cell f" style="left:0;width:${x(end)}vw" data-act="tune" data-id="${esc(c.channel_id)}" data-start="${start}" data-end="${end}"
+        data-key="g-${esc(c.channel_id)}-none"><span class="g-title dim">No listings</span></button>`;
+    return `<div class="g-row"><div class="g-ch"><span class="ch-num">${esc(chNum(c))}</span>
+        <span class="g-logo">${c.logo_url ? `<img src="${esc(c.logo_url)}" alt="">` : `<b>${esc(c.call_sign || c.name)}</b>`}</span></div>
+      <div class="g-cells" style="width:${x(end)}vw">${cells}</div></div>`;
+  }).join('');
+  return `<div class="epg" id="epg"><div class="g-head"><div class="g-ch"></div><div class="g-cells" style="width:${x(end)}vw">${times}
+      <div class="g-now" style="left:${x(now)}vw"></div></div></div>${rows}</div>`;
+}
+
+// Moving in the Guide, row by row (a streaming lineup has thousands of listings; measuring them all
+// on every press was slow on a TV): along a row, then up and down to what's on at the same time.
+// False hands over to the usual moving (up from the first row, to the buttons above)
+function guideMove(cur, dir) {
+  const start = Number(cur.dataset.start), end = Number(cur.dataset.end);
+  if (dir === 'left' || dir === 'right') {
+    const next = dir === 'right' ? cur.nextElementSibling : cur.previousElementSibling;
+    if (next) { state.guideAt = Number(next.dataset.start); focusEl(next); } else if (dir === 'left') focusRail();
+    return true;
+  }
+  // The time being looked at: kept while going up and down, so a long show doesn't pull it along
+  const at = Math.min(Math.max(state.guideAt ?? start, start), end - 1);
+  const rows = [...document.querySelectorAll('#epg .g-row')];
+  const row = rows[rows.indexOf(cur.closest('.g-row')) + (dir === 'down' ? 1 : -1)];
+  if (!row) return dir === 'down';
+  const cells = [...row.querySelectorAll('.g-cell')];
+  const target = cells.find(c => Number(c.dataset.start) <= at && at < Number(c.dataset.end))
+    || cells.reduce((best, c) => (!best || Math.abs(Number(c.dataset.start) - at) < Math.abs(Number(best.dataset.start) - at) ? c : best), null);
+  if (target) { state.guideAt = at; focusEl(target); }
+  return true;
+}
+
+// OK on a listing: on now, watch it; later, record it (or not, if it's set to record)
+async function guideAiring(chId, i) {
+  const c = ((state.live && state.live.channels) || []).find(x => x.channel_id === chId);
+  const a = c && (c.airings || [])[i];
+  if (!a) return;
+  const aStart = new Date(a.air_datetime).getTime(), aEnd = aStart + (a.duration || 0) * 1000;
+  if (aStart <= Date.now() && Date.now() < aEnd) { player.tune(chId); return; }
+  const recordable = a.airing_id ? c.can_record : a.path && !a.path.startsWith('/channel/') && !a.path.startsWith('/cloud/');
+  const on = isRecording(a);
+  const what = [fmt.se(a.season_number, a.episode_number), a.episode_title && a.episode_title !== a.title ? a.episode_title : ''].filter(Boolean).join(' · ');
+  const text = `${fmt.dayLabel(a.air_datetime)}, ${fmt.time(aStart)} – ${fmt.time(aEnd)} · ${[chNum(c), c.name].filter(Boolean).join(' ')}`
+    + (what ? ` · ${what}` : '') + (on ? '. Set to record.' : '') + (recordable ? '' : ". This channel can't be recorded.");
+  const buttons = [...(recordable ? [{ label: on ? "Don't record it" : '● Record it', value: on ? 'skip' : 'record' }] : []), { label: 'Close', value: null }];
+  const pick = await choose(a.title, text, buttons);
+  if (!pick) return;
+  try {
+    const scheduled = pick === 'record';
+    if (a.airing_id) await api('/api/streaming/record', { method: 'POST', body: JSON.stringify({ airing_id: a.airing_id, scheduled }) });
+    else await api('/api/guide/episodes/schedule', { method: 'POST', body: JSON.stringify({ path: a.path, scheduled }) });
+    a.schedule_state = scheduled ? 'scheduled' : 'none';
+    showLive();
+  } catch (err) {
+    await choose("Couldn't do that", err.message, [{ label: 'OK', value: 1 }]);
+  }
 }
 
 // Coming up: what the Tablo will record, by day. OK on one skips it (or records one the Tablo
@@ -1238,7 +1325,13 @@ function onClick(e) {
   else if (act === 'tune') player.tune(el.dataset.id);
   else if (act === 'run') startRun(Number(el.dataset.from), el.dataset.how);
   else if (act === 'run-from') startRun(Number(el.dataset.from));
-  else if (act === 'live-tab') { state.liveTab = el.dataset.tab; state.focus['#/live'] = `lt-${el.dataset.tab}`; showLive(); }
+  else if (act === 'live-tab') { state.liveTab = el.dataset.tab; state.focus['#/live'] = el.dataset.key; showLive(); }
+  else if (act === 'live-view') {
+    try { localStorage.setItem('tv_live_view', el.dataset.view); } catch { /* this visit only */ }
+    state.focus['#/live'] = el.dataset.key;
+    showLive();
+  }
+  else if (act === 'g-air') guideAiring(el.dataset.ch, Number(el.dataset.i));
   else if (act === 'reload') location.reload();
   else if (act === 'upcoming') upcomingAction(Number(el.dataset.i));
   else if (act === 'season') {
