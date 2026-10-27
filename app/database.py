@@ -700,14 +700,13 @@ def recalculate_show_stats(show_id: str):
 
 
 def prune_obsolete_shows_and_episodes(valid_show_ids: List[str], valid_ep_ids: List[str]):
-    """Remove any shows or episodes from the cache that are no longer present on the Tablo DVR."""
+    """Remove any shows or episodes from the cache that are no longer present on the Tablo DVR (all of
+    them when the lists are empty: the caller decides when an empty answer can be trusted)."""
     with get_connection() as conn:
-        if valid_show_ids:
-            placeholders_s = ",".join("?" * len(valid_show_ids))
-            conn.execute(f"DELETE FROM shows WHERE id NOT IN ({placeholders_s})", valid_show_ids)
-        if valid_ep_ids:
-            placeholders_e = ",".join("?" * len(valid_ep_ids))
-            conn.execute(f"DELETE FROM episodes WHERE id NOT IN ({placeholders_e})", valid_ep_ids)
+        placeholders_s = ",".join("?" * len(valid_show_ids)) or "''"
+        conn.execute(f"DELETE FROM shows WHERE id NOT IN ({placeholders_s})", valid_show_ids)
+        placeholders_e = ",".join("?" * len(valid_ep_ids)) or "''"
+        conn.execute(f"DELETE FROM episodes WHERE id NOT IN ({placeholders_e})", valid_ep_ids)
         conn.commit()
 
 

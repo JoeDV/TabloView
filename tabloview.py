@@ -16,17 +16,46 @@ import webbrowser
 import urllib.request
 
 
+LOG_LIMIT = 2 * 1024 * 1024  # then tabloview.log becomes tabloview.old.log and starts again
+
+
+class _LogFile:
+    """tabloview.log, started again once it passes LOG_LIMIT: at start-up and while running (a PC left on
+    for weeks used to grow it without end). Written from several threads."""
+
+    def __init__(self, path):
+        self.path, self.lock = path, threading.Lock()
+        self._rotate_if_big()
+        self.f = open(path, "a", encoding="utf-8", buffering=1)
+
+    def _rotate_if_big(self):
+        try:
+            if self.path.exists() and self.path.stat().st_size > LOG_LIMIT:
+                self.path.replace(self.path.with_name("tabloview.old.log"))
+        except OSError:
+            pass
+
+    def write(self, text):
+        with self.lock:
+            n = self.f.write(text)
+            if text.endswith("\n") and self.f.tell() > LOG_LIMIT:
+                self.f.close()
+                self._rotate_if_big()
+                self.f = open(self.path, "a", encoding="utf-8", buffering=1)
+            return n
+
+    def flush(self):
+        with self.lock:
+            self.f.flush()
+
+    def __getattr__(self, name):
+        return getattr(self.f, name)
+
+
 def _setup_logging():
     """A windowed (no-console) build has no stdout/stderr; send all output to a log file."""
     from app.config import LOG_DIR
-    log = LOG_DIR / "tabloview.log"
-    try:
-        if log.exists() and log.stat().st_size > 2 * 1024 * 1024:
-            log.replace(LOG_DIR / "tabloview.old.log")
-    except OSError:
-        pass
-    stream = open(log, "a", encoding="utf-8", buffering=1)
-    sys.stdout = sys.stderr = stream
+    sys.stdout = sys.stderr = _LogFile(LOG_DIR / "tabloview.log")
     print(f"\n===== TabloView starting {time.strftime('%Y-%m-%d %H:%M:%S')} =====")
 
 

@@ -12,6 +12,7 @@ import socket
 import statistics
 import subprocess
 import sys
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urljoin
@@ -154,6 +155,22 @@ def tailscale(max_age: float = 300) -> Optional[Dict[str, str]]:
             except Exception:
                 pass
         _tailscale["value"] = value
+    return _tailscale["value"]
+
+
+_tailscale_refreshing = threading.Lock()
+
+
+def tailscale_now(max_age: float = 300) -> Optional[Dict[str, str]]:
+    """tailscale(), without waiting: the last answer, asked again in the background when it's older
+    than max_age. For checking every request's address, which mustn't wait up to 5 s for Tailscale."""
+    if time.monotonic() - _tailscale["at"] > max_age and _tailscale_refreshing.acquire(blocking=False):
+        def refresh():
+            try:
+                tailscale(max_age)
+            finally:
+                _tailscale_refreshing.release()
+        threading.Thread(target=refresh, name="tailscale-status", daemon=True).start()
     return _tailscale["value"]
 
 

@@ -138,7 +138,10 @@ async def lan_status(request: Request):
     """Whether this device is the PC itself, whether a PIN is set, and whether this device is signed in."""
     local = lanauth.from_this_pc(request)
     return {"local": local, "pin_set": lanauth.pin_set(),
-            "signed_in": local or lanauth.token_ok(request.cookies.get(lanauth.COOKIE))}
+            "signed_in": local or lanauth.token_ok(request.cookies.get(lanauth.COOKIE)),
+            # The computer's name (already visible on the home network), so the TV app can say which
+            # computer it found before using it
+            "pc": socket.gethostname()}
 
 
 @router.post("/lan/login")
@@ -147,7 +150,7 @@ async def lan_login(req: PinRequest, request: Request):
     if not lanauth.pin_set():
         raise HTTPException(status_code=401, detail="Set a PIN on the PC running TabloView first (Device page).")
     address, ua = lanauth.client_address(request) or "?", request.headers.get("user-agent")
-    ok, wait = lanauth.check_pin(req.pin, address)
+    ok, wait = await asyncio.to_thread(lanauth.check_pin, req.pin, address)  # not on the server's loop
     if not ok:
         lanauth.note_event(address, ua, "locked_out" if wait else "wrong_pin", wait)
         raise HTTPException(status_code=429 if wait else 401,

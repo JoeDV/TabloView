@@ -96,6 +96,29 @@ class AccessTests(unittest.TestCase):
     def test_tailscale_stopped(self):
         self.assertIsNone(self.tailscale({"BackendState": "Stopped", "Self": {"DNSName": "x.y.ts.net."}}))
 
+    def test_checking_an_address_never_waits_for_tailscale(self):
+        # Every request's address is checked: an old answer is used while a new one is asked for
+        import threading
+        import time
+        netcheck._tailscale.update(value={"name": "old.tailc0c2e.ts.net", "ip": None}, at=float("-inf"))
+        self.addCleanup(netcheck._tailscale.update, value=None, at=float("-inf"))
+        release = threading.Event()
+
+        def slow(*a, **k):
+            release.wait(5)
+            return mock.Mock(stdout=json.dumps({"BackendState": "Running", "Self": {"DNSName": "new.tailc0c2e.ts.net."}}))
+        with mock.patch.object(netcheck.os.path, "isfile", return_value=True), mock.patch.object(netcheck.subprocess, "run", side_effect=slow):
+            started = time.monotonic()
+            self.assertEqual(netcheck.tailscale_now()["name"], "old.tailc0c2e.ts.net")
+            self.assertEqual(netcheck.tailscale_now()["name"], "old.tailc0c2e.ts.net")  # one lookup at a time
+            self.assertLess(time.monotonic() - started, 0.5)
+            release.set()
+            for _ in range(50):
+                if (netcheck.tailscale_now() or {}).get("name") == "new.tailc0c2e.ts.net":
+                    break
+                time.sleep(0.05)
+        self.assertEqual(netcheck.tailscale_now()["name"], "new.tailc0c2e.ts.net")
+
 
 if __name__ == "__main__":
     unittest.main()

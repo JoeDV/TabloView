@@ -328,13 +328,12 @@ class TranscodeManager:
                     media_type=hls_type,
                     headers={
                         "Cache-Control": "no-cache, no-store",
-                        "Access-Control-Allow-Origin": "*",
                         "Content-Disposition": "inline"
                     }
                 )
 
             # Transport stream segment (.ts), or a byte range of a recording's one file
-            out_headers = {"Cache-Control": "max-age=3600", "Access-Control-Allow-Origin": "*", "Accept-Ranges": "bytes"}
+            out_headers = {"Cache-Control": "max-age=3600", "Accept-Ranges": "bytes"}  # same-origin only (no ACAO)
             if resp.status_code == 206 and resp.headers.get("content-range"):
                 out_headers["Content-Range"] = resp.headers["content-range"]
             return Response(

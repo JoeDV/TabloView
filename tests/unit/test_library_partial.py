@@ -69,6 +69,21 @@ class LibraryPartialSyncTests(unittest.TestCase):
         self.assertEqual(self.sync(refuse=False), (10, 10))
         self.assertEqual(self.sync(refuse=True), (10, 10))  # 4 came back; the other 6 are kept and counted
 
+    def test_every_recording_deleted_empties_the_library_once_two_syncs_agree(self):
+        # It used to keep showing them all; one empty answer alone could be the Tablo still starting
+        service = LibrarySyncService()
+
+        def run(count):
+            with mock.patch.object(sync.tablo_manager, "request_bulk", new=Tablo(False, count)), \
+                 mock.patch.object(type(sync.tablo_manager), "is_authenticated", new=mock.PropertyMock(return_value=True)):
+                asyncio.run(service.sync_library(include_guide=False))
+            with db.get_connection() as conn:
+                return conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0], conn.execute("SELECT COUNT(*) FROM shows").fetchone()[0]
+        self.assertEqual(run(10), (10, 1))
+        self.assertEqual(run(0), (10, 1))
+        self.assertEqual(run(0), (0, 0))
+        self.assertEqual(run(3), (3, 1))  # and back again
+
     def test_a_complete_sync_still_removes_deleted_recordings(self):
         self.sync(refuse=False)
         self.assertEqual(self.sync(refuse=False, count=7), (7, 7))  # 3 deleted on the Tablo

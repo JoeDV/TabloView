@@ -19,6 +19,7 @@ import ipaddress
 import json
 import re
 import secrets
+import threading
 import time
 from typing import Dict, Mapping, Optional, Tuple
 
@@ -41,6 +42,9 @@ SEEN_EVERY = 300  # a signed-in device's last use is written at most this often
 # address -> (wrong tries, locked until, lockouts so far)
 _failures: Dict[str, Tuple[int, float, int]] = {}
 _seen_written: Dict[str, float] = {}
+# PIN checks run in a worker thread (the hash takes a moment on purpose), one at a time: the wrong-try
+# counts stay exact, and a flood of attempts can't use more than one CPU core
+_check_lock = threading.Lock()
 
 
 # Added by something that passes on requests from elsewhere: Tailscale Serve and Funnel (Funnel is the
@@ -116,7 +120,11 @@ def token_ok(token: Optional[str], now: Optional[float] = None) -> bool:
 
 def check_pin(pin: str, address: str, now: Optional[float] = None) -> Tuple[bool, int]:
     """(right PIN, seconds to wait before trying again)."""
-    now = now or time.time()
+    with _check_lock:
+        return _check_pin(pin, address, now or time.time())
+
+
+def _check_pin(pin: str, address: str, now: float) -> Tuple[bool, int]:
     tries, until, lockouts = _failures.get(address, (0, 0.0, 0))
     if until > now:
         return False, int(until - now) + 1

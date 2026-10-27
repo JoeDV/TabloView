@@ -171,6 +171,8 @@ class LibrarySyncService:
         self.is_syncing = False
         self.is_guide_syncing = False
         self.last_error: Optional[str] = None
+        # Syncs in a row where the Tablo listed no recordings at all (see the pruning below)
+        self.empty_syncs = 0
         # While the first guide load on this PC runs: shown as a banner.
         # {"first", "step": "shows"|"airings", "done", "total", "started", "waiting_until"}
         self.guide_progress: Optional[Dict[str, Any]] = None
@@ -327,8 +329,12 @@ class LibrarySyncService:
             for ep_data in episodes_list:
                 upsert_episode(ep_data)
 
-            # Prune obsolete shows and episodes no longer returned by Tablo (not after a partial fetch)
-            if not partial:
+            # Prune obsolete shows and episodes no longer returned by Tablo (not after a partial fetch).
+            # No recordings at all: everything was deleted, so the Library empties too (it used to keep
+            # showing them), but only when the next sync agrees, in case the Tablo answered with an
+            # empty list for a moment (its drive still starting, say)
+            self.empty_syncs = self.empty_syncs + 1 if not episodes_list else 0
+            if not partial and (episodes_list or self.empty_syncs >= 2):
                 prune_obsolete_shows_and_episodes(list(shows_map.keys()), [e["id"] for e in episodes_list])
             else:
                 for show_id in shows_map:  # counts from all the recordings kept, not just those fetched

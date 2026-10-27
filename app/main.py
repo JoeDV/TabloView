@@ -32,6 +32,7 @@ from .routes import devtools
 async def lifespan(app: FastAPI):
     # Sign-in tokens and the account's email never reach the log (it gets pasted into forum posts)
     redact.install()
+    asyncio.create_task(asyncio.to_thread(netcheck.tailscale))  # this PC's Tailscale name, for _on_tailnet
     # Startup: initialize database tables
     print("[Startup] Initializing Tablo SQLite database...")
     init_db()
@@ -121,7 +122,7 @@ _LOCAL_NAMES = {"localhost", _PC_NAME, f"{_PC_NAME}.local"}
 # DNS-rebinding page can't point one at this PC; and only this PC's own (Tailscale's name for it can
 # differ from the PC's, e.g. "hplaptop-1": asked of Tailscale, at most every 5 minutes)
 def _tailscale_name() -> str:
-    return (netcheck.tailscale() or {}).get("name") or ""
+    return (netcheck.tailscale_now() or {}).get("name") or ""
 
 
 def _on_tailnet(host: str) -> bool:
@@ -300,15 +301,15 @@ async def serve_transcoded_file(session_id: str, filename: str):
             media_type="application/vnd.apple.mpegurl",
             headers={
                 "Cache-Control": "no-cache, no-store",
-                "Access-Control-Allow-Origin": "*",
                 "Content-Disposition": "inline"
             }
         )
 
     return FileResponse(
         str(file_path),
+        # No Access-Control-Allow-Origin: TabloView's pages are on this same address, and VLC doesn't
+        # ask; allowing any origin only let other websites read the video
         media_type="video/mp2t" if filename.endswith(".ts") else "image/jpeg" if filename.endswith(".jpg") else "application/octet-stream",
-        headers={"Access-Control-Allow-Origin": "*"}
     )
 
 
