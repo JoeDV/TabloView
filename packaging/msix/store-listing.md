@@ -21,6 +21,13 @@ TabloView is a fast desktop interface for your Tablo DVR. Browse and play your r
 Sign in with your own Tablo account. Your password goes only to Tablo's sign-in service and is never saved. TabloView runs only on your PC unless you turn on network access for other devices at home.
 
 ## What's new in this version
+1.2.9:
+• TV view redesigned, with a 6-hour Guide you can record from
+• Export a show's new recordings to MP4 automatically
+• Exports named by air date when there's no episode number
+• See which devices use TabloView, and safer network access
+• Fixed: exports started together could save over each other
+
 1.2.8:
 • New: the TabloView app for Google TV and Fire TV
 • Watch away from home with Tailscale

@@ -13,6 +13,16 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.2.9": [
+        "TV view is redesigned: a menu down the left side (press Left or Back to open it), Home rows for Continue watching, On now, Recently recorded and Recording soon, a page for each recording with Play, Watch list, Mark watched, Protect and Delete, and a Coming up list of what will record.",
+        "TV view's Live TV has a Guide of the next 6 hours: select a later show to record it. While watching live TV, Record (press OK) records what's on.",
+        "Export to MP4 automatically: turn on Export to MP4 on a show's page, and each new recording is saved as an MP4 once it finishes recording.",
+        "Exports of shows without season and episode numbers are named by the date they aired, and A to Z sorting skips A, An and The.",
+        "The Device page lists the devices using TabloView, with recent sign-ins and wrong PINs, and Copy diagnostics gives a summary to paste into the forum, without your sign-in details.",
+        "Safer network access: wrong PINs lock a device out for longer each time, your Tablo account and network access can only be changed on this PC, and the TV app asks before using the computer it finds (update it the same way you installed it).",
+        "Fixed: several exports started together could save over each other.",
+        "Fixed: a damaged settings file could lose your settings and PIN, and deleting every recording on the Tablo left them showing in the Library.",
+    ],
     "1.2.8": [
         "New: the TabloView app for Google TV and Fire TV. It puts TV view on your TV's home screen, and the remote moves from tile to tile like any other app, with no pointer to drag around. To install it, get the Downloader app on the TV and enter this PC's address with /app on the end; Help → Watching on your TV has the steps.",
         "Away from home: with Tailscale (free) on this PC and your phone or laptop, you can watch from anywhere. The Device page shows the address to use, and Help explains it.",
