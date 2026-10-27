@@ -1,4 +1,4 @@
-"""Build the TabloView TV app (Google TV, Fire TV) as dist/TabloView-TV-<version>.apk, without Android
+"""Build the TabloView TV app (Google TV, Fire TV) as dist/TabloView-TV.apk, without Android
 Studio or Gradle: aapt2, javac, d8, zipalign and apksigner from the Android SDK.
 
 Needs: a JDK 17 (winget install Microsoft.OpenJDK.17) and the Android SDK's command-line tools with
@@ -128,7 +128,9 @@ def main():
     run(tool("zipalign"), "-f", "-p", "4", unsigned, aligned)
     password = keystore(jdk / "bin" / "keytool")
     (ROOT / "dist").mkdir(exist_ok=True)
-    apk = ROOT / "dist" / f"TabloView-TV-{VERSION}.apk"
+    # One name for every version: each TabloView release attaches it, so
+    # .../releases/latest/download/TabloView-TV.apk always gets the newest
+    apk = ROOT / "dist" / "TabloView-TV.apk"
     env = {**os.environ, "TABLOVIEW_KEY_PASS": password}
     subprocess.run([str(tool("apksigner")), "sign", "--ks", str(KEYSTORE), "--ks-pass", "env:TABLOVIEW_KEY_PASS",
                     "--out", str(apk), str(aligned)], check=True, env=env)
