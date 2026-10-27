@@ -10,7 +10,18 @@ from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 import httpx
 
-from .config import APP_VERSION, UPDATE_INFO_URL, IS_STORE, STORE_LINK
+from .config import APP_VERSION, UPDATE_INFO_URL, IS_STORE, STORE_LINK, RELEASE_DOWNLOAD_URL
+
+# The only places an update can come from: TabloView's GitHub releases. version.json is a gist, and its
+# link goes straight on the "Update available" button, so a changed gist (a GitHub account taken over)
+# could otherwise send every copy to any download, or to a javascript: link.
+TRUSTED_DOWNLOADS = "https://github.com/JoeDV/TabloView/"
+
+
+def trusted_download(url) -> str:
+    """The download link from version.json if it's one of TabloView's GitHub releases, else the releases page."""
+    url = str(url or "").strip()
+    return url if url.startswith(TRUSTED_DOWNLOADS) and not any(c in url for c in "\"'<> ") else RELEASE_DOWNLOAD_URL
 
 CHECK_EVERY_SECONDS = 6 * 3600
 _cache: Dict[str, Any] = {"checked": 0.0, "result": None}
@@ -86,7 +97,7 @@ async def check_for_update(force: bool = False) -> Dict[str, Any]:
         latest: Optional[str] = str(info.get("version") or "").strip() or None
         result.update({
             "latest": latest,
-            "download_url": info.get("download_url"),
+            "download_url": trusted_download(info.get("download_url")),
             "notes": info.get("notes"),
             "update_available": bool(latest) and _version_tuple(latest) > _version_tuple(APP_VERSION),
         })

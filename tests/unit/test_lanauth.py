@@ -148,6 +148,36 @@ class LanPinTests(unittest.TestCase):
         self.assertIn("60 seconds", r.json()["detail"])
         self.assertEqual(lanauth.activity()["events"][0], {**lanauth.activity()["events"][0], "what": "locked_out", "wait": 60})
 
+    def test_requests_passed_on_through_this_pc_need_the_pin(self):
+        # Tailscale Serve or Funnel, or a reverse proxy: from 127.0.0.1, but from another device
+        lanauth.set_pin("2468")
+        pc = TestClient(app, base_url="http://127.0.0.1:7070", client=("127.0.0.1", 50000))
+        self.assertNotEqual(pc.get("/api/lan/status", headers=HDR).json()["local"], False)
+        for header in ({"X-Forwarded-For": "100.64.0.9"}, {"Tailscale-User-Login": "someone@example.com"},
+                       {"Tailscale-Funnel-Request": "?1"}, {"Forwarded": "for=203.0.113.5"}):
+            r = pc.get("/api/shows", headers={**HDR, **header})
+            self.assertEqual((r.status_code, r.json().get("code")), (401, "pin_required"), header)
+            self.assertFalse(pc.get("/api/lan/status", headers={**HDR, **header}).json()["local"])
+        # Changing the PIN: stopped at the PIN (or, signed in, as not this PC)
+        self.assertIn(pc.post("/api/lan/pin", json={"pin": "1111"}, headers={**HDR, "X-Forwarded-For": "1.2.3.4"}).status_code, (401, 403))
+
+    def test_account_and_network_access_changes_only_on_this_pc(self):
+        lanauth.set_pin("2468")
+        phone = TestClient(app, base_url="http://192.168.1.5:7070", client=("192.168.1.20", 50000))
+        self.assertEqual(phone.post("/api/lan/login", json={"pin": "2468"}, headers=HDR).status_code, 200)
+        with mock.patch("app.routes.auth.tablo_manager") as tm, mock.patch("app.routes.auth.get_sync_meta", return_value=None):
+            tm.email, tm.device, tm.devices, tm.is_authenticated, tm.auth_problem = "me@example.com", None, [], True, None
+            for path in ("/api/auth/logout", "/api/auth/select/SID1"):
+                self.assertEqual(phone.post(path, headers=HDR).status_code, 403, path)
+            self.assertEqual(phone.post("/api/auth/login", json={"email": "x@example.com", "password": "12345678"}, headers=HDR).status_code, 403)
+            tm.logout.assert_not_called()
+            tm.login.assert_not_called()
+            self.assertIsNone(phone.get("/api/auth/status", headers=HDR).json()["email"])  # the account's email: this PC only
+            pc = TestClient(app, base_url="http://127.0.0.1:7070", client=("127.0.0.1", 50000))
+            self.assertEqual(pc.get("/api/auth/status", headers=HDR).json()["email"], "me@example.com")
+        # Turning network access off (or on) from another device would lock everyone out
+        self.assertEqual(phone.post("/api/settings", json={"allow_lan": True}, headers=HDR).status_code, 403)
+
     def test_last_use_is_written_every_few_minutes_at_most(self):
         lanauth.note_seen("192.168.1.30", "VLC/3.0", now=1000)
         lanauth.note_seen("192.168.1.30", "VLC/3.0", now=1100)

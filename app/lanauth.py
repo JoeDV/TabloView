@@ -1,6 +1,7 @@
 """PIN for other devices on the home network (when "Allow other devices on my network" is on).
 
-The PC running TabloView is never asked. Another device signs in once with the PIN and is remembered
+The PC running TabloView is never asked (requests passed on through it, by Tailscale Serve or a proxy,
+are asked: see PROXY_HEADERS). Another device signs in once with the PIN and is remembered
 for REMEMBER_DAYS by a signed cookie; changing the PIN or "Sign out other devices" ends every
 remembered device (the cookie carries a generation number). The PIN is kept only as a salted scrypt
 hash. After MAX_TRIES wrong PINs from one address, that address waits LOCKOUT_SECONDS, twice as long
@@ -19,7 +20,7 @@ import json
 import re
 import secrets
 import time
-from typing import Dict, Optional, Tuple
+from typing import Dict, Mapping, Optional, Tuple
 
 from .config import DATA_DIR
 from .settings import load_settings, save_settings
@@ -42,12 +43,29 @@ _failures: Dict[str, Tuple[int, float, int]] = {}
 _seen_written: Dict[str, float] = {}
 
 
-def is_local(client_host: Optional[str]) -> bool:
-    """The request comes from this PC itself."""
+# Added by something that passes on requests from elsewhere: Tailscale Serve and Funnel (Funnel is the
+# open internet), reverse proxies. Their requests reach TabloView from this PC's own address, but come
+# from another device, so they need the PIN like any other.
+PROXY_HEADERS = ("forwarded", "x-forwarded-for", "x-forwarded-host", "x-real-ip",
+                 "tailscale-user-login", "tailscale-funnel-request")
+
+
+def is_local(client_host: Optional[str], headers: Optional[Mapping[str, str]] = None) -> bool:
+    """The request comes from this PC itself, not passed on from another device."""
+    if headers is not None and any(h in headers for h in PROXY_HEADERS):
+        return False
     try:
         return ipaddress.ip_address(client_host or "").is_loopback
     except ValueError:
         return False
+
+
+def client_address(request) -> Optional[str]:
+    return request.client.host if request.client else None
+
+
+def from_this_pc(request) -> bool:
+    return is_local(client_address(request), request.headers)
 
 
 def valid_pin(pin: str) -> bool:
@@ -117,9 +135,10 @@ def check_pin(pin: str, address: str, now: Optional[float] = None) -> Tuple[bool
     return False, 0
 
 
-def blocked(path: str, client_host: Optional[str], cookie: Optional[str]) -> Optional[str]:
+def blocked(path: str, client_host: Optional[str], cookie: Optional[str],
+            headers: Optional[Mapping[str, str]] = None) -> Optional[str]:
     """Why this request may not go through ('pin_required' / 'pin_not_set'), or None if it may."""
-    if is_local(client_host) or path in PUBLIC_PATHS:
+    if is_local(client_host, headers) or path in PUBLIC_PATHS:
         return None
     if not (path.startswith("/api/") or path.startswith("/downloads/")):
         return None

@@ -1,6 +1,7 @@
 """System status, hard drive storage metrics, library refresh, and export tracking."""
 
 import asyncio
+import collections
 import httpx
 import os
 import shutil
@@ -108,7 +109,7 @@ async def system_info(request: Request):
         "downloads_dir": str(exports_dir()),
         "default_downloads_dir": str(DOWNLOADS_DIR),
         # The page is open on the computer running TabloView (only that one may stop it)
-        "this_computer": lanauth.is_local(request.client.host if request.client else None),
+        "this_computer": lanauth.from_this_pc(request),
     }
 
 
@@ -118,7 +119,7 @@ async def stop_tabloview(request: Request):
     or from source), which have no tray icon to quit from. Only from the computer running it."""
     if IS_PACKAGED:
         raise HTTPException(status_code=400, detail="Quit TabloView from its icon in the system tray")
-    if not lanauth.is_local(request.client.host if request.client else None):
+    if not lanauth.from_this_pc(request):
         raise HTTPException(status_code=403, detail="TabloView can only be stopped on the computer running it")
     print("[System] Stopping TabloView (Stop TabloView on the Device page)")
     request_stop()
@@ -135,7 +136,7 @@ def request_stop() -> None:
 @router.get("/lan/status")
 async def lan_status(request: Request):
     """Whether this device is the PC itself, whether a PIN is set, and whether this device is signed in."""
-    local = lanauth.is_local(request.client.host if request.client else None)
+    local = lanauth.from_this_pc(request)
     return {"local": local, "pin_set": lanauth.pin_set(),
             "signed_in": local or lanauth.token_ok(request.cookies.get(lanauth.COOKIE))}
 
@@ -145,7 +146,7 @@ async def lan_login(req: PinRequest, request: Request):
     """Another device signs in with the PIN and is remembered for a while."""
     if not lanauth.pin_set():
         raise HTTPException(status_code=401, detail="Set a PIN on the PC running TabloView first (Device page).")
-    address, ua = request.client.host if request.client else "?", request.headers.get("user-agent")
+    address, ua = lanauth.client_address(request) or "?", request.headers.get("user-agent")
     ok, wait = lanauth.check_pin(req.pin, address)
     if not ok:
         lanauth.note_event(address, ua, "locked_out" if wait else "wrong_pin", wait)
@@ -159,8 +160,8 @@ async def lan_login(req: PinRequest, request: Request):
 
 
 def _only_this_pc(request: Request) -> None:
-    if not lanauth.is_local(request.client.host if request.client else None):
-        raise HTTPException(status_code=403, detail="The PIN can only be changed on the PC running TabloView.")
+    if not lanauth.from_this_pc(request):
+        raise HTTPException(status_code=403, detail="This can only be changed on the PC running TabloView.")
 
 
 @router.post("/lan/pin")
@@ -183,6 +184,51 @@ async def lan_sign_out_all(request: Request):
 
 def _wait_text(seconds: int) -> str:
     return f"{seconds} seconds" if seconds < 120 else f"{round(seconds / 60)} minutes"
+
+
+DIAGNOSTICS_LOG_LINES = 300
+
+
+@router.get("/system/diagnostics")
+async def diagnostics(request: Request):
+    """A summary for a forum post or an issue: versions, the Tablo, network access, the library, the
+    database check and the end of the log. Without sign-in tokens, the account's email or the Windows
+    user name (app/redact.py). On this PC only."""
+    _only_this_pc(request)
+    import platform
+    from ..config import LOG_DIR
+    from ..database import get_connection
+    s = load_settings()
+    dev = tablo_manager.device
+    try:
+        with get_connection() as conn:
+            db_check = conn.execute("PRAGMA quick_check").fetchone()[0]
+    except Exception as e:
+        db_check = f"couldn't check: {e}"
+    hw = await asyncio.to_thread(encoders.detect)
+    lines = [
+        f"TabloView {APP_VERSION} ({'Microsoft Store' if IS_STORE else 'installer' if IS_PACKAGED else 'start script / source'})",
+        f"System: {platform.platform()}, Python {platform.python_version()}",
+        f"FFmpeg: {await asyncio.to_thread(ffmpeg_version) or 'not found'}; graphics-chip encoders: {', '.join(hw) or 'none'}",
+        f"Tablo: {dev.name + ' at ' + dev.local_url if dev else 'not signed in'}"
+        f"{'; not responding' if tablo_manager.tablo_unreachable else ''}"
+        f"{'; sign-in problem: ' + tablo_manager.auth_problem if tablo_manager.auth_problem else ''}",
+        f"Library: {get_sync_meta('total_shows') or 0} shows, {get_sync_meta('total_episodes') or 0} recordings; "
+        f"last sync {get_sync_meta('last_sync') or 'never'}{'; ' + str(sync_service.last_error) if sync_service.last_error else ''}",
+        f"Network access: {'on' if s.get('allow_lan') else 'off'}, PIN {'set' if lanauth.pin_set() else 'not set'}",
+        f"Settings: video quality {s.get('video_quality')}, smooth motion {s.get('smooth_motion')}, "
+        f"exports {s.get('export_format')}, auto-sync every {s.get('auto_sync_minutes')} min",
+        f"Database check: {db_check}",
+    ]
+    log = LOG_DIR / "tabloview.log"
+    if log.is_file():
+        with open(log, encoding="utf-8", errors="replace") as f:
+            tail = list(collections.deque(f, maxlen=DIAGNOSTICS_LOG_LINES))
+        lines += ["", f"Last {len(tail)} lines of the log:", "".join(tail).rstrip()]
+    else:
+        lines += ["", "No log file: TabloView runs from a start script here, so its messages are in that terminal window."]
+    from .. import redact
+    return {"text": redact.scrub_paths(redact.scrub("\n".join(lines)))}
 
 
 @router.get("/lan/activity")
@@ -319,6 +365,9 @@ async def update_settings(update: SettingsUpdate, request: Request):
     """Save settings. Only a network-access change needs a restart (to rebind); in the packaged app
     the launcher does that automatically. Auto-sync changes apply within a minute."""
     changes = update.model_dump(exclude_none=True)
+    # Turning network access off from another device would lock every device out
+    if "allow_lan" in changes and changes["allow_lan"] != load_settings().get("allow_lan"):
+        _only_this_pc(request)
     needs_restart = "allow_lan" in changes and changes["allow_lan"] != load_settings().get("allow_lan")
     saved = save_settings(changes)
     if "logo_style" in changes:

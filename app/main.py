@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, Response, JSONResponse, RedirectResp
 from .config import (
     APP_NAME, APP_VERSION, BASE_DIR, RESOURCE_DIR, STATIC_DIR, TRANSCODE_DIR, DOWNLOADS_DIR, IMAGE_CACHE_DIR, HOST, PORT,
 )
-from . import commercials, dropouts, encoders, export_pace, lanauth, netcheck, streaming, whatsnew
+from . import commercials, dropouts, encoders, export_pace, lanauth, netcheck, redact, streaming, whatsnew
 from .settings import exports_dir
 from .database import get_export_jobs, fail_interrupted_exports
 from .database import init_db
@@ -30,6 +30,8 @@ from .routes import devtools
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Sign-in tokens and the account's email never reach the log (it gets pasted into forum posts)
+    redact.install()
     # Startup: initialize database tables
     print("[Startup] Initializing Tablo SQLite database...")
     init_db()
@@ -164,15 +166,15 @@ async def request_guard(request: Request, call_next):
             (request.url.path.startswith("/api/") or request.url.path.startswith("/downloads/")):
         return JSONResponse({"detail": "Requests from other websites aren't allowed"}, status_code=403)
     # Other devices on the network need the PIN (this PC never does)
-    client = request.client.host if request.client else None
+    client = lanauth.client_address(request)
     path = request.url.path
-    why = lanauth.blocked(path, client, request.cookies.get(lanauth.COOKIE))
+    why = lanauth.blocked(path, client, request.cookies.get(lanauth.COOKIE), request.headers)
     if why:
         message = ("Enter the PIN to use TabloView on this device." if why == "pin_required" else
                    "Set a PIN on the PC running TabloView (Device page) to use it from other devices.")
         return JSONResponse({"detail": message, "code": why}, status_code=401)
     # A signed-in device: noted for the Device page's list of devices using TabloView
-    if path.startswith("/api/") and path not in lanauth.PUBLIC_PATHS and not lanauth.is_local(client):
+    if path.startswith("/api/") and path not in lanauth.PUBLIC_PATHS and not lanauth.from_this_pc(request):
         lanauth.note_seen(client, request.headers.get("user-agent"))
     return await call_next(request)
 

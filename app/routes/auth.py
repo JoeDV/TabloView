@@ -3,15 +3,23 @@
 import re
 import json
 import asyncio
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, List
 
+from .. import lanauth
 from ..tablo_client import tablo_manager
 from ..sync_service import sync_service
 from ..database import get_sync_meta
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+def _only_this_pc(request: Request) -> None:
+    """Signing in to the Tablo account, choosing the Tablo and signing out happen on the PC running
+    TabloView: a device with the PIN could otherwise sign it out, or into someone else's account."""
+    if not lanauth.from_this_pc(request):
+        raise HTTPException(status_code=403, detail="Sign in to your Tablo account on the PC running TabloView.")
 
 
 class LoginRequest(BaseModel):
@@ -20,7 +28,7 @@ class LoginRequest(BaseModel):
 
 
 @router.get("/status")
-async def get_auth_status():
+async def get_auth_status(request: Request):
     last_sync = get_sync_meta("last_sync")
     total_shows = get_sync_meta("total_shows") or "0"
     total_episodes = get_sync_meta("total_episodes") or "0"
@@ -28,7 +36,7 @@ async def get_auth_status():
     dev = tablo_manager.device
     return {
         "authenticated": tablo_manager.is_authenticated,
-        "email": tablo_manager.email,
+        "email": tablo_manager.email if lanauth.from_this_pc(request) else None,  # the account's: this PC only
         "active_device": {
             "name": dev.name if dev else None,
             "sid": dev.sid if dev else None,
@@ -47,7 +55,8 @@ async def get_auth_status():
 
 
 @router.post("/login")
-async def login(req: LoginRequest):
+async def login(req: LoginRequest, request: Request):
+    _only_this_pc(request)
     try:
         # Autofill often adds a space after the email, which Tablo's sign-in rejects as a wrong email
         devices = await tablo_manager.login(req.email.strip(), req.password)
@@ -83,7 +92,8 @@ def _readable_login_error(e: Exception) -> str:
 
 
 @router.post("/select/{sid}")
-async def select_device(sid: str):
+async def select_device(sid: str, request: Request):
+    _only_this_pc(request)
     try:
         dev = tablo_manager.select_device(sid)
         asyncio.create_task(sync_service.sync_library())
@@ -96,6 +106,7 @@ async def select_device(sid: str):
 
 
 @router.post("/logout")
-async def logout():
+async def logout(request: Request):
+    _only_this_pc(request)
     tablo_manager.logout()
     return {"success": True}

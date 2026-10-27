@@ -38,6 +38,7 @@ const ICONS = {
   tv: '<rect width="20" height="15" x="2" y="7" rx="2"/><path d="m17 2-5 5-5-5"/>',
   antenna: '<path d="M12 12 6 2M12 12l6-10"/><circle cx="12" cy="13" r="1.6"/><path d="M12 15v6M8 21h8"/>',
   info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
+  copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
   alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/>',
   lock: '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
   pause: '<rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor" stroke="none"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor" stroke="none"/>',
@@ -2904,7 +2905,7 @@ PAGES.help = async (r, token) => {
     <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
   let html;
   try {
-    const res = await fetch('/static/help.html?v=11');
+    const res = await fetch('/static/help.html?v=12');
     if (!res.ok) throw new Error(res.status);
     html = await res.text();
   } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
@@ -3185,8 +3186,11 @@ PAGES.device = async (r, token) => {
 `;
   const diagnosticsPanel = `
       <div class="panel" style="grid-column:1/-1">
-        <h3>Diagnostics</h3><div class="panel-sub">Probe the Tablo's local API and the cloud guide to troubleshoot connection problems.</div>
-        <button class="btn btn-sm" data-action="run-inspector">${icon('info', 15)}Run API inspector</button>
+        <h3>Diagnostics</h3><div class="panel-sub">For a forum post or a GitHub issue when something isn't working: versions, your Tablo, settings and the end of TabloView's log, without your sign-in details, email or Windows user name. Or probe the Tablo's local API and the cloud guide.</div>
+        <div class="panel-actions">
+          ${info.this_computer ? `<button class="btn btn-sm" data-action="copy-diagnostics">${icon('copy', 15)}Copy diagnostics</button>` : ''}
+          <button class="btn btn-sm" data-action="run-inspector">${icon('info', 15)}Run API inspector</button>
+        </div>
         <div id="inspectorOut"></div>
       </div>
 `;
@@ -3391,6 +3395,20 @@ async function waitForServer(timeoutMs = 25000) {
   }
   toast('TabloView is taking a while to restart. Try reloading the page.', 'error');
   return false;
+}
+
+// The summary goes on the clipboard and is shown too, so it can be read before it's pasted anywhere
+async function copyDiagnostics() {
+  const out = $('#inspectorOut');
+  out.innerHTML = '<div class="loading-line"><span class="spinner"></span>Gathering…</div>';
+  try {
+    const { text } = await api('/api/system/diagnostics');
+    out.innerHTML = `<pre class="code-block" style="max-height:360px;overflow:auto">${esc(text)}</pre>`;
+    try { await navigator.clipboard.writeText(text); toast('Copied. Paste it into your forum post or issue.', 'success'); }
+    catch { toast('Select the text below and copy it', 'info'); }
+  } catch (err) {
+    out.innerHTML = `<pre class="code-block">Couldn't gather it: ${esc(err.message)}</pre>`;
+  }
 }
 
 async function runInspector() {
@@ -5285,6 +5303,7 @@ const ACTIONS = {
   'upnext-cancel': () => player.hideUpNext(),
 
   'run-inspector': () => runInspector(),
+  'copy-diagnostics': () => copyDiagnostics(),
   'logout': async () => {
     if (!await confirmDialog({ title: 'Sign out of Tablo?', text: 'TabloView will stop syncing until you sign in again.', confirm: 'Sign out', danger: true })) return;
     await api('/api/auth/logout', { method: 'POST' }).catch(() => {});

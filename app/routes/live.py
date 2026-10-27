@@ -39,7 +39,7 @@ async def _cloud_grid_day(day_str: str) -> Optional[Dict[str, Any]]:
     headers = {"Authorization": f"Bearer {dev.account_token}", "Lighthouse": dev.lighthouse_token,
                "User-Agent": tc._CLOUD_USER_AGENT}
     try:
-        r = await asyncio.to_thread(requests.get, url, headers=headers, timeout=15)
+        r = await tablo_manager._http.get(url, headers=headers, timeout=15)
         if r.status_code in (401, 403):
             tablo_manager.note_auth("cloud", ok=False)
         if r.status_code == 200:

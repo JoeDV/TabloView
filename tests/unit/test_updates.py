@@ -56,13 +56,25 @@ class UpdateCheckTests(unittest.TestCase):
         return asyncio.run(updates.check_for_update(force=True))
 
     def test_newer_version_is_offered(self):
-        srv = VersionServer({"version": "1.2.0", "download_url": "https://example.com/dl", "notes": "n"})
+        dl = "https://github.com/JoeDV/TabloView/releases/tag/v1.2.0"
+        srv = VersionServer({"version": "1.2.0", "download_url": dl, "notes": "n"})
         try:
             r = self.check(srv.url)
         finally:
             srv.close()
         self.assertTrue(r["update_available"])
-        self.assertEqual((r["latest"], r["download_url"]), ("1.2.0", "https://example.com/dl"))
+        self.assertEqual((r["latest"], r["download_url"]), ("1.2.0", dl))
+
+    def test_only_tabloviews_github_releases_are_offered(self):
+        # A changed version.json (its GitHub account taken over) can't send copies to another download
+        for url in ("https://example.com/TabloView-Setup.exe", "javascript:alert(1)", "https://github.com/JoeDV/TabloView.evil.example/x",
+                    'https://github.com/JoeDV/TabloView/" onclick="x', "", None):
+            self.assertEqual(updates.trusted_download(url), updates.RELEASE_DOWNLOAD_URL, url)
+        srv = VersionServer({"version": "1.2.0", "download_url": "https://example.com/dl"})
+        try:
+            self.assertEqual(self.check(srv.url)["download_url"], updates.RELEASE_DOWNLOAD_URL)
+        finally:
+            srv.close()
 
     def test_mac_and_linux_copies_are_told_too(self):
         # They used to get no notice (the download was only the Windows installer); the GitHub

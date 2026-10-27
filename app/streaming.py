@@ -12,8 +12,8 @@ from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-import requests
 
+from . import redact
 from .database import get_connection, get_sync_meta, set_sync_meta
 
 DAYS = 8  # today and the next 7; the cloud has little beyond that
@@ -120,11 +120,14 @@ def rows_from_grid(grid: List[Dict[str, Any]]) -> List[tuple]:
     return rows
 
 
-def _fetch_day(device, day: str) -> List[Dict[str, Any]]:
+async def _fetch_day(device, day: str) -> List[Dict[str, Any]]:
+    from .tablo_client import tablo_manager
     url = f"{CLOUD_HOST}/api/v2/account/{device.lighthouse_token}/guide/grid/?day={day}&limit=200"
-    r = requests.get(url, headers={"Authorization": f"Bearer {device.account_token}",
-                                   "Lighthouse": device.lighthouse_token, "User-Agent": USER_AGENT}, timeout=20)
-    r.raise_for_status()
+    r = await tablo_manager._http.get(url, headers={"Authorization": f"Bearer {device.account_token}",
+                                                    "Lighthouse": device.lighthouse_token, "User-Agent": USER_AGENT}, timeout=20)
+    # Not raise_for_status(): its message repeats the address, which carries the account's token
+    if r.status_code != 200:
+        raise RuntimeError(f"Tablo's guide service answered {r.status_code} for {day}")
     return r.json().get("grid") or []
 
 
@@ -151,7 +154,7 @@ async def refresh() -> int:
         today = date.today()
         for n in range(DAYS):
             day = (today + timedelta(days=n)).isoformat()
-            grid = await asyncio.to_thread(_fetch_day, tablo_manager.device, day)
+            grid = await _fetch_day(tablo_manager.device, day)
             rows += rows_from_grid(grid)
             await asyncio.sleep(1)
         await asyncio.to_thread(save, rows)
@@ -160,7 +163,7 @@ async def refresh() -> int:
         print(f"[Streaming] Saved {len(rows)} streaming airings for the next {DAYS} days")
         return len(rows)
     except Exception as e:
-        status["error"] = str(e)
+        status["error"] = redact.scrub(str(e))
         print(f"[Streaming] Couldn't load the streaming guide: {e}")
         return 0
     finally:

@@ -14,7 +14,7 @@ from tablo_api.models import TabloDevice
 from app.main import app
 from app.tablo_client import tablo_manager
 
-LIGHTHOUSE = "e154f51c83b3d4e484cf627c11b2c3172357146abc14ae0da8b56858e65bcac4"
+LIGHTHOUSE = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"  # made up
 ACCOUNT = "acct-token-0123456789abcdef"
 DEVICE = TabloDevice(sid="SID_TEST", name="Test", local_url="http://192.168.1.50:8887",
                      lighthouse_token=LIGHTHOUSE, account_token=ACCOUNT,
@@ -39,7 +39,7 @@ class InspectorPrivacyTests(unittest.TestCase):
         self.assertNotIn(ACCOUNT, out)
         self.assertNotIn(DEVICE.client_id, out)
         cloud = [p for p in json.loads(out)["probes"] if p["target"] == "cloud"][0]
-        self.assertEqual(cloud["path"], "/api/v2/account/e154…cac4/guide/channels/")
+        self.assertEqual(cloud["path"], "/api/v2/account/0123…cdef/guide/channels/")
         self.assertTrue(cloud["success"])
 
     def test_says_which_tabloview_sent_it(self):
@@ -54,7 +54,7 @@ class InspectorPrivacyTests(unittest.TestCase):
         out = self.run_inspector(mock.AsyncMock(side_effect=httpx.ConnectError(f"Couldn't reach {url} with {ACCOUNT}")))
         self.assertNotIn(LIGHTHOUSE, out)
         self.assertNotIn(ACCOUNT, out)
-        self.assertIn("e154…cac4", out)
+        self.assertIn("0123…cdef", out)
 
 
 if __name__ == "__main__":
