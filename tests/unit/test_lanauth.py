@@ -79,7 +79,9 @@ class LanPinTests(unittest.TestCase):
         self.assertEqual((r.status_code, r.json()["code"]), (401, "pin_required"))
         r = client.post("/api/lan/login", json={"pin": "2468"}, headers=HDR)
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(client.get("/api/lan/status", headers=HDR).json()["signed_in"], True)
+        status = client.get("/api/lan/status", headers=HDR).json()
+        self.assertEqual(status["signed_in"], True)
+        self.assertTrue(status["pc"])  # the computer's name, so the TV app can ask "is this yours?"
         self.assertEqual(client.post("/api/lan/pin", json={"pin": "1111"}, headers=HDR).status_code, 403)  # only on the PC
 
     def test_lockouts_double_each_time_up_to_an_hour(self):

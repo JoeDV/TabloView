@@ -30,7 +30,8 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * TabloView on a TV: the TV view of TabloView running on the PC (http://<PC>:7070/tv), full screen.
@@ -94,14 +95,40 @@ public class MainActivity extends Activity {
                 .setCancelable(false)
                 .show();
         new Thread(() -> {
-            String found = scan();
+            List<String[]> found = scan();
             runOnUiThread(() -> {
                 if (dialog == null || !dialog.isShowing()) return;  // typing the address instead
                 dismiss();
-                if (found != null) use(found);
-                else notFound();
+                if (found.isEmpty()) notFound();
+                else confirm(found);
             });
         }).start();
+    }
+
+    /** Ask before using what was found: anything on the network could answer like TabloView, and
+     *  the PIN is typed into whatever it is. One computer: use it? Several: pick one. */
+    private void confirm(List<String[]> found) {
+        AlertDialog.Builder b = new AlertDialog.Builder(this)
+                .setTitle(found.size() == 1 ? "Found TabloView" : "Found TabloView on " + found.size() + " computers")
+                .setNegativeButton("Type the address", (d, w) -> ask())
+                .setCancelable(false);
+        if (found.size() == 1) {
+            String[] f = found.get(0);
+            b.setMessage(describe(f) + "\n\nIs that the computer running your TabloView?")
+                    .setPositiveButton("Use it", (d, w) -> use(f[0]))
+                    .setNeutralButton("Look again", (d, w) -> find());
+        } else {
+            String[] items = new String[found.size()];
+            for (int i = 0; i < items.length; i++) items[i] = describe(found.get(i));
+            b.setItems(items, (d, i) -> use(found.get(i)[0]));
+        }
+        dialog = b.show();
+    }
+
+    /** "On HPLAPTOP at 192.168.1.160:7070" (no name from TabloView before 1.2.9). */
+    private static String describe(String[] f) {
+        String where = f[0].replaceFirst("^http://", "");
+        return f[1].isEmpty() ? "At " + where : "On " + f[1] + " at " + where;
     }
 
     private void notFound() {
@@ -159,8 +186,9 @@ public class MainActivity extends Activity {
         return a;
     }
 
-    /** The first address on this TV's subnet(s) where TabloView answers its public status check. */
-    private static String scan() {
+    /** Every address on this TV's subnet(s) where TabloView answers its public status check, with the
+     *  computer's name: {address, name}, in address order. */
+    private static List<String[]> scan() {
         List<String> hosts = new ArrayList<>();
         try {
             for (NetworkInterface ni : Collections.list(NetworkInterface.getNetworkInterfaces())) {
@@ -173,13 +201,15 @@ public class MainActivity extends Activity {
                 }
             }
         } catch (Exception ignored) {
-            return null;
+            return new ArrayList<>();
         }
-        final AtomicReference<String> found = new AtomicReference<>();
+        final String[][] found = new String[hosts.size()][];
         ExecutorService pool = Executors.newFixedThreadPool(48);
-        for (final String h : hosts) {
+        for (int i = 0; i < hosts.size(); i++) {
+            final int n = i;
             pool.execute(() -> {
-                if (found.get() == null && isTabloView(h)) found.compareAndSet(null, "http://" + h + ":" + PORT);
+                String name = tabloViewName(hosts.get(n));
+                if (name != null) found[n] = new String[] {"http://" + hosts.get(n) + ":" + PORT, name};
             });
         }
         pool.shutdown();
@@ -188,23 +218,28 @@ public class MainActivity extends Activity {
         } catch (InterruptedException ignored) {
         }
         pool.shutdownNow();
-        return found.get();
+        List<String[]> out = new ArrayList<>();
+        for (String[] f : found) if (f != null) out.add(f);
+        return out;
     }
 
-    private static boolean isTabloView(String host) {
+    /** The computer's name if TabloView answers there ("" from TabloView before 1.2.9), else null. */
+    private static String tabloViewName(String host) {
         HttpURLConnection c = null;
         try {
             c = (HttpURLConnection) new URL("http://" + host + ":" + PORT + "/api/lan/status").openConnection();
             c.setConnectTimeout(700);
             c.setReadTimeout(1500);
-            if (c.getResponseCode() != 200) return false;
+            if (c.getResponseCode() != 200) return null;
             byte[] buf = new byte[512];
             InputStream in = c.getInputStream();
             int n = in.read(buf);
             String body = n > 0 ? new String(buf, 0, n, "UTF-8") : "";
-            return body.contains("\"pin_set\"") && body.contains("\"signed_in\"");
+            if (!body.contains("\"pin_set\"") || !body.contains("\"signed_in\"")) return null;
+            Matcher m = Pattern.compile("\"pc\"\\s*:\\s*\"([^\"]{0,64})\"").matcher(body);
+            return m.find() ? m.group(1) : "";
         } catch (Exception e) {
-            return false;
+            return null;
         } finally {
             if (c != null) c.disconnect();
         }

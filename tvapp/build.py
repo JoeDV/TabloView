@@ -14,13 +14,14 @@ import glob
 import os
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import zipfile
 from pathlib import Path
 
-VERSION = "1.0"
-VERSION_CODE = 1
+VERSION = "1.1"
+VERSION_CODE = 2
 MIN_SDK, TARGET_SDK = 21, 34
 PACKAGE = "io.github.joedv.tabloview"
 
@@ -98,7 +99,12 @@ def main():
     os.environ["PATH"] = str(jdk / "bin") + os.pathsep + os.environ.get("PATH", "")
     if not ANDROID_JAR.exists():
         sys.exit(f"{ANDROID_JAR} not found: install platforms;android-{TARGET_SDK} with sdkmanager")
-    shutil.rmtree(OUT, ignore_errors=True)
+    # Files on this machine can pick up the read-only flag, which stops rmtree (as build.ps1 notes)
+    def writable_then_retry(func, path, _exc):
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    if OUT.exists():
+        shutil.rmtree(OUT, onexc=writable_then_retry)
     (OUT / "gen").mkdir(parents=True)
     res = OUT / "res"
     shutil.copytree(HERE / "res", res)
