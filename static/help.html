@@ -136,7 +136,8 @@
   <p><b>Turn on network access</b> (on the PC):</p>
   <ol>
     <li>Go to <a href="#/device?tab=desktop">Device → Desktop &amp; network</a> and turn on network access. If Windows Firewall asks, allow TabloView on <b>Private</b> networks.</li>
-    <li>Set a <b>PIN</b>. Other devices enter it once and are remembered; the PC itself never asks.</li>
+    <li>Set a <b>PIN</b>. Other devices enter it once and are remembered for 90 days; the PC itself never asks. After 5 wrong tries a device has to wait a minute, twice as long each time it happens again.</li>
+    <li>Under the PIN, <b>Devices using TabloView</b> lists each device and when it was last used, and <b>Show sign-ins</b> lists sign-ins and wrong PINs. If you don't recognize something, change the PIN: every device has to sign in again.</li>
     <li>The same page shows the address for other devices, like <code>http://192.168.1.50:7070</code>.</li>
   </ol>
   <p><b>Away from home</b>, TabloView itself isn't on the internet, which keeps it safe, but a VPN to your home network gets you there. <a href="https://tailscale.com" target="_blank" rel="noopener">Tailscale</a> is free and the simplest: install it on this PC and on your phone or laptop, signed in to the same account, and open <code>http://</code> with the PC's Tailscale address and <code>:7070</code>, like <code>http://100.101.102.103:7070</code> or <code>http://mypc.tail1234.ts.net:7070</code>. A VPN built into your router works too, with the usual home address. How smooth it is depends on your home internet's upload speed.</p>

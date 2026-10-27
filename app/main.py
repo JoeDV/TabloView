@@ -164,12 +164,16 @@ async def request_guard(request: Request, call_next):
             (request.url.path.startswith("/api/") or request.url.path.startswith("/downloads/")):
         return JSONResponse({"detail": "Requests from other websites aren't allowed"}, status_code=403)
     # Other devices on the network need the PIN (this PC never does)
-    why = lanauth.blocked(request.url.path, request.client.host if request.client else None,
-                          request.cookies.get(lanauth.COOKIE))
+    client = request.client.host if request.client else None
+    path = request.url.path
+    why = lanauth.blocked(path, client, request.cookies.get(lanauth.COOKIE))
     if why:
         message = ("Enter the PIN to use TabloView on this device." if why == "pin_required" else
                    "Set a PIN on the PC running TabloView (Device page) to use it from other devices.")
         return JSONResponse({"detail": message, "code": why}, status_code=401)
+    # A signed-in device: noted for the Device page's list of devices using TabloView
+    if path.startswith("/api/") and path not in lanauth.PUBLIC_PATHS and not lanauth.is_local(client):
+        lanauth.note_seen(client, request.headers.get("user-agent"))
     return await call_next(request)
 
 

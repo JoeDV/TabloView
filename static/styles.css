@@ -986,3 +986,10 @@ code { font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace; font-si
 .help th { color: var(--text-2); font-weight: 600; background: var(--surface); }
 .help td:first-child { white-space: nowrap; font-weight: 550; }
 .help kbd, .page-sub kbd { font: inherit; font-weight: 600; font-size: 12px; padding: 1px 6px; border-radius: 5px; background: var(--surface-3); border: 1px solid var(--border); }
+
+/* Device → Network access: devices that used TabloView, and sign-ins */
+.lan-list { margin-top: 6px; font-size: 13px; border: 1px solid var(--border); border-radius: 8px; max-height: 260px; overflow-y: auto; }
+.lan-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr); gap: 12px; padding: 7px 12px; border-top: 1px solid var(--border); }
+.lan-row:first-child { border-top: none; }
+.lan-row:has(> span:nth-child(4)) { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.2fr) minmax(0, 0.9fr) minmax(0, 1.3fr); }
+.lan-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -145,10 +145,13 @@ async def lan_login(req: PinRequest, request: Request):
     """Another device signs in with the PIN and is remembered for a while."""
     if not lanauth.pin_set():
         raise HTTPException(status_code=401, detail="Set a PIN on the PC running TabloView first (Device page).")
-    ok, wait = lanauth.check_pin(req.pin, request.client.host if request.client else "?")
+    address, ua = request.client.host if request.client else "?", request.headers.get("user-agent")
+    ok, wait = lanauth.check_pin(req.pin, address)
     if not ok:
+        lanauth.note_event(address, ua, "locked_out" if wait else "wrong_pin", wait)
         raise HTTPException(status_code=429 if wait else 401,
-                            detail=f"Too many wrong PINs. Try again in {wait} seconds." if wait else "That PIN isn't right.")
+                            detail=f"Too many wrong PINs. Try again in {_wait_text(wait)}." if wait else "That PIN isn't right.")
+    lanauth.note_event(address, ua, "signed_in")
     resp = JSONResponse({"success": True})
     resp.set_cookie(lanauth.COOKIE, lanauth.make_token(), max_age=lanauth.REMEMBER_DAYS * 86400,
                     httponly=True, samesite="strict")
@@ -175,6 +178,24 @@ async def lan_sign_out_all(request: Request):
     """Every other device has to enter the PIN again."""
     _only_this_pc(request)
     lanauth.sign_out_all()
+    return {"success": True}
+
+
+def _wait_text(seconds: int) -> str:
+    return f"{seconds} seconds" if seconds < 120 else f"{round(seconds / 60)} minutes"
+
+
+@router.get("/lan/activity")
+async def lan_activity(request: Request):
+    """Other devices that used TabloView, and sign-ins and wrong PINs (on this PC only)."""
+    _only_this_pc(request)
+    return lanauth.activity()
+
+
+@router.post("/lan/activity/clear")
+async def lan_activity_clear(request: Request):
+    _only_this_pc(request)
+    lanauth.clear_activity()
     return {"success": True}
 
 

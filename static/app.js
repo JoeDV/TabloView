@@ -2904,7 +2904,7 @@ PAGES.help = async (r, token) => {
     <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
   let html;
   try {
-    const res = await fetch('/static/help.html?v=10');
+    const res = await fetch('/static/help.html?v=11');
     if (!res.ok) throw new Error(res.status);
     html = await res.text();
   } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
@@ -3005,7 +3005,8 @@ PAGES.device = async (r, token) => {
           <button class="btn btn-sm" data-action="set-pin">${info.lan_pin_set ? 'Change PIN' : 'Set PIN'}</button>
           ${info.lan_pin_set ? '<button class="btn btn-sm btn-ghost" data-action="pin-signout">Sign out other devices</button>' : ''}
         </div>
-        ${!info.packaged && !!settings.allow_lan !== !!info.listening_on_network ? `<p style="margin-top:10px;color:var(--warn);font-size:13px;font-weight:600">To apply this, stop TabloView (above) and run its start script again.</p>` : ''}`}
+        ${!info.packaged && !!settings.allow_lan !== !!info.listening_on_network ? `<p style="margin-top:10px;color:var(--warn);font-size:13px;font-weight:600">To apply this, stop TabloView (above) and run its start script again.</p>` : ''}
+        <div id="lanActivity"></div>`}
       ${info.listening_on_network && info.network_url ? `<p style="margin-top:12px">On other devices, open <b>${esc(info.network_url)}</b></p>
         <p class="dim" style="margin-top:6px;font-size:12.5px">On Google TV or Fire TV, get the <b>TabloView app</b>: in the Downloader app, enter <b>${esc(info.network_url.replace(/^https?:\/\//, ''))}/app</b> (<a href="#/help?topic=help-tv">how</a>). On other TVs, open <b>${esc(info.network_url)}/tv</b> in the TV's browser.</p>
         <div id="lanAccess"></div>` : ''}
@@ -3212,7 +3213,7 @@ PAGES.device = async (r, token) => {
 ${current[2]}
     </div>
   </div>`);
-  if (current[0] === 'desktop') { loadNetwork(token); if (info.listening_on_network) loadLanAccess(token, info); }
+  if (current[0] === 'desktop') { loadNetwork(token); loadLanActivity(token); if (info.listening_on_network) loadLanAccess(token, info); }
 };
 
 // Device → Desktop & network: how the Tablo and this PC are connected, and a test of the link
@@ -3267,6 +3268,30 @@ async function loadLanAccess(token, info) {
       <p class="dim" style="margin-top:4px;font-size:12.5px">On a phone or laptop signed in to the same Tailscale account.${ts.name && ts.ip ? ` If the name doesn't open, use <b>http://${esc(ts.ip)}:${esc(port)}</b>.` : ''}</p>`);
   }
   box.innerHTML = parts.join('');
+}
+
+// Other devices that used TabloView, and sign-ins and wrong PINs, so anything unexpected stands out
+const LAN_EVENTS = { signed_in: 'Signed in', wrong_pin: 'Wrong PIN', locked_out: 'Locked out' };
+async function loadLanActivity(token) {
+  let a;
+  try { a = await api('/api/lan/activity'); } catch { return; }
+  const box = $('#lanActivity');
+  if (stale(token) || !box) return;
+  if (!a.devices.length && !a.events.length) { box.innerHTML = ''; return; }
+  const when = t => `${fmt.ago(new Date(t * 1000).toISOString())}`;
+  const full = t => new Date(t * 1000).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const showEvents = state.lanEventsOpen;
+  box.innerHTML = `
+    ${a.wrong_pins_today >= 3 ? `<p style="margin-top:12px;color:var(--warn);font-size:13px;font-weight:600">${a.wrong_pins_today} wrong PINs in the last day. If that wasn't you or someone you know, change the PIN.</p>` : ''}
+    ${a.devices.length ? `<div style="margin-top:14px;font-weight:600">Devices using TabloView</div>
+      <div class="lan-list">${a.devices.slice(0, 10).map(d => `
+        <div class="lan-row"><span>${esc(d.device)}</span><span class="dim">${esc(d.address)}</span><span class="dim" title="${esc(full(d.last))}">${esc(when(d.last))}</span></div>`).join('')}</div>` : ''}
+    ${a.events.length ? `<div class="panel-actions" style="margin-top:10px">
+        <button class="btn btn-sm btn-ghost" data-action="lan-events">${showEvents ? 'Hide' : 'Show'} sign-ins (${a.events.length})</button>
+        <button class="btn btn-sm btn-ghost" data-action="lan-activity-clear">Clear</button></div>
+      ${showEvents ? `<div class="lan-list">${a.events.map(e => `
+        <div class="lan-row"><span${e.what === 'signed_in' ? '' : ' style="color:var(--warn)"'}>${esc(LAN_EVENTS[e.what] || e.what)}${e.wait ? ` (${e.wait >= 120 ? `${Math.round(e.wait / 60)} min` : `${e.wait} s`})` : ''}</span><span>${esc(e.device)}</span><span class="dim">${esc(e.address)}</span><span class="dim">${esc(full(e.time))}</span></div>`).join('')}</div>` : ''}` : ''}
+    <p class="dim" style="margin-top:8px;font-size:12.5px">Don't recognize a device? Change the PIN; that signs every device out.</p>`;
 }
 
 async function testNetwork(btn) {
@@ -5227,6 +5252,11 @@ const ACTIONS = {
       <a class="btn btn-primary" href="/api/guide/upcoming.ics" download onclick="setTimeout(() => closeModal(true), 300)">${icon('download', 15)}Download calendar file</a>
     </div>`),
   'set-pin': async () => { if (await setPinDialog()) route(); },
+  'lan-events': () => { state.lanEventsOpen = !state.lanEventsOpen; loadLanActivity(routeToken); },
+  'lan-activity-clear': async () => {
+    if (!await confirmDialog({ title: 'Clear the sign-in record?', text: 'The list of devices and sign-ins starts again. Nobody is signed out.', confirm: 'Clear' })) return;
+    try { await api('/api/lan/activity/clear', { method: 'POST' }); loadLanActivity(routeToken); } catch (err) { toast(err.message, 'error'); }
+  },
   'pin-signout': async () => {
     if (!await confirmDialog({ title: 'Sign out other devices?', text: 'Every phone, tablet and other computer will have to enter the PIN again.', confirm: 'Sign out' })) return;
     try { await api('/api/lan/signout', { method: 'POST' }); toast('Other devices will have to enter the PIN again', 'success'); } catch (err) { toast(err.message, 'error'); }
