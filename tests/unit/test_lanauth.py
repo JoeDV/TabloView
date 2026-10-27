@@ -15,7 +15,7 @@ class LanPinTests(unittest.TestCase):
     """Other devices on the network need the PIN; this PC never does."""
 
     def setUp(self):
-        self.settings = {}
+        self.settings = {"allow_lan": True}  # network access on (test_network_access_off covers off)
         patches = [
             mock.patch.object(lanauth, "load_settings", side_effect=lambda: dict(self.settings)),
             mock.patch.object(lanauth, "save_settings", side_effect=lambda u: self.settings.update(u)),
@@ -149,6 +149,25 @@ class LanPinTests(unittest.TestCase):
         self.assertEqual(r.status_code, 429)
         self.assertIn("60 seconds", r.json()["detail"])
         self.assertEqual(lanauth.activity()["events"][0], {**lanauth.activity()["events"][0], "what": "locked_out", "wait": 60})
+
+    def test_network_access_off_lets_no_other_device_in(self):
+        # However TabloView was started (by hand on 0.0.0.0, it answered other devices with the switch off)
+        lanauth.set_pin("2468")
+        self.settings["allow_lan"] = False
+        phone = TestClient(app, base_url="http://192.168.1.5:7070", client=("192.168.1.20", 50000))
+        token = lanauth.make_token()  # even a device signed in before
+        for path in ("/api/shows", "/api/lan/status", "/downloads/x.mp4"):
+            r = phone.get(path, headers=HDR, cookies={lanauth.COOKIE: token})
+            self.assertEqual((r.status_code, r.json()["code"]), (403, "lan_off"), path)
+        for path in ("/tv", "/", "/app"):
+            r = phone.get(path, follow_redirects=False)
+            self.assertEqual(r.status_code, 403, path)
+            self.assertIn("Network access is off", r.text)
+        self.assertEqual(phone.post("/api/lan/login", json={"pin": "2468"}, headers=HDR).status_code, 403)
+        # This PC is never affected
+        pc = TestClient(app, base_url="http://127.0.0.1:7070", client=("127.0.0.1", 50000))
+        self.assertEqual(pc.get("/api/lan/status", headers=HDR).status_code, 200)
+        self.assertEqual(pc.get("/tv").status_code, 200)
 
     def test_this_pcs_own_network_address_is_this_pc(self):
         # A browser on the PC opening http://192.168.1.160:7070 was asked for the PIN like another device

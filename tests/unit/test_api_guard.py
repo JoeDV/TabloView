@@ -60,6 +60,7 @@ class ApiGuardTests(unittest.TestCase):
         # Another device (a TV, not signed in) gets the TV app at /app; without a bundled copy, GitHub's
         import app.main as m
         tv = TestClient(app, base_url="http://192.168.1.160:7070", client=("192.168.1.92", 50000))
+        self.enterContext(mock.patch.object(m.lanauth, "network_access_on", return_value=True))
         with mock.patch.object(m, "RESOURCE_DIR", m.Path("nowhere")), mock.patch.object(m, "BASE_DIR", m.Path("nowhere")):
             r = tv.get("/app", follow_redirects=False)
         self.assertEqual(r.status_code, 307)

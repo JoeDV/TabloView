@@ -10,7 +10,7 @@ import httpx
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, JSONResponse, RedirectResponse
 
 from .config import (
     APP_NAME, APP_VERSION, BASE_DIR, RESOURCE_DIR, STATIC_DIR, TRANSCODE_DIR, DOWNLOADS_DIR, IMAGE_CACHE_DIR, HOST, PORT,
@@ -172,6 +172,14 @@ async def request_guard(request: Request, call_next):
     client = lanauth.client_address(request)
     path = request.url.path
     why = lanauth.blocked(path, client, request.cookies.get(lanauth.COOKIE), request.headers)
+    if why == "lan_off":
+        message = ("Network access is off on the PC running TabloView. To use it from this device, turn on "
+                   "Allow other devices on my network there, under Device → Desktop & network.")
+        if path.startswith("/api/") or path.startswith("/downloads/"):
+            return JSONResponse({"detail": message, "code": why}, status_code=403)
+        return HTMLResponse(f"<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+                            f"<title>TabloView</title><body style='font:18px system-ui;margin:2em;background:#0b0d12;color:#f2f4f8'>"
+                            f"<h2>TabloView</h2><p>{message}</p>", status_code=403)
     if why:
         message = ("Enter the PIN to use TabloView on this device." if why == "pin_required" else
                    "Set a PIN on the PC running TabloView (Device page) to use it from other devices.")

@@ -10,7 +10,8 @@ each time it happens again (up to LOCKOUT_MAX_SECONDS), until the right PIN or a
 Sign-ins, wrong PINs and lockouts are kept in ACTIVITY_FILE, with the devices that used TabloView and
 when, for the Device page (on this PC only).
 
-Pages, scripts and styles stay public (they hold no data); /api/* and /downloads/* need the PIN.
+Pages, scripts and styles stay public (they hold no data); /api/* and /downloads/* need the PIN. With
+network access off, other devices get nothing at all, however TabloView was started.
 """
 
 import hashlib
@@ -163,10 +164,21 @@ def _check_pin(pin: str, address: str, now: float) -> Tuple[bool, int]:
     return False, 0
 
 
+def network_access_on() -> bool:
+    """Device → Desktop & network → "Allow other devices on my network"."""
+    return bool(load_settings().get("allow_lan"))
+
+
 def blocked(path: str, client_host: Optional[str], cookie: Optional[str],
             headers: Optional[Mapping[str, str]] = None) -> Optional[str]:
-    """Why this request may not go through ('pin_required' / 'pin_not_set'), or None if it may."""
-    if is_local(client_host, headers) or path in PUBLIC_PATHS:
+    """Why this request may not go through ('lan_off' / 'pin_required' / 'pin_not_set'), or None if it may."""
+    if is_local(client_host, headers):
+        return None
+    # The switch is checked here too, not only when choosing where to listen: started some other way
+    # (by hand, or a proxy on this PC) TabloView answered other devices with the switch off
+    if not network_access_on():
+        return "lan_off"
+    if path in PUBLIC_PATHS:
         return None
     if not (path.startswith("/api/") or path.startswith("/downloads/")):
         return None
