@@ -20,7 +20,8 @@ const BROWSERS = [
 // Requests that are allowed through for real. Everything else that isn't a GET is faked, so tests
 // can't skip recordings, change rules, delete, save progress or tune live TV on the real Tablo.
 // (Starting/stopping playback of a recording is read-only on the Tablo.)
-const ALLOWED_WRITES = [/^\/api\/episodes\/[^/]+\/watch/, /^\/api\/live\/stop$/,
+// ($ matters: /watched, marking a recording watched on the Tablo, must be faked)
+const ALLOWED_WRITES = [/^\/api\/episodes\/[^/]+\/watch$/, /^\/api\/live\/stop$/,
   // Live TV tuning takes a tuner, so it's only real when a test run asks for it
   ...(process.env.TABLOVIEW_ALLOW_TUNE ? [/^\/api\/live\/tune$/] : [])];
 
