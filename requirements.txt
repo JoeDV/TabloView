@@ -1,10 +1,14 @@
-fastapi>=0.115.0
-uvicorn[standard]>=0.30.0
-httpx>=0.27.0
-pydantic>=2.8.0
-tablo-api>=0.1.2
-python-dotenv>=1.0.1
-requests>=2.31.0
-aiofiles>=24.1.0
+# What TabloView needs to run (the Mac and Linux start scripts install these). Each is held below its next
+# major version, so a first install can't pick up one with breaking changes. The Windows builds use the
+# exact versions in packaging/requirements-build.txt.
+fastapi>=0.115.0,<1
+uvicorn[standard]>=0.30.0,<1
+httpx>=0.27.0,<1
+pydantic>=2.8.0,<3
+# Signs in to the Tablo account and talks to the Tablo: a small third-party package that handles the
+# account's sign-in, so it's held at the version that was checked
+tablo-api==0.1.2
+python-dotenv>=1.0.1,<2
+requests>=2.31.0,<3
 # HTTPS trust store (via httpx/requests): 2026.10.19 drops emSign CAs whose intermediate keys leaked
 certifi>=2026.10.19
