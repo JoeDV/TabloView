@@ -675,6 +675,9 @@ function skeletonGrid(n = 10) {
   return `<div class="card-grid">${Array.from({ length: n }, () => '<div><div class="skeleton" style="aspect-ratio:16/9"></div><div class="skeleton" style="height:14px;width:70%;margin-top:12px"></div></div>').join('')}</div>`;
 }
 
+// Titles A to Z as a library sorts them: "The Addams Family" with the A's, "A Time to Kill" with the T's
+const sortTitle = t => String(t || '').replace(/^(the|an|a)\s+/i, '');
+
 function emptyState(title, text, actionHtml = '') {
   return `<div class="empty"><h3>${esc(title)}</h3><p>${esc(text)}</p>${actionHtml}</div>`;
 }
@@ -971,7 +974,7 @@ function renderLibraryGrid() {
   if (L.filter === 'unwatched') items = items.filter(s => s.unwatched_count > 0);
   const by = {
     recent: (a, b) => (b.latest_recording_date || '').localeCompare(a.latest_recording_date || ''),
-    title: (a, b) => a.title.localeCompare(b.title),
+    title: (a, b) => sortTitle(a.title).localeCompare(sortTitle(b.title)),
     episodes: (a, b) => b.episode_count - a.episode_count,
     unwatched: (a, b) => b.unwatched_count - a.unwatched_count,
   }[L.sort];

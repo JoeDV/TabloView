@@ -625,40 +625,57 @@ class TranscodeManager:
         cleaned = re.sub(r'[\\/*?:"<>|]', "", name).strip()
         return cleaned or "Tablo_Recording"
 
+    def export_name(self, episode: Dict[str, Any]) -> Tuple[str, str]:
+        """(file name, label for Downloads): "Show - S01E02 - Title.mp4". Without season and episode
+        numbers the air date tells recordings apart, "Show - 2026-10-27.mp4" (a forum report: every
+        export of a show the guide doesn't number, like Bugs Bunny and Friends on MeTV Toons, was
+        "Bugs Bunny and Friends.mp4", each one replacing the last)."""
+        show_title = self.clean_filename(episode.get("show_title") or "Show")
+        season = int(episode.get("season_number") or 0)
+        ep_num = int(episode.get("episode_number") or 0)
+        ep_title = self.clean_filename(episode["title"]) if episode.get("title") else ""
+        day = ""
+        try:
+            aired = datetime.fromisoformat(str(episode.get("air_date") or "").replace("Z", "+00:00"))
+            day = aired.astimezone().strftime("%Y-%m-%d")  # the local date it aired
+        except ValueError:
+            pass
+        if season > 0 and ep_num > 0:
+            tag = f"S{season:02d}E{ep_num:02d}"
+        elif ep_num > 0:
+            tag = f"E{ep_num:02d}"
+        else:
+            tag = day
+        prefix = f"{show_title} - {tag}" if tag else show_title
+        filename = f"{prefix} - {ep_title}.mp4" if ep_title and ep_title != show_title else f"{prefix}.mp4"
+        return filename, f"{show_title} ({tag})" if tag else show_title
+
+    @staticmethod
+    def free_export_path(folder: Path, filename: str) -> Path:
+        """folder/filename, or "name (2).mp4", "name (3).mp4"... if a file there has that name or an
+        export still waiting or running will be saved under it (exports queued together used to get
+        the same name, and the last one finished replaced the others)."""
+        from .database import active_export_paths
+        taken = {Path(p).name.lower() for p in active_export_paths() if Path(p).parent == folder}
+        path, stem, n = folder / filename, Path(filename).stem, 1
+        while path.exists() or path.name.lower() in taken:
+            n += 1
+            path = folder / f"{stem} ({n}).mp4"
+        return path
+
     async def start_mp4_export(self, episode: Dict[str, Any], get_playlist_url) -> str:
         """Queue an MP4 export to the downloads folder. Exports run one at a time (each pulls a stream
         from the Tablo); get_playlist_url() is awaited when this one's turn comes, so the Tablo's
         watch session is fresh."""
         job_id = uuid.uuid4().hex[:10]
 
-        # Generate standard filename: ShowName - SxxExx - Title.mp4
-        show_title = self.clean_filename(episode.get("show_title", "Show"))
-        season = episode.get("season_number", 0)
-        ep_num = episode.get("episode_number", 0)
-        ep_title = self.clean_filename(episode.get("title", ""))
-
-        if season > 0 and ep_num > 0:
-            prefix = f"{show_title} - S{season:02d}E{ep_num:02d}"
-        elif ep_num > 0:
-            prefix = f"{show_title} - E{ep_num:02d}"
-        else:
-            prefix = show_title
-
-        filename = f"{prefix} - {ep_title}.mp4" if ep_title and ep_title != show_title else f"{prefix}.mp4"
-        folder = exports_dir()
-        dest_path = folder / filename
-
-        # Ensure unique filename if already exists
-        counter = 1
-        base_stem = dest_path.stem
-        while dest_path.exists():
-            dest_path = folder / f"{base_stem} ({counter}).mp4"
-            counter += 1
+        filename, label = self.export_name(episode)
+        dest_path = self.free_export_path(exports_dir(), filename)
 
         job_info = {
             "job_id": job_id,
             "episode_id": episode.get("id"),
-            "title": f"{show_title} (S{season:02d}E{ep_num:02d})",
+            "title": label,
             "filename": dest_path.name,
             "filepath": str(dest_path),
             "status": "pending",
@@ -861,6 +878,11 @@ class TranscodeManager:
                 return True
             if (proc.returncode == 0 or stalled == "near_end") and part_path.exists() and part_path.stat().st_size:
                 save_export_job({"job_id": job_id, "status": "downloading", "progress": 99.0})
+                if output_path.exists():
+                    # Something else saved a file under this name meanwhile: never write over it
+                    output_path = self.free_export_path(output_path.parent, output_path.name)
+                    save_export_job({"job_id": job_id, "status": "downloading", "progress": 99.0,
+                                     "filename": output_path.name, "filepath": str(output_path)})
                 remux_error = await self._remux(part_path, output_path)
                 if remux_error:
                     print(f"[ExportWorker] Export {job_id}: couldn't make the MP4: {remux_error}")

@@ -241,7 +241,9 @@ async function showLibrary() {
   if (!shows.length) return setScreen('<div class="empty">No recordings yet.</div>', '#/library');
   const p = libraryPrefs();
   if (p.unwatched) shows = shows.filter(s => s.unwatched_count > 0);
-  if (p.sort === 'az') shows.sort((a, b) => String(a.title || '').replace(/^the\s+/i, '').localeCompare(String(b.title || '').replace(/^the\s+/i, '')));
+  // A to Z without "The", "A" or "An", as on the PC
+  const bare = t => String(t || '').replace(/^(the|an|a)\s+/i, '');
+  if (p.sort === 'az') shows.sort((a, b) => bare(a.title).localeCompare(bare(b.title)));
   else shows.sort((a, b) => String(b.latest_recording_date || '').localeCompare(String(a.latest_recording_date || '')));
   const opt = (key, value, label, on) => `<button class="btn f ${on ? 'primary' : ''}" data-act="lib-opt" data-opt="${key}" data-value="${value}" data-key="lib-${key}-${value}">${label}</button>`;
   setScreen(`<h1>Library</h1>

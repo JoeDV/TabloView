@@ -372,7 +372,7 @@ def get_shows(
         params.append(f"%{search.strip()}%")
 
     if sort_by == "alphabetical":
-        query += " ORDER BY title COLLATE NOCASE ASC"
+        query += f" ORDER BY {sort_title('title')} ASC"
     elif sort_by == "episodes":
         query += " ORDER BY episode_count DESC, title COLLATE NOCASE ASC"
     else:  # recent default
@@ -723,7 +723,9 @@ def save_export_job(job: Dict[str, Any]):
                 progress = excluded.progress,
                 file_size = excluded.file_size,
                 error = excluded.error,
-                completed_at = excluded.completed_at
+                completed_at = excluded.completed_at,
+                filename = COALESCE(NULLIF(excluded.filename, ''), exports.filename),
+                filepath = COALESCE(NULLIF(excluded.filepath, ''), exports.filepath)
         """, (
             job["job_id"],
             job.get("episode_id", ""),
@@ -760,6 +762,19 @@ def fail_interrupted_exports() -> List[Dict[str, Any]]:
         """, (datetime.now(timezone.utc).isoformat(),))
         conn.commit()
     return rows
+
+
+def active_export_paths() -> List[str]:
+    """Where exports still waiting or running will be saved."""
+    with get_connection() as conn:
+        return [r[0] for r in conn.execute("SELECT filepath FROM exports WHERE status IN ('pending', 'downloading')").fetchall() if r[0]]
+
+
+def sort_title(column: str) -> str:
+    """SQL for sorting titles A to Z as a library does: "The Addams Family" with the A's, "A Time to
+    Kill" with the T's (a forum request)."""
+    return (f"(CASE WHEN {column} LIKE 'the %' THEN substr({column}, 5) WHEN {column} LIKE 'an %' THEN substr({column}, 4) "
+            f"WHEN {column} LIKE 'a %' THEN substr({column}, 3) ELSE {column} END) COLLATE NOCASE")
 
 
 def get_export_job(job_id: str) -> Optional[Dict[str, Any]]:
@@ -1097,7 +1112,7 @@ def get_guide_shows(
     elif sort_by == "recent":
         query += " ORDER BY g.orig_air_date DESC, g.title COLLATE NOCASE ASC"
     else:  # title
-        query += " ORDER BY g.title COLLATE NOCASE ASC"
+        query += f" ORDER BY {sort_title('g.title')} ASC"
 
     query += f" LIMIT {int(limit)} OFFSET {int(offset)}"
 
