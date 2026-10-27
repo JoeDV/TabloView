@@ -313,6 +313,7 @@ const player = {
   video: () => $('#video'),
 
   show(title, sub) {
+    if (APP) APP.setPlaying(true);
     $('#osdTitle').textContent = title;
     $('#osdSub').textContent = sub || '';
     $('#player').classList.remove('hidden');
@@ -789,6 +790,7 @@ const player = {
 
   close(keepalive = false) {
     if (!this.open) return;
+    if (APP) APP.setPlaying(false);
     clearTimeout(this.seekTimer);
     this.pendingSeek = null;
     if (this.s.kind === 'rec') this.s.gen = (this.s.gen || 0) + 1;  // a stream still starting is stopped when it arrives
@@ -841,10 +843,22 @@ const ON_A_TV = /Android|AFT|CrKey|SMART-TV|SmartTV|Tizen|Web0S|webOS|BRAVIA|Goo
   || !window.matchMedia('(any-pointer: fine)').matches;
 // Away from the TV's browser this long with something paused in it: close it
 const AWAY_CLOSE_SECONDS = 30;
+// Inside the TabloView TV app (tvapp/): it passes the remote's keys to this page, asks it about Back
+// (window.tvBack), and keeps the TV awake while something plays
+const APP = window.TabloViewApp || null;
 
 const BACK_KEYS = ['Escape', 'Backspace', 'BrowserBack', 'GoBack'];
 // Android's Back (4), browsers' Back (166), LG webOS (461), Samsung Tizen (10009)
 const isBack = e => BACK_KEYS.includes(e.key) || [4, 8, 27, 166, 461, 10009].includes(e.keyCode);
+
+// The app's Back button: do what Back does here, or say there's nothing to go back to (the app
+// then closes, as Back on an app's first screen does)
+window.tvBack = () => {
+  const home = (location.hash || '#/') === '#/' && !player.open && !dialogDone;
+  if (home) return false;
+  onKey({ key: 'GoBack', keyCode: 4, target: document.body, preventDefault() {} });
+  return true;
+};
 
 function onKey(e) {
   const k = e.key;
@@ -929,6 +943,8 @@ function onClick(e) {
 function tickClock() { $('#clock').textContent = fmt.time(Date.now()); }
 
 function init() {
+  // In the app, PC view can't be used (no pointer); the address is changed with the remote's Menu button
+  if (APP) document.querySelector('[data-act="pc-view"]')?.remove();
   // TV view is now this browser's view: the plain address opens it from here on (PC view undoes it)
   try { localStorage.setItem('tv_view', 'tv'); } catch { /* storage unavailable: /tv still works */ }
   document.addEventListener('keydown', onKey);
