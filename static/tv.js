@@ -1214,13 +1214,17 @@ function onClick(e) {
   const ctl = e.target.closest('[data-ctl]');
   if (ctl && player.controls) { player.controlIndex = Number(ctl.dataset.ctl); player.pressControl(); return; }
   if (player.open && !player.controls && e.target.closest('#player')) { player.showControls(); return; }
+  // The logo opens or closes the menu with its names; a tap anywhere else closes it
+  const rail = $('#rail');
+  if (e.target.closest('.rail-brand')) { rail.classList.toggle('open'); return; }
+  if (!e.target.closest('.rail .f')) rail.classList.remove('open');
   const el = e.target.closest('[data-go], [data-act], [data-choice]');
   if (!el) return;
   if (el.dataset.choice !== undefined && dialogDone) return dialogDone(Number(el.dataset.choice));
   if (el.dataset.go) {
     // A page picked in the menu with a tap or click: the menu closes (it stayed open, holding the focus,
     // until a tap elsewhere). With the remote, the page's first tile takes the focus once it's loaded
-    if (el.classList.contains('nav') && e.detail > 0) el.blur();
+    if (el.classList.contains('nav') && e.detail > 0) { el.blur(); $('#rail').classList.remove('open'); }
     const home = (location.hash || '#/') === '#/';
     // Between the menu's pages, Back goes to Home rather than through each one
     if (el.classList.contains('nav') && !home) location.replace(el.dataset.go === '#/' ? '#/' : el.dataset.go);
