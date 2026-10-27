@@ -19,6 +19,7 @@ import ipaddress
 import json
 import re
 import secrets
+import socket
 import threading
 import time
 from typing import Dict, Mapping, Optional, Tuple
@@ -54,14 +55,33 @@ PROXY_HEADERS = ("forwarded", "x-forwarded-for", "x-forwarded-host", "x-real-ip"
                  "tailscale-user-login", "tailscale-funnel-request")
 
 
+_own: Dict[str, object] = {"addresses": frozenset(), "at": float("-inf")}
+
+
+def own_addresses(max_age: float = 60) -> frozenset:
+    """This PC's own network addresses (192.168.1.160, its Tailscale 100.x...), looked up at most every
+    max_age seconds (they can change)."""
+    if time.monotonic() - _own["at"] > max_age:
+        _own["at"] = time.monotonic()
+        try:
+            _own["addresses"] = frozenset(info[4][0].split("%")[0]
+                                          for info in socket.getaddrinfo(socket.gethostname(), None))
+        except OSError:
+            pass
+    return _own["addresses"]
+
+
 def is_local(client_host: Optional[str], headers: Optional[Mapping[str, str]] = None) -> bool:
-    """The request comes from this PC itself, not passed on from another device."""
+    """The request comes from this PC itself, not passed on from another device: from 127.0.0.1, or
+    from one of this PC's own addresses (a browser on it opening http://192.168.1.160:7070 was asked
+    for the PIN like another device, and wasn't shown what only this PC sees)."""
     if headers is not None and any(h in headers for h in PROXY_HEADERS):
         return False
     try:
-        return ipaddress.ip_address(client_host or "").is_loopback
+        ip = ipaddress.ip_address(client_host or "")
     except ValueError:
         return False
+    return ip.is_loopback or str(ip) in own_addresses()
 
 
 def client_address(request) -> Optional[str]:

@@ -150,6 +150,17 @@ class LanPinTests(unittest.TestCase):
         self.assertIn("60 seconds", r.json()["detail"])
         self.assertEqual(lanauth.activity()["events"][0], {**lanauth.activity()["events"][0], "what": "locked_out", "wait": 60})
 
+    def test_this_pcs_own_network_address_is_this_pc(self):
+        # A browser on the PC opening http://192.168.1.160:7070 was asked for the PIN like another device
+        lanauth.set_pin("2468")
+        with mock.patch.object(lanauth, "own_addresses", return_value=frozenset({"192.168.1.160", "100.64.0.5"})):
+            pc = TestClient(app, base_url="http://192.168.1.160:7070", client=("192.168.1.160", 50000))
+            self.assertEqual(pc.get("/api/lan/activity", headers=HDR).status_code, 200)
+            self.assertTrue(pc.get("/api/lan/status", headers=HDR).json()["local"])
+            self.assertFalse(lanauth.is_local("192.168.1.20"))
+            # Passed on by a proxy, it's another device even from this PC's address
+            self.assertFalse(lanauth.is_local("192.168.1.160", {"x-forwarded-for": "203.0.113.5"}))
+
     def test_requests_passed_on_through_this_pc_need_the_pin(self):
         # Tailscale Serve or Funnel, or a reverse proxy: from 127.0.0.1, but from another device
         lanauth.set_pin("2468")
