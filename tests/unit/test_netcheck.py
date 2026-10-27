@@ -3,6 +3,7 @@ try:
 except ImportError:
     import _test_env  # noqa: F401
 
+import json
 import subprocess
 import unittest
 from unittest import mock
@@ -53,6 +54,47 @@ class NetCheckTests(unittest.TestCase):
 
     def test_no_address_no_lookup(self):
         self.assertEqual(netcheck.pc_connection("not an address"), {"ip": None, "kind": None})
+
+
+
+class AccessTests(unittest.TestCase):
+    """Network access: Windows Firewall's say per network, and this PC's Tailscale address."""
+
+    WIFI = {"name": "Wi-Fi", "category": "Public"}
+    TAILSCALE = {"name": "Tailscale", "category": "Private"}
+
+    def test_allowed_where_a_rule_lets_it_in(self):
+        v = netcheck.firewall_verdict([{"action": "Allow", "profile": "Private, Public"}], [self.WIFI, self.TAILSCALE])
+        self.assertEqual([n["state"] for n in v], ["allowed", "allowed"])
+
+    def test_a_block_rule_wins(self):
+        # Cancel at Windows' question after a Store update: a block rule beside an old allow
+        v = netcheck.firewall_verdict([{"action": "Allow", "profile": "Any"}, {"action": "Block", "profile": "Public"}],
+                                      [self.WIFI, self.TAILSCALE])
+        self.assertEqual([n["state"] for n in v], ["blocked", "allowed"])
+
+    def test_no_rule_for_that_kind_of_network(self):
+        v = netcheck.firewall_verdict([{"action": "Allow", "profile": "Private"}], [self.WIFI])
+        self.assertEqual(v, [{"network": "Wi-Fi", "category": "Public", "state": "not allowed"}])
+
+    def test_domain_networks(self):
+        v = netcheck.firewall_verdict([{"action": "Allow", "profile": "Domain"}], [{"name": "Work", "category": "DomainAuthenticated"}])
+        self.assertEqual(v[0]["state"], "allowed")
+        self.assertEqual(v[0]["category"], "Domain")
+
+    def tailscale(self, payload):
+        netcheck._tailscale.update(value=None, at=float("-inf"))
+        self.addCleanup(netcheck._tailscale.update, value=None, at=float("-inf"))
+        with mock.patch.object(netcheck.os.path, "isfile", return_value=True),                 mock.patch.object(netcheck.subprocess, "run", return_value=mock.Mock(stdout=json.dumps(payload))):
+            return netcheck.tailscale()
+
+    def test_tailscale_name_and_address(self):
+        got = self.tailscale({"BackendState": "Running", "Self": {"DNSName": "HPLaptop.tailc0c2e.ts.net.",
+                                                                  "TailscaleIPs": ["fd7a::1", "100.123.225.67"]}})
+        self.assertEqual(got, {"name": "hplaptop.tailc0c2e.ts.net", "ip": "100.123.225.67"})
+
+    def test_tailscale_stopped(self):
+        self.assertIsNone(self.tailscale({"BackendState": "Stopped", "Self": {"DNSName": "x.y.ts.net."}}))
 
 
 if __name__ == "__main__":

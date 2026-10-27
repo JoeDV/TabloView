@@ -247,6 +247,12 @@ async def network_status():
     return await netcheck.status()
 
 
+@router.get("/network/access")
+async def network_access():
+    """For network access: this PC's Tailscale address (away from home) and Windows Firewall's say."""
+    return await netcheck.access()
+
+
 @router.post("/network/test")
 async def network_test():
     """Response time and how fast a recording arrives from the Tablo (about 10 seconds)."""

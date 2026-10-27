@@ -3007,7 +3007,8 @@ PAGES.device = async (r, token) => {
         </div>
         ${!info.packaged && !!settings.allow_lan !== !!info.listening_on_network ? `<p style="margin-top:10px;color:var(--warn);font-size:13px;font-weight:600">To apply this, stop TabloView (above) and run its start script again.</p>` : ''}`}
       ${info.listening_on_network && info.network_url ? `<p style="margin-top:12px">On other devices, open <b>${esc(info.network_url)}</b></p>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">In a TV's browser (Silk on Fire TV, TV Bro on Google TV), open <b>${esc(info.network_url)}/tv</b> for big screens you can use with the remote.</p>` : ''}
+        <p class="dim" style="margin-top:6px;font-size:12.5px">In a TV's browser (Silk on Fire TV, TV Bro on Google TV), open <b>${esc(info.network_url)}/tv</b> for big screens you can use with the remote.</p>
+        <div id="lanAccess"></div>` : ''}
     </div>`;
 
   // Run from a start script (Mac, Linux, or from source): no tray icon, so stop it from here
@@ -3211,7 +3212,7 @@ PAGES.device = async (r, token) => {
 ${current[2]}
     </div>
   </div>`);
-  if (current[0] === 'desktop') loadNetwork(token);
+  if (current[0] === 'desktop') { loadNetwork(token); if (info.listening_on_network) loadLanAccess(token, info); }
 };
 
 // Device → Desktop & network: how the Tablo and this PC are connected, and a test of the link
@@ -3242,6 +3243,30 @@ async function loadNetwork(token) {
     <dt>This computer</dt><dd>${pc.kind ? esc(kind(pc.kind)) : 'Connected'}${wifi && wifi.ssid ? ` to ${esc(wifi.ssid)}` : ''}${pc.ip ? ` · ${esc(pc.ip)}` : ''}</dd>
     ${wifi && wifi.signal != null ? `<dt>Wi-Fi signal</dt><dd>${wifi.signal}% (${signalWord(wifi.signal)})${wifi.band ? ` · ${esc(wifi.band)}` : ''}${wifi.receive_mbps ? ` · ${Math.round(wifi.receive_mbps)} Mb/s link` : ''}</dd>` : ''}
     ${pc.kind === 'ethernet' && pc.link_speed ? `<dt>Link speed</dt><dd>${esc(pc.link_speed)}</dd>` : ''}`;
+}
+
+// Network access: the address for away from home (Tailscale), and a warning when Windows Firewall
+// keeps other devices out (a Store update brings a new firewall question; Cancel blocks TabloView)
+async function loadLanAccess(token, info) {
+  let d;
+  try { d = await api('/api/network/access'); } catch { return; }
+  const box = $('#lanAccess');
+  if (stale(token) || !box) return;
+  const port = (info.network_url || '').split(':').pop();
+  const parts = [];
+  const shut = (d.firewall || []).filter(n => n.state !== 'allowed');
+  if (shut.length) {
+    const which = shut.map(n => `${esc(n.network)} (${esc(n.category)} network)`).join(' and ');
+    parts.push(`<p style="margin-top:12px;color:var(--warn);font-size:13px;font-weight:600">Windows Firewall is keeping other devices out on ${which}.</p>
+      <p class="dim" style="margin-top:4px;font-size:12.5px">To fix it: open <b>Windows Security → Firewall &amp; network protection → Allow an app through firewall</b>, click <b>Change settings</b>, and tick ${[...new Set(shut.map(n => n.category))].map(c => `<b>${esc(c)}</b>`).join(' and ')} next to every TabloView entry. Then reload this page.</p>`);
+  }
+  const ts = d.tailscale;
+  if (ts && (ts.name || ts.ip)) {
+    const url = `http://${ts.name || ts.ip}:${port}`;
+    parts.push(`<p style="margin-top:12px">Away from home, with Tailscale: <b>${esc(url)}</b></p>
+      <p class="dim" style="margin-top:4px;font-size:12.5px">On a phone or laptop signed in to the same Tailscale account.${ts.name && ts.ip ? ` If the name doesn't open, use <b>http://${esc(ts.ip)}:${esc(port)}</b>.` : ''}</p>`);
+  }
+  box.innerHTML = parts.join('');
 }
 
 async function testNetwork(btn) {

@@ -1,13 +1,8 @@
 """Main FastAPI application for TabloView."""
 
 import asyncio
-import json
 import socket
 import ipaddress
-import shutil
-import subprocess
-import sys
-import time
 from pathlib import Path
 from contextlib import asynccontextmanager
 
@@ -20,7 +15,7 @@ from fastapi.responses import FileResponse, Response, JSONResponse
 from .config import (
     APP_NAME, APP_VERSION, STATIC_DIR, TRANSCODE_DIR, DOWNLOADS_DIR, IMAGE_CACHE_DIR, HOST, PORT,
 )
-from . import commercials, dropouts, encoders, export_pace, lanauth, streaming, whatsnew
+from . import commercials, dropouts, encoders, export_pace, lanauth, netcheck, streaming, whatsnew
 from .settings import exports_dir
 from .database import get_export_jobs, fail_interrupted_exports
 from .database import init_db
@@ -119,25 +114,10 @@ _PC_NAME = socket.gethostname().lower()
 _LOCAL_NAMES = {"localhost", _PC_NAME, f"{_PC_NAME}.local"}
 # Tailscale's full name for this PC ("hplaptop.tailc0c2e.ts.net"), for a phone or laptop away from
 # home on the owner's tailnet. Only names under ts.net, which Tailscale's DNS answers, so a
-# DNS-rebinding page can't point one at this PC; and only this PC's own
-_TAILSCALE_CLI = [shutil.which("tailscale"), r"C:\Program Files\Tailscale\tailscale.exe",
-                  "/Applications/Tailscale.app/Contents/MacOS/Tailscale"]
-_tailnet = {"name": None, "at": float("-inf")}
-
-
+# DNS-rebinding page can't point one at this PC; and only this PC's own (Tailscale's name for it can
+# differ from the PC's, e.g. "hplaptop-1": asked of Tailscale, at most every 5 minutes)
 def _tailscale_name() -> str:
-    """This PC's name on the tailnet, from Tailscale itself (it can differ from the PC's name, e.g.
-    "hplaptop-1"); asked at most every 5 minutes, and only when a ts.net name doesn't match."""
-    if time.monotonic() - _tailnet["at"] > 300:
-        _tailnet["at"] = time.monotonic()
-        cli = next((c for c in _TAILSCALE_CLI if c and Path(c).is_file()), None)
-        try:
-            out = subprocess.run([cli, "status", "--json"], capture_output=True, text=True, timeout=3,
-                                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0).stdout
-            _tailnet["name"] = (json.loads(out)["Self"]["DNSName"] or "").rstrip(".").lower() or None
-        except Exception:
-            pass  # not installed or not running: no name
-    return _tailnet["name"] or ""
+    return (netcheck.tailscale() or {}).get("name") or ""
 
 
 def _on_tailnet(host: str) -> bool:
@@ -145,13 +125,15 @@ def _on_tailnet(host: str) -> bool:
     if len(labels) != 4 or not host.endswith(".ts.net"):
         return False
     return labels[0] == _PC_NAME or host == _tailscale_name()
+
+
 _UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 _OTHER_SITES = {"cross-site", "same-site"}  # same-site: another program's page on this PC (another port)
 
 
 def _host_allowed(host_header: str) -> bool:
-    """Accept localhost, this PC's name (also its Tailscale name), or a literal IP. Rejects other DNS names, which is what a
-    DNS-rebinding page would use to reach this server from the user's browser."""
+    """Accept localhost, this PC's name (also its Tailscale name), or a literal IP. Rejects other DNS
+    names, which is what a DNS-rebinding page would use to reach this server from the user's browser."""
     host = host_header.strip().lower()
     if host.startswith("["):
         host = host[1:].split("]", 1)[0]

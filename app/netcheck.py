@@ -7,6 +7,7 @@ import ipaddress
 import json
 import os
 import re
+import shutil
 import socket
 import statistics
 import subprocess
@@ -123,6 +124,87 @@ async def status() -> Dict[str, Any]:
                                            if tablo_manager.device else None)
     pc = await asyncio.to_thread(pc_connection, tablo_ip)
     return {"tablo": tablo, "pc": pc}
+
+
+# ---------------------------------------------------------------------------------------------------
+# Other devices (network access): this PC's Tailscale address for away from home, and whether Windows
+# Firewall lets them in
+# ---------------------------------------------------------------------------------------------------
+TAILSCALE_CLI = [shutil.which("tailscale"), r"C:\Program Files\Tailscale\tailscale.exe",
+                 "/Applications/Tailscale.app/Contents/MacOS/Tailscale"]
+_tailscale: Dict[str, Any] = {"value": None, "at": float("-inf")}
+
+
+def tailscale(max_age: float = 300) -> Optional[Dict[str, str]]:
+    """This PC on Tailscale, {"name": "hplaptop.tailc0c2e.ts.net", "ip": "100.x.x.x"}, or None when
+    Tailscale isn't installed or running. Asked at most every max_age seconds."""
+    if time.monotonic() - _tailscale["at"] > max_age:
+        _tailscale["at"] = time.monotonic()
+        cli = next((c for c in TAILSCALE_CLI if c and os.path.isfile(c)), None)
+        value = None
+        if cli:
+            try:
+                out = subprocess.run([cli, "status", "--json"], capture_output=True, text=True, timeout=5,
+                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+                d = json.loads(out)
+                me = d.get("Self") or {}
+                ip = next((a for a in me.get("TailscaleIPs") or [] if "." in a), None)
+                if d.get("BackendState") == "Running" and (me.get("DNSName") or ip):
+                    value = {"name": (me.get("DNSName") or "").rstrip(".").lower() or None, "ip": ip}
+            except Exception:
+                pass
+        _tailscale["value"] = value
+    return _tailscale["value"]
+
+
+_FIREWALL_SCRIPT = (
+    "$r = Get-NetFirewallApplicationFilter -Program $env:TABLOVIEW_EXE -ErrorAction SilentlyContinue | Get-NetFirewallRule "
+    "| Where-Object { $_.Enabled -eq 'True' -and $_.Direction -eq 'Inbound' }; "
+    "@{rules = @($r | ForEach-Object { @{action = [string]$_.Action; profile = [string]$_.Profile} }); "
+    "networks = @(Get-NetConnectionProfile | ForEach-Object { @{name = $_.InterfaceAlias; category = [string]$_.NetworkCategory} })} "
+    "| ConvertTo-Json -Compress -Depth 4")
+
+
+def firewall_verdict(rules: List[Dict[str, str]], networks: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Per connected network: "blocked" (a block rule wins over any allow), "allowed", or "not allowed"
+    (no rule: Windows drops other devices' connections without asking again)."""
+    def covers(profile: str, category: str) -> bool:
+        kinds = {p.strip().lower() for p in (profile or "").split(",")}
+        cat = "domain" if category.lower().startswith("domain") else category.lower()
+        return "any" in kinds or cat in kinds
+    out = []
+    for n in networks:
+        cat = n.get("category") or ""
+        if any(r.get("action") == "Block" and covers(r.get("profile", ""), cat) for r in rules):
+            state = "blocked"
+        elif any(r.get("action") == "Allow" and covers(r.get("profile", ""), cat) for r in rules):
+            state = "allowed"
+        else:
+            state = "not allowed"
+        out.append({"network": n.get("name") or "", "category": "Domain" if cat.lower().startswith("domain") else cat, "state": state})
+    return out
+
+
+def firewall() -> Optional[List[Dict[str, str]]]:
+    """Windows: whether Windows Firewall lets other devices reach TabloView on each connected network.
+    The Store version gets a new rule with each update (its folder changes), and choosing Cancel at
+    Windows' question leaves a block rule: network access then stops working without a word."""
+    if sys.platform != "win32":
+        return None
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-Command", _FIREWALL_SCRIPT], capture_output=True, timeout=20,
+                           env={**os.environ, "TABLOVIEW_EXE": sys.executable}, creationflags=subprocess.CREATE_NO_WINDOW)
+        d = json.loads(r.stdout.decode("utf-8", errors="replace").strip() or "{}")
+    except Exception as e:
+        print(f"[Network] Couldn't read Windows Firewall's rules: {e}")
+        return None
+    as_list = lambda v: v if isinstance(v, list) else ([v] if v else [])
+    return firewall_verdict(as_list(d.get("rules")), as_list(d.get("networks")))
+
+
+async def access() -> Dict[str, Any]:
+    tail, fw = await asyncio.gather(asyncio.to_thread(tailscale, 30), asyncio.to_thread(firewall))
+    return {"tailscale": tail, "firewall": fw}
 
 
 def _pieces(playlist: str, base: str) -> List[Tuple[str, Optional[Tuple[int, int]]]]:
