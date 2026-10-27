@@ -24,6 +24,7 @@ FLOORS = {  # name: (share of ads skipped, most show skipped, show_end)
     "boston_blue": (0.97, 10, 3476),     # CBS drama: no logo
     "elsbeth": (0.97, 10, 3409),         # CBS drama: no logo
     "jeopardy": (0.97, 10, 1685),        # syndicated, no logo; Final Jeopardy runs into the closing break
+    "tracker": (0.97, 10, 3453),         # CBS drama: the logo too faint to use; a dim drug ad opens a break
 }
 
 
