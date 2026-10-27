@@ -1,8 +1,13 @@
 """Main FastAPI application for TabloView."""
 
 import asyncio
+import json
 import socket
 import ipaddress
+import shutil
+import subprocess
+import sys
+import time
 from pathlib import Path
 from contextlib import asynccontextmanager
 
@@ -110,20 +115,49 @@ async def tablo_not_answering(request: Request, exc: httpx.TransportError):
     """Any request that failed because the Tablo didn't answer gets the same plain explanation."""
     return JSONResponse(status_code=503, content={"detail": tablo_manager.UNREACHABLE_MESSAGE})
 
-_LOCAL_NAMES = {"localhost", socket.gethostname().lower(), f"{socket.gethostname().lower()}.local"}
+_PC_NAME = socket.gethostname().lower()
+_LOCAL_NAMES = {"localhost", _PC_NAME, f"{_PC_NAME}.local"}
+# Tailscale's full name for this PC ("hplaptop.tailc0c2e.ts.net"), for a phone or laptop away from
+# home on the owner's tailnet. Only names under ts.net, which Tailscale's DNS answers, so a
+# DNS-rebinding page can't point one at this PC; and only this PC's own
+_TAILSCALE_CLI = [shutil.which("tailscale"), r"C:\Program Files\Tailscale\tailscale.exe",
+                  "/Applications/Tailscale.app/Contents/MacOS/Tailscale"]
+_tailnet = {"name": None, "at": float("-inf")}
+
+
+def _tailscale_name() -> str:
+    """This PC's name on the tailnet, from Tailscale itself (it can differ from the PC's name, e.g.
+    "hplaptop-1"); asked at most every 5 minutes, and only when a ts.net name doesn't match."""
+    if time.monotonic() - _tailnet["at"] > 300:
+        _tailnet["at"] = time.monotonic()
+        cli = next((c for c in _TAILSCALE_CLI if c and Path(c).is_file()), None)
+        try:
+            out = subprocess.run([cli, "status", "--json"], capture_output=True, text=True, timeout=3,
+                                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0).stdout
+            _tailnet["name"] = (json.loads(out)["Self"]["DNSName"] or "").rstrip(".").lower() or None
+        except Exception:
+            pass  # not installed or not running: no name
+    return _tailnet["name"] or ""
+
+
+def _on_tailnet(host: str) -> bool:
+    labels = host.split(".")
+    if len(labels) != 4 or not host.endswith(".ts.net"):
+        return False
+    return labels[0] == _PC_NAME or host == _tailscale_name()
 _UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 _OTHER_SITES = {"cross-site", "same-site"}  # same-site: another program's page on this PC (another port)
 
 
 def _host_allowed(host_header: str) -> bool:
-    """Accept localhost, this PC's name, or a literal IP. Rejects other DNS names, which is what a
+    """Accept localhost, this PC's name (also its Tailscale name), or a literal IP. Rejects other DNS names, which is what a
     DNS-rebinding page would use to reach this server from the user's browser."""
     host = host_header.strip().lower()
     if host.startswith("["):
         host = host[1:].split("]", 1)[0]
     else:
         host = host.rsplit(":", 1)[0]
-    if host in _LOCAL_NAMES:
+    if host in _LOCAL_NAMES or _on_tailnet(host):
         return True
     try:
         ipaddress.ip_address(host)

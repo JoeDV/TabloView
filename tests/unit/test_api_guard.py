@@ -45,6 +45,16 @@ class ApiGuardTests(unittest.TestCase):
         for ok_host in ("localhost:7070", "192.168.1.50:7070", "[::1]:7070"):
             self.assertEqual(self.client.get("/api/system/info", headers={"Host": ok_host}).status_code, 200, ok_host)
 
+    def test_this_pcs_tailscale_name_is_accepted(self):
+        # Away from home over Tailscale: its full name for this PC, not anyone else's ts.net name
+        import app.main as m
+        with mock.patch.object(m, "_PC_NAME", "hplaptop"),                 mock.patch.object(m, "_tailscale_name", return_value="hplaptop-1.tailc0c2e.ts.net"):
+            for ok in ("hplaptop.tailc0c2e.ts.net:7070", "HPLaptop-1.tailc0c2e.ts.net:7070"):
+                self.assertEqual(self.client.get("/api/system/info", headers={"Host": ok}).status_code, 200, ok)
+            for bad in ("other.tailc0c2e.ts.net:7070", "hplaptop.evil.example.com:7070", "hplaptop.ts.net:7070",
+                        "hplaptop.a.b.ts.net:7070", "hplaptop.tailc0c2e.ts.net.evil.com:7070"):
+                self.assertEqual(self.client.get("/api/system/info", headers={"Host": bad}).status_code, 403, bad)
+
     def test_other_websites_cannot_make_reads(self):
         # e.g. <img src="http://127.0.0.1:7070/api/live/vlc/..."> on another site would tune a channel
         for site in ("cross-site", "same-site"):
