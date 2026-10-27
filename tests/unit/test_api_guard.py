@@ -5,6 +5,7 @@ try:
 except ImportError:
     import _test_env  # noqa: F401
 
+import tempfile
 import unittest
 from unittest import mock
 from fastapi.testclient import TestClient
@@ -54,6 +55,22 @@ class ApiGuardTests(unittest.TestCase):
             for bad in ("other.tailc0c2e.ts.net:7070", "hplaptop.evil.example.com:7070", "hplaptop.ts.net:7070",
                         "hplaptop.a.b.ts.net:7070", "hplaptop.tailc0c2e.ts.net.evil.com:7070"):
                 self.assertEqual(self.client.get("/api/system/info", headers={"Host": bad}).status_code, 403, bad)
+
+    def test_tv_app_download(self):
+        # Another device (a TV, not signed in) gets the TV app at /app; without a bundled copy, GitHub's
+        import app.main as m
+        tv = TestClient(app, base_url="http://192.168.1.160:7070", client=("192.168.1.92", 50000))
+        with mock.patch.object(m, "RESOURCE_DIR", m.Path("nowhere")), mock.patch.object(m, "BASE_DIR", m.Path("nowhere")):
+            r = tv.get("/app", follow_redirects=False)
+        self.assertEqual(r.status_code, 307)
+        self.assertEqual(r.headers["location"], m.TV_APP_LATEST)
+        with tempfile.TemporaryDirectory() as d:
+            (m.Path(d) / "tvapp").mkdir()
+            (m.Path(d) / "tvapp" / "TabloView-TV.apk").write_bytes(b"PK apk")
+            with mock.patch.object(m, "RESOURCE_DIR", m.Path(d)):
+                r = tv.get("/app")
+        self.assertEqual((r.status_code, r.content), (200, b"PK apk"))
+        self.assertEqual(r.headers["content-type"], "application/vnd.android.package-archive")
 
     def test_other_websites_cannot_make_reads(self):
         # e.g. <img src="http://127.0.0.1:7070/api/live/vlc/..."> on another site would tune a channel

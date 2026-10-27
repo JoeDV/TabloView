@@ -74,20 +74,24 @@ VSVersionInfo(
 )
 "@ | Set-Content -Encoding ascii (Join-Path $Stage 'version_info.txt')
 
-# 4. Bundle the app (never include local credentials or caches)
+# 4. The TV app (Google TV, Fire TV), which the installed app hands out at /app
+& $Py tvapp\build.py
+if ($LASTEXITCODE -ne 0) { throw 'Building the TV app failed (tvapp\build.py)' }
+
+# 5. Bundle the app (never include local credentials or caches)
 & $Py -m PyInstaller packaging\tabloview.spec --noconfirm --clean --distpath dist --workpath build\pyinstaller
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed' }
 
 $Leaks = Get-ChildItem -Recurse dist\TabloView -Include 'config.json', '.env', '*.db', 'settings.json' -ErrorAction SilentlyContinue
 if ($Leaks) { throw "Refusing to package local data: $($Leaks.FullName -join ', ')" }
 
-# 5. Installer
+# 6. Installer
 $Iscc = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $Iscc) { throw 'Inno Setup not found. Install it: winget install JRSoftware.InnoSetup' }
 & $Iscc /Q "/DAppVersion=$Version" packaging\installer.iss
 if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed' }
 
-# 6. version.json for in-app update notices. After the GitHub release is published
+# 7. version.json for in-app update notices. After the GitHub release is published
 #    (packaging\publish-release.ps1), publish it with packaging\publish-version.ps1.
 #    Optional release notes: packaging\release-notes.txt
 $DownloadUrl = & $Py -c "import sys; sys.path.insert(0, '.'); from app.config import RELEASE_DOWNLOAD_URL; print(RELEASE_DOWNLOAD_URL)"

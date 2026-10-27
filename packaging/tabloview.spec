@@ -12,6 +12,8 @@ a = Analysis(
         (os.path.join(ROOT, 'static'), 'static'),
         (os.path.join(STAGE, 'ffmpeg'), 'ffmpeg'),
         (os.path.join(ROOT, 'LICENSE'), '.'),
+        # The TV app, handed out at /app (python tvapp/build.py first; build.ps1 checks)
+        (os.path.join(ROOT, 'dist', 'TabloView-TV.apk'), 'tvapp'),
     ],
     # uvicorn picks its loop/protocol implementations dynamically; pystray picks its backend;
     # the WinRT startup-task bindings are imported only inside functions (app/startup.py)

@@ -10,10 +10,10 @@ import httpx
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response, JSONResponse
+from fastapi.responses import FileResponse, Response, JSONResponse, RedirectResponse
 
 from .config import (
-    APP_NAME, APP_VERSION, STATIC_DIR, TRANSCODE_DIR, DOWNLOADS_DIR, IMAGE_CACHE_DIR, HOST, PORT,
+    APP_NAME, APP_VERSION, BASE_DIR, RESOURCE_DIR, STATIC_DIR, TRANSCODE_DIR, DOWNLOADS_DIR, IMAGE_CACHE_DIR, HOST, PORT,
 )
 from . import commercials, dropouts, encoders, export_pace, lanauth, netcheck, streaming, whatsnew
 from .settings import exports_dir
@@ -344,6 +344,20 @@ async def serve_index():
 async def serve_tv():
     """TabloView for a TV's browser: a few big screens for a remote (static/tv.js)."""
     return FileResponse(str(STATIC_DIR / "tv.html"), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+
+# The TabloView app for Google TV and Fire TV (tvapp/). On the TV, Downloader fetches it from this PC's
+# address shown on the Device page plus /app, much less to type with a remote than GitHub's link.
+# The installer carries it; a copy without it (Mac, Linux, from source) sends people to GitHub's
+TV_APP_LATEST = "https://github.com/JoeDV/TabloView/releases/latest/download/TabloView-TV.apk"
+
+
+@app.get("/app")
+async def tv_app():
+    for apk in (RESOURCE_DIR / "tvapp" / "TabloView-TV.apk", BASE_DIR / "dist" / "TabloView-TV.apk"):
+        if apk.is_file():
+            return FileResponse(str(apk), media_type="application/vnd.android.package-archive", filename="TabloView-TV.apk")
+    return RedirectResponse(TV_APP_LATEST)
 
 
 if __name__ == "__main__":

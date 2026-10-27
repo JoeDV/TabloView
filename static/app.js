@@ -2904,7 +2904,7 @@ PAGES.help = async (r, token) => {
     <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
   let html;
   try {
-    const res = await fetch('/static/help.html?v=8');
+    const res = await fetch('/static/help.html?v=9');
     if (!res.ok) throw new Error(res.status);
     html = await res.text();
   } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
@@ -3007,7 +3007,7 @@ PAGES.device = async (r, token) => {
         </div>
         ${!info.packaged && !!settings.allow_lan !== !!info.listening_on_network ? `<p style="margin-top:10px;color:var(--warn);font-size:13px;font-weight:600">To apply this, stop TabloView (above) and run its start script again.</p>` : ''}`}
       ${info.listening_on_network && info.network_url ? `<p style="margin-top:12px">On other devices, open <b>${esc(info.network_url)}</b></p>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">In a TV's browser (Silk on Fire TV, TV Bro on Google TV), open <b>${esc(info.network_url)}/tv</b> for big screens you can use with the remote.</p>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">On Google TV or Fire TV, get the <b>TabloView app</b>: in the Downloader app, enter <b>${esc(info.network_url.replace(/^https?:\/\//, ''))}/app</b> (<a href="#/help?topic=help-tv">how</a>). On other TVs, open <b>${esc(info.network_url)}/tv</b> in the TV's browser.</p>
         <div id="lanAccess"></div>` : ''}
     </div>`;
 
