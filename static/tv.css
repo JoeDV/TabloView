@@ -91,6 +91,10 @@ h2 { font-size: 1.7vw; margin: 2.4vw 0 1.2vw; color: var(--dim); font-weight: 60
 .tag.new { background: #2f6b3f; }
 .tag.warn { background: #8d2a2a; }
 .tag.live { background: var(--rec); }
+.tag.caution { background: #8a5a12; }
+.tag.ads { background: #2b4f8f; }
+.detail-tags { margin-top: 1vw; }
+.detail-tags .tag { margin: 0 0.6vw 0 0; font-size: 1.15vw; padding: 0.2vw 0.7vw; }
 
 /* Home: rows that scroll sideways. The padding leaves room for the highlight ring. */
 .shelf { margin-bottom: 1.8vw; }

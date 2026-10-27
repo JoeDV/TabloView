@@ -160,6 +160,27 @@ const art = url => (url ? `style="background-image:url('${esc(url)}')"` : '');
 
 const epLine = e => [fmt.se(e.season_number, e.episode_number), e.title && e.title !== e.show_title ? e.title : ''].filter(Boolean).join(' · ');
 const timeLeft = e => (e.position > 30 && e.status !== 'Watched' && e.duration ? `${fmt.mins((e.actual_duration || e.duration) - e.position)} left` : '');
+
+// How a recording turned out, as the PC's Library says it: recording now, failed, partial or short;
+// the commercial breaks found (or being found) and signal dropouts; protected
+function recTags(e) {
+  const tags = [];
+  const mins = Math.round((e.actual_duration || 0) / 60);
+  if (e.recording_state === 'recording') tags.push(['live', '● Recording']);
+  else if (e.recording_state === 'failed') {
+    // The Tablo can keep going after losing the signal: then nothing's cut short, but parts may be missing
+    if (e.duration && (e.actual_duration || 0) >= e.duration - 60) tags.push(['caution', 'Signal problems']);
+    else tags.push(mins > 0 ? ['caution', `Partial · ${mins}m`] : ['warn', 'Failed']);
+  } else if (e.ended_early) tags.push(['caution', `Short · ${mins}m`]);
+  if (e.commercials === 'done' && e.commercial_breaks) tags.push(['ads', `⏭ ${e.commercial_breaks === 1 ? '1 break' : `${e.commercial_breaks} breaks`}`]);
+  else if (e.commercials === 'done') tags.push(['', 'No breaks found']);
+  else if (e.commercials === 'analyzing') tags.push(['', 'Finding commercials']);
+  else if (e.commercials === 'queued') tags.push(['', 'Commercials: waiting']);
+  if (e.finding_dropouts) tags.push(['', 'Checking signal']);
+  else if ((e.dropouts || []).length) tags.push(['caution', e.dropouts.length === 1 ? '1 dropout' : `${e.dropouts.length} dropouts`]);
+  if (e.protected) tags.push(['', 'Protected']);
+  return tags.map(([kind, text]) => `<span class="tag ${kind}">${esc(text)}</span>`).join('');
+}
 const chNum = c => (c.major > 0 ? `${c.major}.${c.minor}` : '');
 
 // Home: rows to scroll along (Continue watching, On now, Recently recorded, Recording soon), as on the PC
@@ -292,7 +313,7 @@ function renderShow(id) {
       const watched = e.status === 'Watched';
       return `<button class="row f" data-go="#/ep/${encodeURIComponent(e.id)}" data-key="ep-${esc(e.id)}">
         <div class="thumb" ${art(e.snapshot_url)}>${progressBar(watched ? 0 : e.position, e.duration)}</div>
-        <div class="body"><div class="name">${watched ? '' : '<span class="dot"></span>'}${esc([fmt.se(e.season_number, e.episode_number), e.title].filter(Boolean).join(' · '))}${e.recording_state === 'recording' ? '<span class="rec">● REC</span>' : ''}</div>
+        <div class="body"><div class="name">${watched ? '' : '<span class="dot"></span>'}${esc([fmt.se(e.season_number, e.episode_number), e.title].filter(Boolean).join(' · '))}${recTags(e)}</div>
           <div class="meta">${esc([e.air_date ? fmt.day(e.air_date) : '', e.duration ? fmt.mins(e.actual_duration || e.duration) : '', timeLeft(e), e.channel_name].filter(Boolean).join(' · '))}</div></div>
       </button>`;
     }).join('')}</div>` : '<div class="empty">No recordings left.</div>'}`, '#/library');
@@ -308,13 +329,14 @@ async function showEpisode(id) {
   const watched = e.status === 'Watched';
   const resume = !watched && e.position > 30;
   const facts = [e.air_date ? fmt.day(e.air_date) : '', e.channel_name, e.duration ? fmt.mins(e.actual_duration || e.duration) : '',
-    watched ? 'Watched' : timeLeft(e), e.protected ? 'Protected' : '', inList ? 'On your Watch list' : ''].filter(Boolean);
+    watched ? 'Watched' : timeLeft(e), inList ? 'On your Watch list' : ''].filter(Boolean);
   const btn = (act, label, extra = '') => `<button class="btn f ${extra}" data-act="${act}" data-id="${esc(id)}" data-key="${act}">${label}</button>`;
   setScreen(`<div class="detail">
       <div class="detail-body">
         <div class="kicker">${esc(e.show_title || '')}</div>
         <h1>${esc(epLine(e) || e.show_title || 'Recording')}</h1>
-        <div class="meta">${esc(facts.join(' · '))}${e.recording_state === 'recording' ? '<span class="rec">● Recording now</span>' : ''}</div>
+        <div class="meta">${esc(facts.join(' · '))}</div>
+        ${recTags(e) ? `<div class="detail-tags">${recTags(e)}</div>` : ''}
         ${e.description ? `<p class="desc">${esc(e.description)}</p>` : ''}
         <div class="actions">
           ${resume ? `<div class="pair">${btn('play-resume', `▶ Resume at ${fmt.clock(e.position)}`, 'primary')}${btn('play-start', 'Start over')}</div>` : btn('play-start', '▶ Play', 'primary')}
