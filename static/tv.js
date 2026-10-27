@@ -1218,6 +1218,9 @@ function onClick(e) {
   if (!el) return;
   if (el.dataset.choice !== undefined && dialogDone) return dialogDone(Number(el.dataset.choice));
   if (el.dataset.go) {
+    // A page picked in the menu with a tap or click: the menu closes (it stayed open, holding the focus,
+    // until a tap elsewhere). With the remote, the page's first tile takes the focus once it's loaded
+    if (el.classList.contains('nav') && e.detail > 0) el.blur();
     const home = (location.hash || '#/') === '#/';
     // Between the menu's pages, Back goes to Home rather than through each one
     if (el.classList.contains('nav') && !home) location.replace(el.dataset.go === '#/' ? '#/' : el.dataset.go);
