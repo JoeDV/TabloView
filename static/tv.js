@@ -934,6 +934,7 @@ function onClick(e) {
     state.focus['#/library'] = `lib-${el.dataset.layout}`;
     showLibrary();
   }
+  else if (act === 'app-address') APP.changeAddress();
   else if (act === 'pc-view') {
     try { localStorage.setItem('tv_view', 'pc'); } catch { /* the PC page opens anyway */ }
     location.href = '/';
@@ -943,8 +944,10 @@ function onClick(e) {
 function tickClock() { $('#clock').textContent = fmt.time(Date.now()); }
 
 function init() {
-  // In the app, PC view can't be used (no pointer); the address is changed with the remote's Menu button
-  if (APP) document.querySelector('[data-act="pc-view"]')?.remove();
+  // In the app, PC view can't be used (no pointer): its place changes which PC the app uses (as the
+  // remote's Menu button does; not every remote has one)
+  const pcView = document.querySelector('[data-act="pc-view"]');
+  if (APP && pcView) Object.assign(pcView, { textContent: 'PC address' }).dataset.act = 'app-address';
   // TV view is now this browser's view: the plain address opens it from here on (PC view undoes it)
   try { localStorage.setItem('tv_view', 'tv'); } catch { /* storage unavailable: /tv still works */ }
   document.addEventListener('keydown', onKey);
