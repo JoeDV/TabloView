@@ -256,6 +256,19 @@ async def lan_activity_clear(request: Request):
     return {"success": True}
 
 
+def _network_path(path: str) -> str:
+    """A folder on a mapped network drive (Z:\\TV) as its network path (\\\\NAS\\Plex\\TV): drive letters
+    belong to one Windows sign-in and are reconnected only when someone opens them, so after a restart
+    TabloView might not find Z: at all, while \\\\NAS\\Plex always works."""
+    if sys.platform != "win32" or len(path) < 2 or path[1] != ":":
+        return path
+    import ctypes
+    buf, size = ctypes.create_unicode_buffer(1024), ctypes.c_ulong(1024)
+    if ctypes.windll.mpr.WNetGetConnectionW(path[:2], buf, ctypes.byref(size)) != 0:
+        return path  # a local drive (or not connected)
+    return buf.value.rstrip("\\") + path[2:]
+
+
 @router.post("/system/export_folder")
 async def set_export_folder(req: ExportFolderRequest, request: Request):
     """Choose where MP4 exports are saved (on this PC only). The folder is created if needed and must
@@ -263,7 +276,7 @@ async def set_export_folder(req: ExportFolderRequest, request: Request):
     _only_this_pc(request)
     path = (req.path or "").strip().strip('"')
     if path:
-        p = Path(path).expanduser()
+        p = Path(_network_path(path)).expanduser()
         if not p.is_absolute():
             raise HTTPException(status_code=400, detail="Use a full folder path, like D:\\Videos\\Tablo")
         try:
@@ -272,10 +285,85 @@ async def set_export_folder(req: ExportFolderRequest, request: Request):
             probe.write_bytes(b"")
             probe.unlink()
         except OSError as e:
-            raise HTTPException(status_code=400, detail=f"TabloView can't save to that folder: {e.strerror or e}")
+            hint = (" If it's a network drive, use its network path instead, like \\\\NAS\\Plex\\TV"
+                    if sys.platform == "win32" and len(path) > 1 and path[1] == ":" else "")
+            raise HTTPException(status_code=400, detail=f"TabloView can't save to that folder: {e.strerror or e}.{hint}")
         path = str(p)
     save_settings({"export_folder": path or None})
     return {"downloads_dir": str(exports_dir()), "custom": bool(path)}
+
+
+# Windows' own folder picker (the one Explorer's Open dialogs use): Network and Quick access on the
+# left, and an address bar to type or paste \\server\share. The older FolderBrowserDialog was a bare
+# tree that often didn't list network shares at all and had nowhere to type one (2026-10-28: a Plex
+# folder on a network drive couldn't be chosen).
+_PICKER_CS = r"""
+using System;
+using System.Runtime.InteropServices;
+public static class TabloViewPicker {
+    [ComImport, Guid("DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7")] class FileOpenDialog {}
+    [ComImport, Guid("42f85136-db7e-439c-85f1-e4075d135fc8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IFileDialog {
+        [PreserveSig] int Show(IntPtr owner);
+        void SetFileTypes(uint count, IntPtr types);
+        void SetFileTypeIndex(uint index);
+        void GetFileTypeIndex(out uint index);
+        void Advise(IntPtr events, out uint cookie);
+        void Unadvise(uint cookie);
+        void SetOptions(uint options);
+        void GetOptions(out uint options);
+        void SetDefaultFolder(IShellItem item);
+        void SetFolder(IShellItem item);
+        void GetFolder(out IShellItem item);
+        void GetCurrentSelection(out IShellItem item);
+        void SetFileName([MarshalAs(UnmanagedType.LPWStr)] string name);
+        void GetFileName([MarshalAs(UnmanagedType.LPWStr)] out string name);
+        void SetTitle([MarshalAs(UnmanagedType.LPWStr)] string title);
+        void SetOkButtonLabel([MarshalAs(UnmanagedType.LPWStr)] string label);
+        void SetFileNameLabel([MarshalAs(UnmanagedType.LPWStr)] string label);
+        void GetResult(out IShellItem item);
+    }
+    [ComImport, Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IShellItem {
+        void BindToHandler(IntPtr pbc, ref Guid bhid, ref Guid riid, out IntPtr ppv);
+        void GetParent(out IShellItem parent);
+        void GetDisplayName(uint sigdn, [MarshalAs(UnmanagedType.LPWStr)] out string name);
+        void GetAttributes(uint mask, out uint attribs);
+        void Compare(IShellItem other, uint hint, out int order);
+    }
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
+    static extern void SHCreateItemFromParsingName(string path, IntPtr pbc, ref Guid riid, out IShellItem item);
+
+    public static string Pick(IntPtr owner, string title, string start) {
+        IFileDialog d = (IFileDialog)new FileOpenDialog();
+        d.SetOptions(0x20 | 0x40 | 0x800);  // pick folders, real folders only, must exist
+        d.SetTitle(title);
+        d.SetOkButtonLabel("Use this folder");
+        try {
+            Guid iid = typeof(IShellItem).GUID;
+            IShellItem folder;
+            SHCreateItemFromParsingName(start, IntPtr.Zero, ref iid, out folder);
+            d.SetFolder(folder);
+        } catch (Exception) { }  // the current folder is gone or unreachable: start wherever Windows does
+        if (d.Show(owner) != 0) return null;  // cancelled
+        IShellItem result;
+        d.GetResult(out result);
+        string path;
+        result.GetDisplayName(0x80058000, out path);  // the file system path, \\server\share\... for a network folder
+        return path;
+    }
+}
+"""
+
+_PICKER_PS = (
+    "[Console]::OutputEncoding = [Text.Encoding]::UTF8; Add-Type -AssemblyName System.Windows.Forms; "
+    "Add-Type -TypeDefinition $env:TABLOVIEW_PICKER_CS; "
+    "$owner = New-Object System.Windows.Forms.Form -Property @{TopMost = $true; ShowInTaskbar = $false; "
+    "Opacity = 0; FormBorderStyle = 'None'; StartPosition = 'CenterScreen'; Width = 1; Height = 1}; "
+    "$owner.Show(); $owner.Activate(); "
+    "$p = [TabloViewPicker]::Pick($owner.Handle, 'Where should TabloView save MP4 exports?', $env:TABLOVIEW_PICK_START); "
+    "$owner.Close(); if ($p) { 'PICKED:' + $p } else { 'CANCELLED' }"
+)
 
 
 @router.post("/system/pick_folder")
@@ -288,22 +376,13 @@ async def pick_folder(request: Request):
     # left the picker opening behind other windows (or not visibly at all), and nothing said so.
     # PICKED:/CANCELLED tell a choice from a PowerShell that failed (blocked by security software,
     # for one), which used to look exactly like Cancel.
-    script = (
-        "[Console]::OutputEncoding = [Text.Encoding]::UTF8; Add-Type -AssemblyName System.Windows.Forms; "
-        "$d = New-Object System.Windows.Forms.FolderBrowserDialog; "
-        "$d.Description = 'Where should TabloView save MP4 exports?'; $d.ShowNewFolderButton = $true; "
-        "$d.SelectedPath = $env:TABLOVIEW_PICK_START; "
-        "$owner = New-Object System.Windows.Forms.Form -Property @{TopMost = $true; ShowInTaskbar = $false; "
-        "Opacity = 0; FormBorderStyle = 'None'; StartPosition = 'CenterScreen'; Width = 1; Height = 1}; "
-        "$owner.Show(); $owner.Activate(); "
-        "if ($d.ShowDialog($owner) -eq 'OK') { 'PICKED:' + $d.SelectedPath } else { 'CANCELLED' }; $owner.Close()"
-    )
     try:
-        # The starting folder goes in through the environment, not the script: PowerShell also ends a
-        # quoted string at curly quotes, so a folder like "Joe’s Videos" would break it
-        r = await asyncio.to_thread(subprocess.run, ["powershell", "-NoProfile", "-STA", "-Command", script],
+        # The starting folder and the C# go in through the environment, not the script: PowerShell also
+        # ends a quoted string at curly quotes, so a folder like "Joe’s Videos" would break it
+        r = await asyncio.to_thread(subprocess.run, ["powershell", "-NoProfile", "-STA", "-Command", _PICKER_PS],
                                     capture_output=True, timeout=600, creationflags=subprocess.CREATE_NO_WINDOW,
-                                    env={**os.environ, "TABLOVIEW_PICK_START": str(exports_dir())})
+                                    env={**os.environ, "TABLOVIEW_PICK_START": str(exports_dir()),
+                                         "TABLOVIEW_PICKER_CS": _PICKER_CS})
     except subprocess.TimeoutExpired:
         return {"path": None}
     except OSError as e:

@@ -1349,10 +1349,11 @@ function signalPanel(sig) {
 }
 
 // Where MP4 exports go: the Windows folder picker on the PC, or a typed path where there isn't one
-async function chooseExportFolder(btn) {
+async function chooseExportFolder(btn, typed = false) {
   let path = null;
   btn.disabled = true;
   try {
+    if (typed) throw Object.assign(new Error(''), { status: 0 });
     toast('Choose a folder in the window that opened (it may be behind the browser)');
     path = (await api('/api/system/pick_folder', { method: 'POST' })).path;
     if (!path) return;
@@ -1377,7 +1378,7 @@ function promptExportFolder(why = '', current = '') {
   return openModal(`
     <form class="dialog-body" id="folderForm">
       <div class="dialog-title">Save exports to</div>
-      <div class="dialog-text">${esc(why)}Type the full path of a folder on this computer, for example <code>${esc(example)}</code>. It's created if it doesn't exist.</div>
+      <div class="dialog-text">${esc(why)}Type the full path of a folder, for example <code>${esc(example)}</code>${/Win/.test(navigator.platform) ? ', or a network folder such as <code>\\\\NAS\\Plex\\TV</code>' : ''}. It's created if it doesn't exist.</div>
       <input class="input" id="folderInput" style="width:100%;margin-top:12px" value="${esc(current)}" data-autofocus>
     </form>
     <div class="dialog-foot">
@@ -3330,6 +3331,7 @@ PAGES.device = async (r, token) => {
           <span style="flex-shrink:0">Save exports to</span>
           <code class="path-box" title="${esc(info.downloads_dir || '')}">${esc(info.downloads_dir || '')}</code>
           <button class="btn btn-sm" data-action="export-folder">Change…</button>
+          <button class="btn btn-sm btn-ghost" data-action="export-folder-type" title="Type or paste a folder's path, such as a network folder">Type a path…</button>
           ${info.downloads_dir && info.default_downloads_dir && info.downloads_dir !== info.default_downloads_dir
             ? '<button class="btn btn-sm btn-ghost" data-action="export-folder-reset">Reset</button>' : ''}
         </div>
@@ -5430,6 +5432,7 @@ const ACTIONS = {
   'help-jump': (el, e) => { if (e) e.preventDefault(); document.getElementById(el.dataset.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
   'pb-shape': el => pictureShape.menu(el),
   'export-folder': el => chooseExportFolder(el),
+  'export-folder-type': el => chooseExportFolder(el, true),
   'export-folder-reset': async () => {
     try { await api('/api/system/export_folder', { method: 'POST', body: JSON.stringify({ path: null }) }); toast('Exports will be saved to Downloads\\TabloView again'); route(); }
     catch (err) { toast(err.message, 'error'); }
