@@ -170,7 +170,7 @@ async def scan(folder: Path) -> str:
         r = await c.get(f"{server['uri']}/library/sections/{library['key']}/refresh", params={"path": plex_path},
                         headers=_headers(server["token"]))
         if r.status_code == 401:
-            return "Plex didn't accept TabloView's sign-in any more: sign in to Plex again (Device → Plex)"
+            return "Plex didn't accept TabloView's sign-in any more: sign in to Plex again (Settings → Plex)"
         r.raise_for_status()
     return f"Asked {server['name']} to scan {plex_path} ({library['title']})"
 
@@ -187,7 +187,7 @@ async def scan_after_export(output_path: Path) -> None:
 
 
 async def status() -> Dict[str, Any]:
-    """For Device → Plex: signed in or not, the server, and the library exports go into."""
+    """For Settings → Plex: signed in or not, the server, and the library exports go into."""
     s = load_settings()
     out: Dict[str, Any] = {"signed_in": bool(s.get("plex_token")), "scan": s.get("plex_scan", True),
                            "export_folder": str(exports_dir()), "server": None}

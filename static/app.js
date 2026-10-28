@@ -1,6 +1,6 @@
 /**
  * TabloView — single-page client.
- * Hash-routed pages (Home, Library, Show, Guide, Series, Live TV, Scheduled, Downloads, Device),
+ * Hash-routed pages (Home, Library, Show, Guide, Series, Live TV, Scheduled, Downloads, Settings),
  * delegated event handling via data-action / data-input / data-change attributes.
  */
 'use strict';
@@ -104,7 +104,7 @@ function askForPin(code) {
   pinScreen.className = 'pin-screen';
   pinScreen.innerHTML = code === 'pin_not_set'
     ? `<div class="pin-box"><div class="brand-mark" data-icon="tv"></div><h2>TabloView</h2>
-        <p>To use TabloView on this device, first set a PIN on the PC running TabloView: <b>Device → Network access</b>.</p>
+        <p>To use TabloView on this device, first set a PIN on the PC running TabloView: <b>Settings → Network access</b>.</p>
         <button class="btn btn-primary" onclick="location.reload()">Try again</button></div>`
     : `<form class="pin-box" id="pinForm"><div class="brand-mark" data-icon="tv"></div><h2>TabloView</h2>
         <p>Enter the PIN to use TabloView on this device.</p>
@@ -217,7 +217,7 @@ const RULE_LABEL = { new: 'Recording new', all: 'Recording all', none: 'Record' 
 const store = (k, fallback) => { try { return localStorage.getItem(k) ?? fallback; } catch { return fallback; } };
 const save = (k, v) => { try { localStorage.setItem(k, v); } catch { /* storage unavailable */ } };
 
-// Device → Appearance → Open TabloView on (per browser)
+// Settings → Appearance → Open TabloView on (per browser)
 const START_PAGES = [['home', 'Home'], ['library', 'Library'], ['guide', 'Guide'], ['live', 'Live TV'], ['scheduled', 'Scheduled']];
 
 const state = {
@@ -709,6 +709,8 @@ function route() {
   const signedOut = !!(state.status && !state.status.authenticated);
   document.body.classList.toggle('signed-out', signedOut || r.name === 'welcome');
   if (signedOut && r.name !== 'welcome') { location.replace('#/welcome'); return; }
+  // The Settings page was called Device: old links and bookmarks still land on it
+  if (r.name === 'device') { location.replace(location.hash.replace('#/device', '#/settings')); return; }
   if (!signedOut && r.name === 'welcome' && !state.pickingDevice) { location.replace('#/'); return; }
 
   const token = ++routeToken;
@@ -1323,7 +1325,7 @@ async function rerecordDialog(id) {
               ? '<span class="tag tag-accent">Set to record</span>'
               : `<button class="btn btn-sm btn-primary" data-action="rerecord-pick" data-path="${esc(a.path)}">${icon('plus', 14)}Record this one</button>`}
           </div>`).join('')}</div>`
-        : `<div class="dialog-text">It doesn’t air again in the next two weeks of the guide. With “Record failed recordings again” on (Device page), TabloView keeps checking and records it if it comes up.</div>`}
+        : `<div class="dialog-text">It doesn’t air again in the next two weeks of the guide. With “Record failed recordings again” on (Settings page), TabloView keeps checking and records it if it comes up.</div>`}
     </div>
     <div class="dialog-foot"><button class="btn" data-action="modal-ok" data-autofocus>Close</button></div>`);
 }
@@ -3103,7 +3105,7 @@ async function fillCredits(guide) {
 
 PAGES.downloads = async (r, token) => {
   paint(`<div class="page">
-    <div class="page-head"><div><h1 class="page-title">Downloads</h1><div class="page-sub">MP4 exports saved to this computer (choose the folder under <a href="#/device?tab=storage">Device → Storage → Exports</a>)</div></div></div>
+    <div class="page-head"><div><h1 class="page-title">Downloads</h1><div class="page-sub">MP4 exports saved to this computer (choose the folder under <a href="#/settings?tab=storage">Settings → Storage → Exports</a>)</div></div></div>
     <div id="dlList"><div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>
   </div>`);
   const refresh = async () => {
@@ -3137,9 +3139,9 @@ function renderDownloads(jobs) {
 }
 
 // ---------------------------------------------------------------------------
-// Device
+// Settings
 // ---------------------------------------------------------------------------
-PAGES.device = async (r, token) => {
+PAGES.settings = async (r, token) => {
   const [, , info, settings, space, boot, playback, signal] = await Promise.all([
     loadStatus(), loadStorage(),
     api('/api/system/info').catch(() => ({})),
@@ -3386,10 +3388,10 @@ PAGES.device = async (r, token) => {
     ['diagnostics', 'Diagnostics', diagnosticsPanel],
   ];
   const current = TABS.find(([id]) => id === r.query.get('tab')) || TABS[0];
-  const tab = ([id, label]) => `<a href="#/device${id === 'general' ? '' : `?tab=${id}`}" class="${id === current[0] ? 'active' : ''}" style="display:inline-flex;align-items:center;height:28px;padding:0 12px;border-radius:7px;font-weight:500;font-size:13px">${label}</a>`;
+  const tab = ([id, label]) => `<a href="#/settings${id === 'general' ? '' : `?tab=${id}`}" class="${id === current[0] ? 'active' : ''}" style="display:inline-flex;align-items:center;height:28px;padding:0 12px;border-radius:7px;font-weight:500;font-size:13px">${label}</a>`;
 
   paint(`<div class="page">
-    <div class="page-head"><div><h1 class="page-title">Device</h1><div class="page-sub">Your Tablo and TabloView's settings</div></div></div>
+    <div class="page-head"><div><h1 class="page-title">Settings</h1><div class="page-sub">Your Tablo and TabloView's settings</div></div></div>
     <div class="toolbar"><div class="segmented tabs">${TABS.map(tab).join('')}</div></div>
     <div class="panel-grid">
 ${current[2]}
@@ -3399,7 +3401,7 @@ ${current[2]}
   if (current[0] === 'desktop') { loadNetwork(token); loadLanActivity(token); if (info.listening_on_network) loadLanAccess(token, info); }
 };
 
-// Device → Plex: sign in, choose the server, and have Plex scan each new export (app/plex.py)
+// Settings → Plex: sign in, choose the server, and have Plex scan each new export (app/plex.py)
 async function loadPlex(token) {
   let d;
   try { d = await api('/api/plex'); } catch (err) { d = { error: err.message }; }
@@ -3423,19 +3425,21 @@ async function loadPlex(token) {
       <div class="panel-actions"><button class="btn btn-sm btn-ghost" data-action="plex-signout">Sign out of Plex</button></div>`;
   } else {
     const lib = d.export_library;
-    const where = d.error ? `<span style="color:var(--warn)">${esc(d.error)}</span>`
-      : lib ? `${esc(lib.title)} <span class="dim">(${esc(lib.path)})</span>`
-      : `<span style="color:var(--warn)">Your export folder (${esc(d.export_folder)}) isn’t in any of this server’s libraries.</span> Add it to a TV Shows library in Plex, or save exports to a folder that’s in one (<a href="#/device?tab=storage">Storage → Exports</a>).`;
+    // The export folder is set in one place (Storage → Exports); this only says which library it lands in
+    const library = d.error ? `<span style="color:var(--warn)">${esc(d.error)}</span>`
+      : lib ? `${esc(lib.title)} <span class="dim">(Plex sees it as ${esc(lib.path)})</span>`
+      : '<span style="color:var(--warn)">None: this folder isn’t in any of this server’s libraries.</span> Add it to a TV Shows library in Plex, or choose a folder that’s in one.';
     body = `<div class="panel-sub">Connected</div>
       <dl class="kv">
         <dt>Server</dt><dd>${esc(d.server.name)} <span class="dim">(${esc(d.server.uri)})</span></dd>
-        <dt>Exports go to</dt><dd>${where}</dd>
+        <dt>Export folder</dt><dd>${esc(d.export_folder)} <span class="dim">· <a href="#/settings?tab=storage">change it in Storage → Exports</a></span></dd>
+        <dt>Plex library</dt><dd>${library}</dd>
       </dl>
       <label class="switch-row" style="margin-top:14px">
         <input type="checkbox" class="switch" data-change="plex-scan" ${d.scan ? 'checked' : ''}>
         <span>Ask Plex to scan each new export</span>
       </label>
-      <p class="dim" style="margin-top:6px;font-size:12.5px">${intro} Turn on <b>Sort exports into show and season folders</b> (<a href="#/device?tab=storage">Storage → Exports</a>) so Plex recognizes each show.</p>
+      <p class="dim" style="margin-top:6px;font-size:12.5px">${intro} Turn on <b>Sort exports into show and season folders</b> (<a href="#/settings?tab=storage">Storage → Exports</a>) so Plex recognizes each show.</p>
       <div class="panel-actions">
         <button class="btn btn-sm" data-action="plex-scan-now" ${lib ? '' : 'disabled'}>Scan now</button>
         <button class="btn btn-sm btn-ghost" data-action="plex-signout">Sign out of Plex</button>
@@ -3472,7 +3476,7 @@ async function plexSignin(btn) {
   }
 }
 
-// Device → Desktop & network: how the Tablo and this PC are connected, and a test of the link
+// Settings → Desktop & network: how the Tablo and this PC are connected, and a test of the link
 // between them (app/netcheck.py)
 function networkPanel() {
   return `
@@ -6006,7 +6010,7 @@ function wireEvents() {
 // Boot
 // ---------------------------------------------------------------------------
 async function init() {
-  // This browser chose TV view (Device → Appearance, or by opening /tv): go straight there
+  // This browser chose TV view (Settings → Appearance, or by opening /tv): go straight there
   if (store('tv_view', 'pc') === 'tv') { location.replace('/tv'); return; }
   hydrateIcons();
   wireEvents();

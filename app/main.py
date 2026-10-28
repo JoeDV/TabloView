@@ -175,7 +175,7 @@ async def request_guard(request: Request, call_next):
     why = lanauth.blocked(path, client, request.cookies.get(lanauth.COOKIE), request.headers)
     if why == "lan_off":
         message = ("Network access is off on the PC running TabloView. To use it from this device, turn on "
-                   "Allow other devices on my network there, under Device → Desktop & network.")
+                   "Allow other devices on my network there, under Settings → Desktop & network.")
         if path.startswith("/api/") or path.startswith("/downloads/"):
             return JSONResponse({"detail": message, "code": why}, status_code=403)
         return HTMLResponse(f"<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
@@ -183,9 +183,9 @@ async def request_guard(request: Request, call_next):
                             f"<h2>TabloView</h2><p>{message}</p>", status_code=403)
     if why:
         message = ("Enter the PIN to use TabloView on this device." if why == "pin_required" else
-                   "Set a PIN on the PC running TabloView (Device page) to use it from other devices.")
+                   "Set a PIN on the PC running TabloView (Settings page) to use it from other devices.")
         return JSONResponse({"detail": message, "code": why}, status_code=401)
-    # A signed-in device: noted for the Device page's list of devices using TabloView
+    # A signed-in device: noted for the Settings page's list of devices using TabloView
     if path.startswith("/api/") and path not in lanauth.PUBLIC_PATHS and not lanauth.from_this_pc(request):
         lanauth.note_seen(client, request.headers.get("user-agent"))
     return await call_next(request)
@@ -366,7 +366,7 @@ async def serve_tv():
 
 
 # The TabloView app for Google TV and Fire TV (tvapp/). On the TV, Downloader fetches it from this PC's
-# address shown on the Device page plus /app, much less to type with a remote than GitHub's link.
+# address shown on the Settings page plus /app, much less to type with a remote than GitHub's link.
 # The installer carries it; a copy without it (Mac, Linux, from source) sends people to GitHub's
 TV_APP_LATEST = "https://github.com/JoeDV/TabloView/releases/latest/download/TabloView-TV.apk"
 

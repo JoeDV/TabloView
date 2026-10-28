@@ -517,7 +517,7 @@ def _ended_since_sync(sync_age: float) -> bool:
 
 async def auto_sync_loop(service: "LibrarySyncService"):
     """Background schedule: recordings every N minutes (setting), guide every GUIDE_SYNC_HOURS.
-    Re-reads settings each minute so changes on the Device page apply without a restart."""
+    Re-reads settings each minute so changes on the Settings page apply without a restart."""
     from .settings import load_settings, GUIDE_SYNC_HOURS
     from .database import get_sync_meta
 

@@ -1,4 +1,4 @@
-"""Network status (Device → Desktop & network): how the Tablo says it's connected, how this PC is,
+"""Network status (Settings → Desktop & network): how the Tablo says it's connected, how this PC is,
 and a test of the link between them, response time and how fast a recording arrives, so "it keeps
 pausing" can be told apart from a slow PC."""
 

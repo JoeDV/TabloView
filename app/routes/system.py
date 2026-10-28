@@ -129,7 +129,7 @@ async def stop_tabloview(request: Request):
         raise HTTPException(status_code=400, detail="Quit TabloView from its icon in the system tray")
     if not lanauth.from_this_pc(request):
         raise HTTPException(status_code=403, detail="TabloView can only be stopped on the computer running it")
-    print("[System] Stopping TabloView (Stop TabloView on the Device page)")
+    print("[System] Stopping TabloView (Stop TabloView on the Settings page)")
     request_stop()
     return {"stopping": True}
 
@@ -156,7 +156,7 @@ async def lan_status(request: Request):
 async def lan_login(req: PinRequest, request: Request):
     """Another device signs in with the PIN and is remembered for a while."""
     if not lanauth.pin_set():
-        raise HTTPException(status_code=401, detail="Set a PIN on the PC running TabloView first (Device page).")
+        raise HTTPException(status_code=401, detail="Set a PIN on the PC running TabloView first (Settings page).")
     address, ua = lanauth.client_address(request) or "?", request.headers.get("user-agent")
     ok, wait = await asyncio.to_thread(lanauth.check_pin, req.pin, address)  # not on the server's loop
     if not ok:
@@ -525,7 +525,7 @@ async def get_playback():
 
 @router.get("/system/signal")
 async def signal_report():
-    """Per channel: how many recordings had problems, why, and when (Device → Signal health)."""
+    """Per channel: how many recordings had problems, why, and when (Settings → Signal health)."""
     from .. import signal_health
     await asyncio.to_thread(signal_health.update_history)
     return {"channels": signal_health.report(), "days": signal_health.REPORT_DAYS}

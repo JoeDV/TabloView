@@ -132,7 +132,7 @@ def check() -> List[Dict[str, Any]]:
             when = f", {c['when']}" if c["when"] else ""
             send("Recording problems on one channel",
                  f"{c['channel']} {c['call_sign']}: {c['problems']} of {c['recordings']} recordings had problems"
-                 f"{reason}{when}. Device → Signal health has tips.")
+                 f"{reason}{when}. Settings → Signal health has tips.")
         if flagged:
             set_sync_meta("signal_notified", json.dumps(notified))
         return flagged

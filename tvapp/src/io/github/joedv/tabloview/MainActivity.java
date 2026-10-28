@@ -135,14 +135,14 @@ public class MainActivity extends Activity {
         dialog = new AlertDialog.Builder(this)
                 .setTitle("TabloView wasn't found")
                 .setMessage("Check that the computer running TabloView is on, and that network access is turned on "
-                        + "in TabloView (Device → Desktop & network on the computer).")
+                        + "in TabloView (Settings → Desktop & network on the computer).")
                 .setPositiveButton("Look again", (d, w) -> find())
                 .setNegativeButton("Type the address", (d, w) -> ask())
                 .setCancelable(false)
                 .show();
     }
 
-    /** Type the address shown on the computer (Device → Desktop & network), e.g. 192.168.1.50. */
+    /** Type the address shown on the computer (Settings → Desktop & network), e.g. 192.168.1.50. */
     private void ask() {
         dismiss();
         final EditText input = new EditText(this);
@@ -152,7 +152,7 @@ public class MainActivity extends Activity {
         input.setSelection(input.getText().length());
         dialog = new AlertDialog.Builder(this)
                 .setTitle("TabloView's address")
-                .setMessage("As shown on the computer under Device → Desktop & network, for example 192.168.1.50:7070")
+                .setMessage("As shown on the computer under Settings → Desktop & network, for example 192.168.1.50:7070")
                 .setView(input)
                 .setPositiveButton("Connect", (d, w) -> use(normalize(input.getText().toString())))
                 .setNeutralButton("Find it for me", (d, w) -> find())

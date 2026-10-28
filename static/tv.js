@@ -51,7 +51,7 @@ const svg = name => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" 
 const state = {
   live: null,        // /api/live/epg
   liveTab: 'ota',    // Antenna or Streaming channels
-  shapes: {},        // picture shapes per channel, chosen on the PC (Device page player)
+  shapes: {},        // picture shapes per channel, chosen on the PC (Settings page player)
   focus: {},         // screen -> data-key focused last, so Back returns to the same tile
   eps: new Map(),    // recordings seen on any screen, by ID: what a recording's page shows
   shows: {},         // show ID -> /api/shows/episodes, for switching seasons without asking again
@@ -663,7 +663,7 @@ function showPin(code) {
   if (!box.classList.contains('hidden')) return;
   box.innerHTML = code === 'pin_not_set'
     ? `<div class="dialog-box"><div class="dialog-title">Set a PIN on the PC first</div>
-        <div class="dialog-text">On the PC running TabloView, open the Device page and set a PIN for other devices under Network access. Then try again here.</div>
+        <div class="dialog-text">On the PC running TabloView, open the Settings page and set a PIN for other devices under Network access. Then try again here.</div>
         <div class="dialog-actions"><button class="btn primary f" data-act="reload">Try again</button></div></div>`
     : `<form class="dialog-box" id="pinForm"><div class="dialog-title">Enter the PIN</div>
         <div class="dialog-text">The PIN set on the PC running TabloView. This TV is remembered afterwards.</div>
@@ -873,7 +873,7 @@ const player = {
   },
 
   // Commercial breaks found in this recording, and signal dropouts: marked on the bar, skipped
-  // automatically when that's on (Device → Playback, the same settings as the PC), else OK skips
+  // automatically when that's on (Settings → Playback, the same settings as the PC), else OK skips
   async loadBreaks(s) {
     let res;
     try { res = await api(`/api/episodes/${encodeURIComponent(s.id)}/commercials`); } catch { return; }

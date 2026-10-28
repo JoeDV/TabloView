@@ -8,7 +8,7 @@ hash. After MAX_TRIES wrong PINs from one address, that address waits LOCKOUT_SE
 each time it happens again (up to LOCKOUT_MAX_SECONDS), until the right PIN or a quiet day.
 
 Sign-ins, wrong PINs and lockouts are kept in ACTIVITY_FILE, with the devices that used TabloView and
-when, for the Device page (on this PC only).
+when, for the Settings page (on this PC only).
 
 Pages, scripts and styles stay public (they hold no data); /api/* and /downloads/* need the PIN. With
 network access off, other devices get nothing at all, however TabloView was started.
@@ -165,7 +165,7 @@ def _check_pin(pin: str, address: str, now: float) -> Tuple[bool, int]:
 
 
 def network_access_on() -> bool:
-    """Device → Desktop & network → "Allow other devices on my network"."""
+    """Settings → Desktop & network → "Allow other devices on my network"."""
     return bool(load_settings().get("allow_lan"))
 
 

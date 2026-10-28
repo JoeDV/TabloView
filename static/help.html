@@ -34,7 +34,7 @@
       <tr><td>Scheduled</td><td>Your series recordings and every upcoming recording, with conflicts</td></tr>
       <tr><td>Antenna</td><td>A helper for aiming your antenna, with a live picture-quality readout</td></tr>
       <tr><td>Downloads</td><td>MP4 exports in progress and finished</td></tr>
-      <tr><td>Device</td><td>Your Tablo's details and TabloView's settings</td></tr>
+      <tr><td>Settings</td><td>Your Tablo's details and TabloView's settings</td></tr>
       <tr><td>Help</td><td>This guide</td></tr>
     </tbody>
   </table>
@@ -103,7 +103,7 @@
     <li><b>New episodes the Tablo won't record:</b> some Tablos skip episodes the guide marks new in Record New series; these are listed with a Record button.</li>
     <li><b>Add to calendar:</b> add your upcoming recordings to Google Calendar, Outlook or Apple Calendar.</li>
   </ul>
-  <p>If a recording fails or comes out short, TabloView can schedule a rerun automatically (<a href="#/device">Device → General</a> → Record failed recordings again).</p>
+  <p>If a recording fails or comes out short, TabloView can schedule a rerun automatically (<a href="#/settings">Settings → General</a> → Record failed recordings again).</p>
 </section>
 
 <section id="help-watchlist">
@@ -123,11 +123,11 @@
   <ol>
     <li>On a show's page, turn on <b>Skip commercials</b>. TabloView finds the breaks in that show's unwatched recordings, newest first. For a single recording, use <b>Find commercials</b> in its <b>⋯</b> menu. For a series that hasn't recorded yet, the same switch is on its page in the Guide (or open it from Scheduled).</li>
     <li>Breaks appear as marks on the player's timeline. When one comes up, press <b>Skip break</b> (or <kbd>S</kbd>).</li>
-    <li>To skip them without pressing anything, turn on <a href="#/device?tab=playback">Device → Playback</a> → <b>Skip commercial breaks automatically</b>.</li>
+    <li>To skip them without pressing anything, turn on <a href="#/settings?tab=playback">Settings → Playback</a> → <b>Skip commercial breaks automatically</b>.</li>
   </ol>
   <p>It looks for the channel's logo in the corner of the picture (most networks take it off during ads), the moment of black and silence at the edges of a break, and how different the picture looks from the show. When it isn't sure, it leaves a few seconds of ad in rather than cut into the show, and it never skips past the end of the show.</p>
   <p>Finding breaks takes a few minutes per recording and pauses while you watch or export, so it doesn't slow anything down. It keeps going with the browser closed, as long as TabloView is running.</p>
-  <p><b>Signal dropouts:</b> when your Tablo says a recording didn't come in cleanly, TabloView finds where a weak signal broke up the picture and marks those parts in red on the timeline. Skip them with <b>Skip dropout</b> (or <kbd>S</kbd>), or automatically with <a href="#/device?tab=playback">Device → Playback</a>.</p>
+  <p><b>Signal dropouts:</b> when your Tablo says a recording didn't come in cleanly, TabloView finds where a weak signal broke up the picture and marks those parts in red on the timeline. Skip them with <b>Skip dropout</b> (or <kbd>S</kbd>), or automatically with <a href="#/settings?tab=playback">Settings → Playback</a>.</p>
 </section>
 
 <section id="help-tv">
@@ -135,7 +135,7 @@
   <p>Other devices at home can use TabloView through a browser, while the PC running it does the work; that PC has to stay on.</p>
   <p><b>Turn on network access</b> (on the PC):</p>
   <ol>
-    <li>Go to <a href="#/device?tab=desktop">Device → Desktop &amp; network</a> and turn on network access. If Windows Firewall asks, allow TabloView on <b>Private</b> networks.</li>
+    <li>Go to <a href="#/settings?tab=desktop">Settings → Desktop &amp; network</a> and turn on network access. If Windows Firewall asks, allow TabloView on <b>Private</b> networks.</li>
     <li>Set a <b>PIN</b>. Other devices enter it once and are remembered for 90 days; the PC itself never asks. After 5 wrong tries a device has to wait a minute, twice as long each time it happens again.</li>
     <li>Under the PIN, <b>Devices using TabloView</b> lists each device and when it was last used, and <b>Show sign-ins</b> lists sign-ins and wrong PINs. If you don't recognize something, change the PIN: every device has to sign in again.</li>
     <li>The same page shows the address for other devices, like <code>http://192.168.1.50:7070</code>.</li>
@@ -146,7 +146,7 @@
   <ol>
     <li>Turn on the TV's developer mode. <b>Google TV:</b> Settings → System → About, then select <b>Android TV OS build</b> 7 times. <b>Fire TV:</b> Settings → My Fire TV → About, then select the first line (your device's name) 7 times.</li>
     <li>Install <b>Downloader</b> (by AFTVnews) from the TV's app store.</li>
-    <li>In Downloader, enter this PC's address from <a href="#/device?tab=desktop">Device → Desktop &amp; network</a> with <code>/app</code> on the end, like <code>192.168.1.50:7070/app</code>. If the TV says it can't install unknown apps, choose <b>Settings</b>, allow Downloader, and go back.</li>
+    <li>In Downloader, enter this PC's address from <a href="#/settings?tab=desktop">Settings → Desktop &amp; network</a> with <code>/app</code> on the end, like <code>192.168.1.50:7070/app</code>. If the TV says it can't install unknown apps, choose <b>Settings</b>, allow Downloader, and go back.</li>
     <li>Choose <b>Install</b>, then <b>Open</b>. The first time, it finds TabloView on your network by itself, asks whether that's your computer (by its name and address), then asks for the PIN.</li>
   </ol>
   <p>Back goes back, then to the menu, then Home, and leaves the app from Home's menu. <b>PC address</b> at the bottom of the menu (or the remote's Menu button) changes which PC it uses. Updating TabloView on the PC updates what the app shows; the app itself rarely needs reinstalling.</p>
@@ -155,7 +155,7 @@
     <li>Open the address with <code>/tv</code> on the end, typing <code>http://</code> too, or the browser searches for it instead. From then on that browser opens in TV view.</li>
     <li><b>Arrows</b> move, <b>OK</b> picks, <b>Back</b> goes back. <b>◀</b> from the left edge (or Back) opens the menu.</li>
     <li>While watching, <b>OK</b> brings up big buttons: Pause, 10 s back, 30 s ahead, CC (captions), Shape and Close (live TV: Back to live and Record). Without them, ◀ ▶ skip and ▲ ▼ change channel.</li>
-    <li>When a recording ends, <b>Up next</b> starts the show's next unwatched episode in a few seconds (OK plays it now, Back stops). Turning off <b>Play the next episode automatically</b> on the Device page, in the same browser, turns it off.</li>
+    <li>When a recording ends, <b>Up next</b> starts the show's next unwatched episode in a few seconds (OK plays it now, Back stops). Turning off <b>Play the next episode automatically</b> on the Settings page, in the same browser, turns it off.</li>
     <li><b>Commercial breaks</b> show on the progress bar and are skipped as on the PC: automatically if that's on, otherwise press <b>OK</b> during a break to skip it.</li>
     <li><b>PC view</b> (at the bottom of TV view's menu) switches that browser back to the full TabloView, and <b>TV view</b> (top right on the PC) switches to TV view.</li>
     <li>Leaving the TV's browser with the Home button pauses what's playing, and closes it after 30 seconds away so the tuner is freed.</li>
@@ -173,7 +173,7 @@
     <li>Exports run several times faster than real time while nothing else plays from your Tablo, and slow down by themselves when something starts, so watching isn't affected.</li>
   </ul>
   <table>
-    <thead><tr><th>Setting (<a href="#/device?tab=storage">Device → Storage</a> → Exports)</th><th>Choices</th></tr></thead>
+    <thead><tr><th>Setting (<a href="#/settings?tab=storage">Settings → Storage</a> → Exports)</th><th>Choices</th></tr></thead>
     <tbody>
       <tr><td>Format</td><td><b>Smaller</b>: H.264, about 2.2 GB per hour of HD, plays almost anywhere. <b>Original</b>: the broadcast exactly as recorded, about 3.2 GB per hour</td></tr>
       <tr><td>Save exports to</td><td>Downloads\TabloView, or a folder you choose with <b>Change…</b></td></tr>
@@ -181,12 +181,12 @@
       <tr><td>.nfo files</td><td>A small file beside each export with its details, for Jellyfin, Emby and Kodi (Plex doesn't use them)</td></tr>
     </tbody>
   </table>
-  <p><b>Using Plex, Jellyfin or Kodi?</b> Point a TV Shows library at your exports folder and turn on <b>Show and season folders</b>. For Plex, sign in under <a href="#/device?tab=plex">Device → Plex</a> and TabloView asks your Plex server to scan each export as soon as it's saved (otherwise Plex often doesn't notice new files on a network drive until its next scheduled scan). Each export also has its title, show, season and episode, description and air date written into the MP4 itself, which players and Windows (the file's Properties → Details) show.</p>
+  <p><b>Using Plex, Jellyfin or Kodi?</b> Point a TV Shows library at your exports folder and turn on <b>Show and season folders</b>. For Plex, sign in under <a href="#/settings?tab=plex">Settings → Plex</a> and TabloView asks your Plex server to scan each export as soon as it's saved (otherwise Plex often doesn't notice new files on a network drive until its next scheduled scan). Each export also has its title, show, season and episode, description and air date written into the MP4 itself, which players and Windows (the file's Properties → Details) show.</p>
 </section>
 
 <section id="help-settings">
   <h2>Settings</h2>
-  <p>TabloView's settings are on the <a href="#/device">Device</a> page, in six tabs; most apply straight away.</p>
+  <p>TabloView's settings are on the <a href="#/settings">Settings</a> page, in six tabs; most apply straight away.</p>
   <table>
     <thead><tr><th>Tab</th><th>What you can set or see</th></tr></thead>
     <tbody>
@@ -203,13 +203,13 @@
 
 <section id="help-faq">
   <h2>Questions and troubleshooting</h2>
-  <p><b>Does closing the browser stop TabloView?</b> No. It keeps running in the tray, so other devices, background syncs and commercial finding keep working. To stop it, right-click the tray icon and choose <b>Quit</b>. On a Mac or Linux, use <a href="#/device?tab=desktop">Device → Desktop &amp; network</a> → <b>Stop TabloView</b>, or press Ctrl+C in its Terminal window.</p>
+  <p><b>Does closing the browser stop TabloView?</b> No. It keeps running in the tray, so other devices, background syncs and commercial finding keep working. To stop it, right-click the tray icon and choose <b>Quit</b>. On a Mac or Linux, use <a href="#/settings?tab=desktop">Settings → Desktop &amp; network</a> → <b>Stop TabloView</b>, or press Ctrl+C in its Terminal window.</p>
   <p><b>How do I update?</b> The Microsoft Store version updates itself. The installer version shows <b>Update available</b> when there's a new one; you can also check from the tray icon. On a Mac or Linux, unzip the new version over the old folder and start it as usual; your sign-in and settings are kept.</p>
-  <p><b>Playback pauses or stutters.</b> First, test the network: <a href="#/device?tab=desktop">Device → Desktop &amp; network</a> → <b>Test connection</b> says how fast video arrives from your Tablo, and the Wi-Fi signal of the Tablo (if it says) and of this computer. If that's fine, the PC is the likely cause: it converts the video as you watch, so an older PC can fall behind. In <a href="#/device?tab=playback">Device → Playback</a>, try Video quality <b>Fastest</b>, turn <b>Smooth motion</b> off, and choose a longer <b>Buffer before playing</b>. The line under Video quality says whether your graphics chip is doing the work.</p>
+  <p><b>Playback pauses or stutters.</b> First, test the network: <a href="#/settings?tab=desktop">Settings → Desktop &amp; network</a> → <b>Test connection</b> says how fast video arrives from your Tablo, and the Wi-Fi signal of the Tablo (if it says) and of this computer. If that's fine, the PC is the likely cause: it converts the video as you watch, so an older PC can fall behind. In <a href="#/settings?tab=playback">Settings → Playback</a>, try Video quality <b>Fastest</b>, turn <b>Smooth motion</b> off, and choose a longer <b>Buffer before playing</b>. The line under Video quality says whether your graphics chip is doing the work.</p>
   <p><b>The picture looks squeezed, stretched or boxed in.</b> Use <b>Picture shape</b> in the player (or <kbd>A</kbd>). It's remembered for that channel.</p>
   <p><b>"Tablo isn't responding."</b> Check the Tablo is on and on the same network as the PC. TabloView keeps trying and carries on by itself when the Tablo answers again (and follows the Tablo if it gets a new address). If it never clears while Tablo's own apps work:</p>
   <ol>
-    <li>Open the Tablo's address from the <a href="#/device">Device</a> page in your browser with <code>/ping</code> on the end, like <code>http://192.168.1.164:8887/ping</code>. A working Tablo answers at once with a short line like <code>{"sid":"SID_…"}</code>.</li>
+    <li>Open the Tablo's address from the <a href="#/settings">Settings</a> page in your browser with <code>/ping</code> on the end, like <code>http://192.168.1.164:8887/ping</code>. A working Tablo answers at once with a short line like <code>{"sid":"SID_…"}</code>.</li>
     <li>No answer: this PC can't reach the Tablo at all. Pause any VPN (or allow "LAN" access in its settings), and check the PC is on the same network as the Tablo, not a guest Wi-Fi.</li>
     <li>It answers, but TabloView still can't connect: security software with its own firewall may be blocking TabloView; allow it there.</li>
     <li>Still stuck on Windows: open Command Prompt as administrator, run <code>netsh int ip reset</code>, and restart the PC. It resets Windows' network settings, which clears out leftovers from old VPNs or virtual network adapters that can send traffic for your home network nowhere (a user's fix).</li>
@@ -217,7 +217,7 @@
   <p><b>A channel won't tune.</b> All tuners may be busy with recordings or another app: click <b>Tuners</b> at the top of the page to see. If it still fails, the Tablo may not be picking up that channel right now; the <a href="#/antenna">Antenna</a> helper shows its signal.</p>
   <p><b>Live TV stopped.</b> TabloView restarts a stuck stream by itself; if it can't, press <b>Try again</b>.</p>
   <p><b>Will I lose my recordings if my Tablo is replaced?</b> Recordings belong to the Tablo that made them, so a replacement starts empty, even with the same drive. Export the ones you want to keep (see <a data-help-jump="help-exports">Saving recordings to your PC</a>).</p>
-  <p><b>Still stuck?</b> Copy the details from <a href="#/device?tab=diagnostics">Device → Diagnostics</a> and report the problem on <a href="https://github.com/JoeDV/TabloView/issues" target="_blank" rel="noopener">GitHub</a>.</p>
+  <p><b>Still stuck?</b> Copy the details from <a href="#/settings?tab=diagnostics">Settings → Diagnostics</a> and report the problem on <a href="https://github.com/JoeDV/TabloView/issues" target="_blank" rel="noopener">GitHub</a>.</p>
 </section>
 
 <section id="help-about">

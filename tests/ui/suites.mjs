@@ -22,11 +22,13 @@ export const SUITES = {
       ['#/scheduled', '.sched-row, #schedList .empty', 'Scheduled (series)'],
       ['#/scheduled?view=upcoming', '.upcoming-row, #schedList .empty', 'Scheduled (upcoming)'],
       ['#/downloads', '#dlList .list, #dlList .empty', 'Downloads'],
-      ['#/device', '.panel', 'Device'],
+      ['#/settings', '.panel', 'Settings'],
     ]) {
       t.check(`${label} page renders`, await b.go(hash, `document.querySelector(${JSON.stringify(ready)})`, 30000));
     }
-    t.check('Device page shows the app version', /TabloView \d+\.\d+\.\d+/.test(await b.ev(`document.querySelector('.panel-grid').textContent`)));
+    await b.ev(`location.hash = '#/device?tab=playback'`);
+    t.check('An old Device link opens Settings', await b.waitFor(`location.hash === '#/settings?tab=playback' && document.querySelector('.page-title').textContent === 'Settings'`));
+    t.check('Settings page shows the app version', /TabloView \d+\.\d+\.\d+/.test(await b.ev(`document.querySelector('.panel-grid').textContent`)));
   },
 
   async library(b, t) {
@@ -271,8 +273,8 @@ export const SUITES = {
     await sleep(300);
     await b.ev(`document.querySelector('[data-action="bulk-export"]').click()`); await sleep(600);
     t.check('Export MP4 on 2 selected episodes queues both (intercepted)', await b.ev(`window.__writes.some(w => w[1] === '/api/episodes/export_batch' && JSON.parse(w[2]).episode_ids.length === 2)`));
-    await b.go('#/device', `document.querySelector('[data-change="export-format"]')`);
-    t.check('Device page has the export format setting', (await b.ev(`document.querySelector('[data-change="export-format"]').options.length`)) === 2);
+    await b.go('#/settings', `document.querySelector('[data-change="export-format"]')`);
+    t.check('Settings page has the export format setting', (await b.ev(`document.querySelector('[data-change="export-format"]').options.length`)) === 2);
   },
 
   async rerecord(b, t) {
@@ -289,8 +291,8 @@ export const SUITES = {
     await b.ev(`document.querySelector('[data-action="rerecord-pick"]').click()`); await sleep(600);
     t.check('Choosing it schedules that airing (intercepted)', await b.ev(`window.__writes.some(w => w[1] === '/api/guide/episodes/schedule' && w[2].includes('episodes/123'))`));
     await b.ev(`closeModal(false)`);
-    await b.go('#/device', `document.querySelector('[data-change="rerecord-failed"]')`);
-    t.check('Device page has the Record failed recordings again switch', true);
+    await b.go('#/settings', `document.querySelector('[data-change="rerecord-failed"]')`);
+    t.check('Settings page has the Record failed recordings again switch', true);
   },
 
   async commercials(b, t) {
@@ -325,7 +327,7 @@ export const SUITES = {
   },
 
   async pin(b, t) {
-    await b.open('#/device');
+    await b.open('#/settings');
     // Set PIN dialog (on the PC): rejects a 3-digit PIN, saves a 4-digit one (intercepted)
     await b.ev(`void ACTIONS['set-pin']()`); await sleep(400);
     await b.ev(`document.getElementById('newPin').value = '123'; document.getElementById('savePin').click()`); await sleep(300);
@@ -346,8 +348,8 @@ export const SUITES = {
       await b.ev(`!$('#updateNotice').classList.contains('hidden') && $('#updateNotice').href.startsWith('ms-windows-store:') && /1\\.1\\.7/.test($('#updateNoticeText').textContent)`));
     await b.ev(`window.__fake['/api/system/update'] = { current: '1.1.7', latest: null, update_available: false, store: true, enabled: true, download_url: 'ms-windows-store://pdp/?productid=9NCWVSC7KX2N', error: null }; void checkForUpdate(true)`);
     await sleep(800);
-    await b.go('#/device', `document.querySelector('[data-action="check-update"]')`);
-    t.check('Device → About offers Check now and Open in the Store', /Open in the Store/.test(await b.ev(`document.getElementById('view').textContent`)));
+    await b.go('#/settings', `document.querySelector('[data-action="check-update"]')`);
+    t.check('Settings → About offers Check now and Open in the Store', /Open in the Store/.test(await b.ev(`document.getElementById('view').textContent`)));
   },
 
   async returning(b, t) {
@@ -390,9 +392,9 @@ export const SUITES = {
       && (await b.ev(`document.querySelectorAll('.whatsnew-list li').length`)) === 2);
     await b.ev(`document.querySelector('[data-action="modal-ok"]').click()`); await sleep(500);
     t.check('Closing it records it as seen (intercepted)', await b.ev(`window.__writes.some(w => w[1] === '/api/system/whatsnew/seen')`));
-    await b.go('#/device', `document.querySelector('[data-action="version-history"]')`);
+    await b.go('#/settings', `document.querySelector('[data-action="version-history"]')`);
     await b.ev(`document.querySelector('[data-action="version-history"]').click()`); await sleep(800);
-    t.check('Device → Version history lists every version, newest first', await b.ev(`(() => {
+    t.check('Settings → Version history lists every version, newest first', await b.ev(`(() => {
       const v = [...document.querySelectorAll('.changelog-version')].map(h => h.textContent);
       return v.length > 3 && v[v.length - 1].startsWith('1.0.0') && /You have this/.test(v[0]);
     })()`));

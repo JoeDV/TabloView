@@ -229,7 +229,7 @@ _logo_style_cache: Dict[str, Any] = {"at": 0.0, "style": "color"}
 
 
 def logo_style() -> str:
-    """Device > Playback > Channel logos, read at most every few seconds (it's asked once per channel)."""
+    """Settings > Playback > Channel logos, read at most every few seconds (it's asked once per channel)."""
     if time.time() - _logo_style_cache["at"] > 5:
         _logo_style_cache.update(at=time.time(), style=load_settings().get("logo_style") or "color")
     return _logo_style_cache["style"]

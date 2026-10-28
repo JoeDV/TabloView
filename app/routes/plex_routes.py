@@ -1,4 +1,4 @@
-"""Device → Plex: sign in to Plex, choose the server, and have it scan new exports (app/plex.py)."""
+"""Settings → Plex: sign in to Plex, choose the server, and have it scan new exports (app/plex.py)."""
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
