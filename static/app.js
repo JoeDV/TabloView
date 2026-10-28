@@ -1865,6 +1865,11 @@ function renderSeriesPage() {
           ${g.description ? `<p class="hero-desc" data-action="toggle-desc" title="Click to expand">${esc(g.description)}</p>` : ''}
           <div class="hero-actions">
             <div class="rule-control"><span class="rule-label">Series recording</span>${ruleControl(g)}</div>
+            ${g.category !== 'sports' && g.title ? `
+            <label class="rule-field" style="align-self:flex-end;margin-bottom:8px" title="TabloView finds the commercial breaks in this show’s recordings in the background (on this PC), so you can skip them. You can turn it on before anything has recorded.">
+              <input type="checkbox" class="switch" id="seriesCommercials" data-change="series-commercials" disabled>
+              <span>Skip commercials</span>
+            </label>` : ''}
             ${libShow ? `<button class="btn btn-lg" data-action="open-show" data-id="${esc(libShow.id)}" style="align-self:flex-end">${icon('library', 16)}${plural(libShow.episode_count, 'recording')} in library</button>` : ''}
           </div>
         </div>
@@ -1874,6 +1879,10 @@ function renderSeriesPage() {
       <div class="section-head"><h2 class="section-title">Upcoming airings</h2><span class="section-sub" id="airingsSub"></span></div>
       <div class="list" id="seriesAirings"><div class="loading-line"><span class="spinner"></span>Checking upcoming airings on your Tablo…</div></div>
     </div>`);
+  const sw = $('#seriesCommercials');
+  if (sw) api(`/api/shows/commercials?title=${encodeURIComponent(g.title)}`)
+    .then(res => { sw.checked = res.on; sw.disabled = false; })
+    .catch(() => {});
 }
 
 async function loadSeriesAirings(path, token) {
@@ -5455,6 +5464,16 @@ const CHANGES = {
       toast(el.checked
         ? `TabloView will find the commercials in ${s.title}${res.waiting ? ` (${plural(res.waiting, 'recording')} to go; about 3 minutes per half hour, while nothing is playing)` : ''}`
         : `Commercials in ${s.title} won’t be looked for any more`, 'success');
+    } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
+  },
+  'series-commercials': async el => {
+    const g = state.series;
+    try {
+      const res = await api(`/api/shows/commercials?title=${encodeURIComponent(g.title)}`, { method: 'POST', body: JSON.stringify({ on: el.checked }) });
+      if (res.show) mergeShow(res.show);
+      toast(el.checked
+        ? `TabloView will find the commercials in ${g.title}${res.waiting ? ` (${plural(res.waiting, 'recording')} to go)` : ' as it records'}`
+        : `Commercials in ${g.title} won’t be looked for any more`, 'success');
     } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
   },
   'show-cleanup': el => setCleanup(el),

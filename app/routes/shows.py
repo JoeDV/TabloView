@@ -18,6 +18,7 @@ from ..database import (
 )
 from ..tablo_client import tablo_manager
 from .. import autoexport, cleanup, commercials
+from ..sync_service import slugify_show_title
 
 router = APIRouter(prefix="/api/shows", tags=["shows"])
 
@@ -176,13 +177,30 @@ def _with_commercials(episodes: List[dict]) -> List[dict]:
              "finding_dropouts": dropouts.status["current"] == e["id"]} for e in episodes]
 
 
-@router.post("/commercials")
-async def set_commercials(req: CommercialsRequest, show_id: str = Query(...)):
-    """Find commercial breaks in this show's recordings (in the background, on this PC)."""
+def _commercials_show_id(show_id: Optional[str], title: Optional[str]) -> str:
+    """A show in the library by id, or a series by its title (from the guide): its recordings will get
+    the id the sync gives them, so it can be turned on before anything has recorded."""
+    if title and title.strip():
+        return slugify_show_title(title.strip())
+    if not show_id:
+        raise HTTPException(status_code=400, detail="No show given")
     if not get_show_by_id(show_id):
         raise HTTPException(status_code=404, detail="Show not found")
+    return show_id
+
+
+@router.get("/commercials")
+async def get_commercials_setting(show_id: Optional[str] = None, title: Optional[str] = None):
+    return {"on": _commercials_show_id(show_id, title) in commercials.enabled_shows()}
+
+
+@router.post("/commercials")
+async def set_commercials(req: CommercialsRequest, show_id: Optional[str] = None, title: Optional[str] = None):
+    """Find commercial breaks in this show's recordings (in the background, on this PC)."""
+    show_id = _commercials_show_id(show_id, title)
     commercials.set_show(show_id, req.on)
-    return {"success": True, "show": _with_rules(get_show_by_id(show_id)),
+    show = get_show_by_id(show_id)
+    return {"success": True, "show": _with_rules(show) if show else None,
             "waiting": len(commercials.pending()) if req.on else 0}
 
 
