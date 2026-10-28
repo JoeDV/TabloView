@@ -35,6 +35,8 @@ DEFAULTS: Dict[str, Any] = {
     "logo_style": "color",  # channel logos: "color" (the station's own) or "white"
     "export_format": "smaller",  # MP4 exports: "smaller" (H.264, graphics chip if available) or "original" (exact copy)
     "export_folder": None,  # where MP4 exports go; None = DOWNLOADS_DIR (Downloads\TabloView)
+    "export_show_folders": False,  # exports go in Show\Season 01\ folders (the layout Plex, Jellyfin and Kodi expect)
+    "export_nfo": False,  # a Kodi-style .nfo file beside each export (Jellyfin, Emby, Kodi read them)
     "rerecord_failed": True,  # schedule a rerun of a recording that failed or came out short (app/rerecord.py)
     "commercial_shows": [],  # show ids whose recordings get commercial breaks found (app/commercials.py)
     "commercial_episodes": [],  # single recordings asked for from the episode menu

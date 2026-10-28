@@ -37,6 +37,8 @@ class SettingsUpdate(BaseModel):
     smooth_motion: Optional[bool] = None
     logo_style: Optional[Literal["color", "white"]] = None
     export_format: Optional[Literal["smaller", "original"]] = None
+    export_show_folders: Optional[bool] = None
+    export_nfo: Optional[bool] = None
     rerecord_failed: Optional[bool] = None
     skip_commercials: Optional[bool] = None
     skip_dropouts: Optional[bool] = None

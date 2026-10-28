@@ -3316,6 +3316,16 @@ PAGES.device = async (r, token) => {
           </select>
         </label>
         <p class="dim" style="margin-top:6px;font-size:12.5px">Smaller exports are converted to H.264 (with your graphics chip when it can): about 2.2 GB per hour of HD instead of 3.2 GB, and they play on almost anything. Original keeps the broadcast video exactly as recorded.</p>
+        <label class="switch-row" style="margin-top:16px">
+          <input type="checkbox" class="switch" data-change="export-show-folders" ${settings.export_show_folders ? 'checked' : ''}>
+          <span>Sort exports into show and season folders</span>
+        </label>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">Show\\Season 01\\Show - S01E02 - Title.mp4, the layout Plex, Jellyfin and Kodi expect, so they recognize each show and fetch its details. Every export also carries its title, episode number, description and air date inside the file.</p>
+        <label class="switch-row" style="margin-top:16px">
+          <input type="checkbox" class="switch" data-change="export-nfo" ${settings.export_nfo ? 'checked' : ''}>
+          <span>Save an .nfo file with each export</span>
+        </label>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">A small file beside the video with its details, which Jellyfin, Emby and Kodi use as is (Plex doesn’t read them).</p>
         <div class="switch-row" style="font-weight:400;cursor:default;margin-top:14px;align-items:center">
           <span style="flex-shrink:0">Save exports to</span>
           <code class="path-box" title="${esc(info.downloads_dir || '')}">${esc(info.downloads_dir || '')}</code>
@@ -5650,6 +5660,18 @@ const CHANGES = {
       await api('/api/settings', { method: 'POST', body: JSON.stringify({ export_format: el.value }) });
       toast(el.value === 'smaller' ? 'Exports will be converted to smaller files' : 'Exports will keep the original video');
     } catch (err) { toast(err.message, 'error'); }
+  },
+  'export-show-folders': async el => {
+    try {
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ export_show_folders: el.checked }) });
+      toast(el.checked ? 'New exports will go in show and season folders' : 'New exports will all go in one folder');
+    } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
+  },
+  'export-nfo': async el => {
+    try {
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ export_nfo: el.checked }) });
+      toast(el.checked ? 'New exports will get an .nfo file' : 'New exports won’t get an .nfo file');
+    } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
   },
   'logo-style': async el => {
     try {

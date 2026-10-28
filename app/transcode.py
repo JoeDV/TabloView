@@ -1,5 +1,6 @@
 """Transcoding, HLS streaming proxy, and MP4 background export manager."""
 
+import json
 import os
 import re
 import sys
@@ -12,6 +13,7 @@ import time
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from datetime import datetime, timezone
+from xml.sax.saxutils import escape as xml_escape
 from typing import Dict, List, Optional, Tuple, Any
 
 import httpx
@@ -649,6 +651,69 @@ class TranscodeManager:
         filename = f"{prefix} - {ep_title}.mp4" if ep_title and ep_title != show_title else f"{prefix}.mp4"
         return filename, f"{show_title} ({tag})" if tag else show_title
 
+    def export_folder(self, episode: Dict[str, Any]) -> Path:
+        """The export folder, or with "show folders" on, Show\\Season 01 inside it: the layout Plex,
+        Jellyfin and Kodi expect, so they match the show and episode and fetch its details. Without a
+        season number the file goes in the show's folder (Plex matches "Show - 2026-10-27" by date)."""
+        folder = exports_dir()
+        if not load_settings().get("export_show_folders"):
+            return folder
+        # Windows drops a trailing dot or space from a folder name (Mr. Robot., "Show ")
+        show = self.clean_filename(episode.get("show_title") or "Show").rstrip(". ") or "Show"
+        folder = folder / show
+        season = int(episode.get("season_number") or 0)
+        return folder / f"Season {season:02d}" if season > 0 else folder
+
+    @staticmethod
+    def _episode_facts(episode: Dict[str, Any]) -> Dict[str, Any]:
+        """What an export says about itself (tags in the MP4, the .nfo file)."""
+        show = (episode.get("show_title") or "").strip()
+        raw = episode.get("raw_json") or {}
+        try:
+            raw = json.loads(raw) if isinstance(raw, str) else raw
+        except ValueError:
+            raw = {}
+        # The episode's first airing (what Plex and Kodi match on), or the day this recording aired
+        aired = str(((raw.get("episode") or {}).get("orig_air_date")) or "")[:10]
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", aired):
+            try:
+                aired = datetime.fromisoformat(str(episode.get("air_date") or "").replace("Z", "+00:00")) \
+                    .astimezone().strftime("%Y-%m-%d")
+            except ValueError:
+                aired = ""
+        return {"show": show, "title": (episode.get("title") or "").strip() or show,
+                "season": int(episode.get("season_number") or 0), "episode": int(episode.get("episode_number") or 0),
+                "plot": (episode.get("description") or "").strip(), "aired": aired,
+                "network": (episode.get("network") or episode.get("channel_name") or "").strip()}
+
+    @classmethod
+    def export_tags(cls, episode: Dict[str, Any]) -> List[str]:
+        """FFmpeg arguments that write the episode's details into the MP4: the iTunes-style TV tags
+        that players, Windows' file Properties and Jellyfin read."""
+        f = cls._episode_facts(episode)
+        tags = {"title": f["title"], "show": f["show"], "album": f["show"], "date": f["aired"],
+                "description": f["plot"][:250], "synopsis": f["plot"], "network": f["network"],
+                "media_type": "10"}  # 10: a TV show
+        if f["season"] > 0:
+            tags["season_number"] = str(f["season"])
+        if f["episode"] > 0:
+            tags["episode_sort"] = str(f["episode"])
+            tags["episode_id"] = f"S{f['season']:02d}E{f['episode']:02d}" if f["season"] > 0 else f"E{f['episode']:02d}"
+        return [arg for k, v in tags.items() if v for arg in ("-metadata", f"{k}={v}")]
+
+    @classmethod
+    def export_nfo(cls, episode: Dict[str, Any]) -> str:
+        """Kodi's episode .nfo (also read by Jellyfin and Emby): the details beside the video, used
+        ahead of anything they'd look up online."""
+        f = cls._episode_facts(episode)
+        fields = [("title", f["title"]), ("showtitle", f["show"]),
+                  ("season", str(f["season"]) if f["season"] > 0 else ""),
+                  ("episode", str(f["episode"]) if f["episode"] > 0 else ""),
+                  ("plot", f["plot"]), ("aired", f["aired"]), ("studio", f["network"])]
+        lines = [f"  <{k}>{xml_escape(v)}</{k}>" for k, v in fields if v]
+        return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<episodedetails>\n'
+                + "\n".join(lines) + "\n</episodedetails>\n")
+
     @staticmethod
     def free_export_path(folder: Path, filename: str) -> Path:
         """folder/filename, or "name (2).mp4", "name (3).mp4"... if a file there has that name or an
@@ -669,7 +734,9 @@ class TranscodeManager:
         job_id = uuid.uuid4().hex[:10]
 
         filename, label = self.export_name(episode)
-        dest_path = self.free_export_path(exports_dir(), filename)
+        folder = self.export_folder(episode)
+        folder.mkdir(parents=True, exist_ok=True)
+        dest_path = self.free_export_path(folder, filename)
 
         job_info = {
             "job_id": job_id,
@@ -688,7 +755,7 @@ class TranscodeManager:
         # The recording's own length (the Tablo pads its time slot by about 75 s), for progress and
         # for telling a stall near the end from one partway through
         length = int(episode.get("actual_duration") or episode.get("duration") or 0)
-        task = asyncio.create_task(self._queued_export(job_id, get_playlist_url, dest_path, length))
+        task = asyncio.create_task(self._queued_export(job_id, get_playlist_url, dest_path, length, episode))
         self.export_tasks[job_id] = task
 
         return job_id
@@ -707,7 +774,8 @@ class TranscodeManager:
             return True
         return False
 
-    async def _queued_export(self, job_id: str, get_playlist_url, output_path: Path, expected_duration: int):
+    async def _queued_export(self, job_id: str, get_playlist_url, output_path: Path, expected_duration: int,
+                             episode: Optional[Dict[str, Any]] = None):
         if self._export_slot is None:
             self._export_slot = asyncio.Semaphore(1)
         async with self._export_slot:
@@ -720,12 +788,13 @@ class TranscodeManager:
             fmt = load_settings().get("export_format") or "smaller"
             enc = encoders.for_export(encoders.choose("auto")) if fmt == "smaller" else None
             ok = await self._run_ffmpeg_export(job_id, playlist_url, output_path, expected_duration, enc,
-                                               last_try=not (enc and enc["hardware"]))
+                                               last_try=not (enc and enc["hardware"]), episode=episode)
             if not ok and enc and enc["hardware"]:
                 # The graphics chip gave up on this one: do it on the CPU instead (slower)
                 encoders.mark_failed(enc["name"])
                 await self._run_ffmpeg_export(job_id, playlist_url, output_path, expected_duration,
-                                              encoders.for_export(encoders.cpu_fallback()), last_try=True)
+                                              encoders.for_export(encoders.cpu_fallback()), last_try=True,
+                                              episode=episode)
 
     @staticmethod
     def export_cmd(playlist_url: str, part_path: Path, enc: Optional[Dict[str, Any]],
@@ -754,15 +823,16 @@ class TranscodeManager:
         ]
 
     @staticmethod
-    def remux_cmd(part_path: Path, output_path: Path) -> List[str]:
-        """The finished (or salvaged) .ts as the MP4, without converting anything again."""
+    def remux_cmd(part_path: Path, output_path: Path, tags: Optional[List[str]] = None) -> List[str]:
+        """The finished (or salvaged) .ts as the MP4, without converting anything again, with the
+        episode's details written in (export_tags)."""
         return [FFMPEG_PATH, "-y", "-fflags", "+genpts", "-i", str(part_path), "-map", "0:v", "-map", "0:a?",
-                "-c", "copy", "-movflags", "+faststart", str(output_path)]
+                "-c", "copy", *(tags or []), "-movflags", "+faststart", str(output_path)]
 
-    async def _remux(self, part_path: Path, output_path: Path) -> Optional[str]:
+    async def _remux(self, part_path: Path, output_path: Path, tags: Optional[List[str]] = None) -> Optional[str]:
         """Re-package the .ts as the MP4; None if it worked, otherwise why not."""
         def run() -> Optional[str]:
-            proc = subprocess.Popen(self.remux_cmd(part_path, output_path), stdout=subprocess.DEVNULL,
+            proc = subprocess.Popen(self.remux_cmd(part_path, output_path, tags), stdout=subprocess.DEVNULL,
                                     stderr=subprocess.PIPE, creationflags=NO_WINDOW, **childproc.popen_kwargs())
             childproc.tie_to_app(proc)
             _, err = proc.communicate()
@@ -802,7 +872,8 @@ class TranscodeManager:
                 f"Try again later; if it stops at the same point, that part of the recording may be damaged.")
 
     async def _run_ffmpeg_export(self, job_id: str, playlist_url: str, output_path: Path, expected_duration: int,
-                                 enc: Optional[Dict[str, Any]] = None, last_try: bool = True) -> bool:
+                                 enc: Optional[Dict[str, Any]] = None, last_try: bool = True,
+                                 episode: Optional[Dict[str, Any]] = None) -> bool:
         part_path = output_path.with_name(output_path.stem + ".part.ts")  # becomes the MP4 when done
         from . import export_pace
         relay = export_pace.open_relay(playlist_url)  # TabloView paces it; or directly at EXPORT_READRATE
@@ -882,7 +953,7 @@ class TranscodeManager:
                     output_path = self.free_export_path(output_path.parent, output_path.name)
                     save_export_job({"job_id": job_id, "status": "downloading", "progress": 99.0,
                                      "filename": output_path.name, "filepath": str(output_path)})
-                remux_error = await self._remux(part_path, output_path)
+                remux_error = await self._remux(part_path, output_path, self.export_tags(episode) if episode else None)
                 if remux_error:
                     print(f"[ExportWorker] Export {job_id}: couldn't make the MP4: {remux_error}")
                     output_path.unlink(missing_ok=True)
@@ -890,6 +961,11 @@ class TranscodeManager:
                                      "error": f"Couldn't finish the MP4: {remux_error[-200:]}",
                                      "completed_at": datetime.now(timezone.utc).isoformat()})
                     return True
+                if episode and load_settings().get("export_nfo"):
+                    try:
+                        output_path.with_suffix(".nfo").write_text(self.export_nfo(episode), encoding="utf-8")
+                    except OSError as e:
+                        print(f"[ExportWorker] Export {job_id}: couldn't save its .nfo file: {e}")
                 size = output_path.stat().st_size
                 print(f"[ExportWorker] Export {job_id} completed successfully ({round(size / 1024**2, 1)} MB)")
                 save_export_job({
