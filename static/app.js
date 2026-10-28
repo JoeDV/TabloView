@@ -1104,42 +1104,11 @@ PAGES.show = async (r, token) => {
 };
 
 function renderShowPage() {
-  const s = state.show;
+  // The same show opened from the Guide or Scheduled (with its upcoming airings below)
+  if (parseRoute().name === 'series') { renderSeriesPage({ keepAirings: true }); return; }
   const eps = state.episodes;
-  const unwatched = eps.filter(e => e.status !== 'Watched');
-  const watchedCount = eps.filter(e => e.status === 'Watched' && !e.protected).length;
-  const totalSec = eps.reduce((n, e) => n + (e.duration || 0), 0);
-  // Prefer an episode in progress, then the oldest unwatched one
-  const nextEp = unwatched.find(e => (e.position || 0) > 30) || unwatched[0] || eps[0];
-  const nextLabel = nextEp && nextEp.status !== 'Watched' && (nextEp.position || 0) > 30 ? 'Resume' : (unwatched.length ? 'Play next' : 'Play');
-  const bg = imgUrl(s.backdrop_url || s.cover_url);
-  const network = (eps.find(e => e.network) || {}).network;
-
   paint(`
-    <div class="hero">
-      ${bg ? `<div class="hero-bg" style="background-image:url('${esc(bg)}')"></div>` : ''}
-      <div class="hero-inner">
-        <div class="hero-art">${artImg(s.cover_url || s.backdrop_url, s.title)}</div>
-        <div class="hero-body">
-          <div class="hero-kicker">
-            <span class="tag">Recorded series</span>
-            ${network ? `<span class="tag">${esc(network)}</span>` : ''}
-          </div>
-          <h1 class="hero-title">${esc(s.title)}</h1>
-          <div class="hero-stats">${plural(eps.length, 'episode')} · ${unwatched.length} unwatched${totalSec ? ` · ${fmt.dur(totalSec)} total` : ''}</div>
-          ${s.description ? `<p class="hero-desc" data-action="toggle-desc" title="Click to expand">${esc(s.description)}</p>` : ''}
-          <div class="hero-actions">
-            ${nextEp ? `<button class="btn btn-primary btn-lg" data-action="play-ep" data-id="${esc(nextEp.id)}" ${nextLabel === 'Resume' ? 'data-mode="resume"' : ''}>${icon('play', 16)}${nextLabel}: ${esc(fmt.se(nextEp.season_number, nextEp.episode_number) || episodeTitle(nextEp))}</button>` : ''}
-            ${unwatched.length
-              ? `<button class="btn btn-lg" data-action="mark-show-watched" data-value="true">${icon('check', 16)}Mark all watched</button>`
-              : (eps.length ? `<button class="btn btn-lg" data-action="mark-show-watched" data-value="false">${icon('x', 16)}Mark all unwatched</button>` : '')}
-            ${watchedCount ? `<button class="btn btn-lg btn-danger" data-action="delete-watched">${icon('trash', 16)}Delete ${watchedCount} watched</button>` : ''}
-            <span id="seriesLinkSlot"></span>
-          </div>
-          ${showRules(s, eps)}
-        </div>
-      </div>
-    </div>
+    ${showHero({ s: state.show, eps, g: state.seriesLink, where: 'library' })}
     <div class="ep-table">
       <div class="ep-head">
         <input type="checkbox" class="checkbox" data-change="ep-select-all" title="Select all" ${state.selected.size && state.selected.size === eps.length ? 'checked' : ''}>
@@ -1149,7 +1118,71 @@ function renderShowPage() {
     </div>
     <div style="height:60px"></div>`);
   updateBulkBar();
-  if (state.seriesLink) placeSeriesLink(state.seriesLink);
+}
+
+// The header of a show's page, the same in the Library (where = 'library') and on a series' page
+// from the Guide or Scheduled (where = 'series'): s and eps are the show in the Library and its
+// recordings (null and [] when nothing has recorded yet), g the series in the guide (null until found)
+function showHero({ s, eps, g, where }) {
+  const genres = g && Array.isArray(g.genres) ? g.genres : [];
+  const title = (s && s.title) || g.title;
+  const bg = imgUrl((s && (s.backdrop_url || s.cover_url)) || (g && (g.backdrop_url || g.cover_url)));
+  const cover = (s && (s.cover_url || s.backdrop_url)) || (g && (g.cover_url || g.backdrop_url));
+  const desc = (s && s.description) || (g && g.description);
+  let kicker, stats, actions = '', rules;
+  if (s) {
+    const unwatched = eps.filter(e => e.status !== 'Watched');
+    const watchedCount = eps.filter(e => e.status === 'Watched' && !e.protected).length;
+    const totalSec = eps.reduce((n, e) => n + (e.duration || 0), 0);
+    // Prefer an episode in progress, then the oldest unwatched one
+    const nextEp = unwatched.find(e => (e.position || 0) > 30) || unwatched[0] || eps[0];
+    const nextLabel = nextEp && nextEp.status !== 'Watched' && (nextEp.position || 0) > 30 ? 'Resume' : (unwatched.length ? 'Play next' : 'Play');
+    const network = (eps.find(e => e.network) || {}).network;
+    kicker = `<span class="tag">Recorded series</span>${network ? `<span class="tag">${esc(network)}</span>` : ''}`;
+    stats = `${plural(eps.length, 'episode')} · ${unwatched.length} unwatched${totalSec ? ` · ${fmt.dur(totalSec)} total` : ''}`;
+    actions = `
+      ${nextEp ? `<button class="btn btn-primary btn-lg" data-action="play-ep" data-id="${esc(nextEp.id)}" ${nextLabel === 'Resume' ? 'data-mode="resume"' : ''}>${icon('play', 16)}${nextLabel}: ${esc(fmt.se(nextEp.season_number, nextEp.episode_number) || episodeTitle(nextEp))}</button>` : ''}
+      ${unwatched.length
+        ? `<button class="btn btn-lg" data-action="mark-show-watched" data-value="true">${icon('check', 16)}Mark all watched</button>`
+        : (eps.length ? `<button class="btn btn-lg" data-action="mark-show-watched" data-value="false">${icon('x', 16)}Mark all unwatched</button>` : '')}
+      ${watchedCount ? `<button class="btn btn-lg btn-danger" data-action="delete-watched">${icon('trash', 16)}Delete ${watchedCount} watched</button>` : ''}`;
+    rules = showRules(s, eps);
+  } else {
+    const cat = { series: 'TV series', movies: 'Movie', sports: 'Sports' }[g.category] || 'TV series';
+    kicker = `<span class="tag">${esc(cat)}</span>${genres.slice(0, 3).map(x => `<span class="tag">${esc(x)}</span>`).join('')}`;
+    stats = g.orig_air_date ? `Premiered ${esc(String(g.orig_air_date).slice(0, 4))}` : '';
+    // Nothing recorded yet: commercial finding can be turned on already (by the series' title)
+    rules = g.category !== 'sports' && g.title ? `
+      <div class="hero-rules">
+        <label class="rule-field" title="TabloView finds the commercial breaks in this show’s recordings in the background (on this PC), so you can skip them. You can turn it on before anything has recorded.">
+          <input type="checkbox" class="switch" id="seriesCommercials" data-change="series-commercials" disabled>
+          <span>Skip commercials</span>
+        </label>
+      </div>` : '';
+  }
+  if (g && g.has_premiere) kicker += '<span class="tag tag-premiere">Premiere coming up</span>';
+  return `
+    <div class="hero">
+      ${bg ? `<div class="hero-bg" style="background-image:url('${esc(bg)}')"></div>` : ''}
+      <div class="hero-inner">
+        <div class="hero-art">${artImg(cover, title)}</div>
+        <div class="hero-body">
+          <div class="hero-kicker">${kicker}</div>
+          <h1 class="hero-title">${esc(title)}</h1>
+          <div class="hero-stats">${stats}</div>
+          ${desc ? `<p class="hero-desc" data-action="toggle-desc" title="Click to expand">${esc(desc)}</p>` : ''}
+          <div class="hero-actions">${actions}<span id="seriesLinkSlot" style="display:contents">${g ? seriesLinks(g, s, where) : ''}</span></div>
+          ${rules}
+        </div>
+      </div>
+    </div>`;
+}
+
+// The series recording button, and a link to the other page about the show
+function seriesLinks(g, s, where) {
+  const rec = recButton(g).replace('rec-btn', 'rec-btn btn-lg');
+  if (where === 'library') return `${rec}<button class="btn btn-lg btn-ghost" data-action="open-series" data-path="${esc(g.path)}">Upcoming airings ${icon('next', 16)}</button>`;
+  return `${rec}${s ? `<button class="btn btn-lg btn-ghost" data-action="open-show" data-id="${esc(s.id)}">${icon('library', 16)}${plural(s.episode_count || 0, 'recording')} in library</button>` : ''}`;
 }
 
 const KEEP_CHOICES = [1, 2, 3, 5, 10, 20];
@@ -1519,9 +1552,8 @@ async function findSeriesForShow(title, token) {
 function placeSeriesLink(g) {
   const slot = $('#seriesLinkSlot');
   if (!slot) return;
-  slot.innerHTML = `${recButton(g).replace('rec-btn', 'rec-btn btn-lg')}
-    <button class="btn btn-lg btn-ghost" data-action="open-series" data-path="${esc(g.path)}">Upcoming airings ${icon('next', 16)}</button>`;
-  slot.style.display = 'contents';
+  slot.innerHTML = seriesLinks(g, state.show, 'library');
+  hydrateIcons(slot);
 }
 
 function clearSelection() {
@@ -1606,7 +1638,7 @@ async function deleteWatched() {
 function afterEpisodeChange() {
   state.shows = null;
   loadStorage();
-  if (!state.episodes.length) { location.hash = '#/library'; return; }
+  if (!state.episodes.length && parseRoute().name !== 'series') { location.hash = '#/library'; return; }
   const scroll = view().scrollTop;
   renderShowPage();
   view().scrollTop = scroll;
@@ -1926,8 +1958,22 @@ PAGES.series = async (r, token) => {
     cacheGuide([g]);
   }
   state.series = g;
+  state.seriesAirings = null;
   await loadShows().catch(() => []);
   if (stale(token)) return;
+  // A show with recordings gets the Library page's header (play, watched, its rules)
+  const libShow = (state.shows || []).find(s => s.title.toLowerCase() === (g.title || '').toLowerCase());
+  state.show = null;
+  state.episodes = [];
+  if (libShow) {
+    try {
+      const res = await api(`/api/shows/episodes?show_id=${encodeURIComponent(libShow.id)}`);
+      if (stale(token)) return;
+      state.show = { ...res.show, auto_export_existing: res.auto_export_existing || 0 };
+      state.episodes = res.episodes || [];
+      state.selected.clear();
+    } catch { /* the guide's header instead */ }
+  }
   renderSeriesPage();
   loadSeriesAirings(path, token);
 };
@@ -1938,43 +1984,17 @@ function ruleControl(g) {
   return `<div class="segmented rule" data-rule-control="${esc(g.path)}">${b('none', "Don't record")}${b('new', 'New episodes')}${b('all', 'All episodes')}</div>`;
 }
 
-function renderSeriesPage() {
+function renderSeriesPage({ keepAirings = false } = {}) {
   const g = state.series;
-  const bg = imgUrl(g.backdrop_url || g.cover_url);
-  const genres = Array.isArray(g.genres) ? g.genres : [];
-  const libShow = (state.shows || []).find(s => s.title.toLowerCase() === (g.title || '').toLowerCase());
-  const cat = { series: 'TV series', movies: 'Movie', sports: 'Sports' }[g.category] || 'TV series';
-
+  const scroll = keepAirings ? view().scrollTop : 0;
+  const kept = keepAirings && state.seriesAirings;
   paint(`
-    <div class="hero">
-      ${bg ? `<div class="hero-bg" style="background-image:url('${esc(bg)}')"></div>` : ''}
-      <div class="hero-inner">
-        <div class="hero-art">${artImg(g.cover_url || g.backdrop_url, g.title)}</div>
-        <div class="hero-body">
-          <div class="hero-kicker">
-            <span class="tag">${esc(cat)}</span>
-            ${genres.slice(0, 3).map(x => `<span class="tag">${esc(x)}</span>`).join('')}
-            ${g.has_premiere ? '<span class="tag tag-premiere">Premiere coming up</span>' : ''}
-          </div>
-          <h1 class="hero-title">${esc(g.title)}</h1>
-          <div class="hero-stats">${g.orig_air_date ? `Premiered ${esc(String(g.orig_air_date).slice(0, 4))}` : ''}</div>
-          ${g.description ? `<p class="hero-desc" data-action="toggle-desc" title="Click to expand">${esc(g.description)}</p>` : ''}
-          <div class="hero-actions">
-            <div class="rule-control"><span class="rule-label">Series recording</span>${ruleControl(g)}</div>
-            ${g.category !== 'sports' && g.title ? `
-            <label class="rule-field" style="align-self:flex-end;margin-bottom:8px" title="TabloView finds the commercial breaks in this show’s recordings in the background (on this PC), so you can skip them. You can turn it on before anything has recorded.">
-              <input type="checkbox" class="switch" id="seriesCommercials" data-change="series-commercials" disabled>
-              <span>Skip commercials</span>
-            </label>` : ''}
-            ${libShow ? `<button class="btn btn-lg" data-action="open-show" data-id="${esc(libShow.id)}" style="align-self:flex-end">${icon('library', 16)}${plural(libShow.episode_count, 'recording')} in library</button>` : ''}
-          </div>
-        </div>
-      </div>
-    </div>
+    ${showHero({ s: state.show, eps: state.episodes || [], g, where: 'series' })}
     <div class="page">
-      <div class="section-head"><h2 class="section-title">Upcoming airings</h2><span class="section-sub" id="airingsSub"></span></div>
-      <div class="list" id="seriesAirings"><div class="loading-line"><span class="spinner"></span>Checking upcoming airings on your Tablo…</div></div>
+      <div class="section-head"><h2 class="section-title">Upcoming airings</h2><span class="section-sub" id="airingsSub">${kept ? esc(kept.sub) : ''}</span></div>
+      <div class="list" id="seriesAirings">${kept ? kept.html : '<div class="loading-line"><span class="spinner"></span>Checking upcoming airings on your Tablo…</div>'}</div>
     </div>`);
+  if (keepAirings) view().scrollTop = scroll;
   const sw = $('#seriesCommercials');
   if (sw) api(`/api/shows/commercials?title=${encodeURIComponent(g.title)}`)
     .then(res => { sw.checked = res.on; sw.disabled = false; })
@@ -1989,8 +2009,8 @@ async function loadSeriesAirings(path, token) {
     const eps = res.episodes || [];
     const sub = $('#airingsSub');
     if (sub) sub.textContent = eps.length ? `${plural(eps.length, 'airing')} · ${eps.filter(e => e.is_scheduled).length} set to record` : '';
-    if (!eps.length) { box.innerHTML = emptyState('No upcoming airings', 'Nothing from this series is in the guide for the next two weeks.'); return; }
-    box.innerHTML = eps.map(airingRow).join('');
+    box.innerHTML = eps.length ? eps.map(airingRow).join('') : emptyState('No upcoming airings', 'Nothing from this series is in the guide for the next two weeks.');
+    state.seriesAirings = { sub: sub ? sub.textContent : '', html: box.innerHTML };
   } catch (err) {
     if (box) box.innerHTML = `<div class="loading-line" style="color:var(--rec)">${icon('alert', 16)}Couldn't load airings: ${esc(err.message)}</div>`;
   }
@@ -4770,7 +4790,7 @@ async function markShowWatched(watched) {
 
 function rerenderAfterProgress() {
   const name = parseRoute().name;
-  if (name === 'show' && state.show) {
+  if ((name === 'show' || name === 'series') && state.show) {
     const scroll = view().scrollTop;
     renderShowPage();
     view().scrollTop = scroll;
