@@ -410,7 +410,8 @@ def summary() -> Optional[Dict[str, object]]:
     queue = _cached_pending()
     if not queue:
         return None
-    return {"state": "paused" if _busy() else "waiting", "waiting": len(queue)}
+    reason = _busy_with()
+    return {"state": "paused" if reason else "waiting", "reason": reason, "waiting": len(queue)}
 
 
 def _cached_pending() -> List[Dict[str, str]]:
@@ -423,8 +424,17 @@ def _cached_pending() -> List[Dict[str, str]]:
 
 def _busy() -> bool:
     """Something is playing or exporting: analysis waits (it would compete for the Tablo and the PC)."""
+    return _busy_with() is not None
+
+
+def _busy_with() -> Optional[str]:
+    """What analysis waits for, for the status line: "playing", "exporting" or None."""
     from .transcode import transcode_manager
-    return bool(transcode_manager.sessions) or any(not t.done() for t in transcode_manager.export_tasks.values())
+    if transcode_manager.sessions:
+        return "playing"
+    if any(not t.done() for t in transcode_manager.export_tasks.values()):
+        return "exporting"
+    return None
 
 
 # Each second FFmpeg sends one OUT_W x OUT_H rgb24 frame: the colour thumbnail on top (padded to the

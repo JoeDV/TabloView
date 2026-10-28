@@ -497,14 +497,14 @@ function showCommercialProgress(c) {
     $('#adText').innerHTML = c.state === 'running'
       ? `<b>Finding commercials${c.percent != null ? ` · ${c.percent}%` : ''}</b><span>${esc(c.title || '')}${left}${more}</span>`
       : c.state === 'paused'
-        ? `<b>Finding commercials paused</b><span>while something plays · ${plural(c.waiting, 'recording')} waiting</span>`
+        ? `<b>Finding commercials paused</b><span>${c.reason === 'exporting' ? 'while an export runs' : 'while something plays'} · ${plural(c.waiting, 'recording')} waiting</span>`
         : `<b>Finding commercials</b><span>${plural(c.waiting, 'recording')} waiting</span>`;
     $('#adSpin').classList.toggle('hidden', c.state !== 'running');
   }
   for (const el of $$('[data-ad-ep]')) {
     const mine = c && c.state === 'running' && c.episode_id === el.dataset.adEp;
     el.textContent = mine ? `Finding commercials${c.percent != null ? ` · ${c.percent}%` : ''}`
-      : c && c.state === 'paused' ? 'Paused while playing' : 'Waiting';
+      : c && c.state === 'paused' ? (c.reason === 'exporting' ? 'Waiting for an export' : 'Paused while playing') : 'Waiting';
   }
   // One finished: show its result on the show page
   if (was && was.state === 'running' && (!c || c.episode_id !== was.episode_id)) refreshCurrentPageQuietly();
