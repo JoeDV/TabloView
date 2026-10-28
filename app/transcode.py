@@ -417,7 +417,7 @@ class TranscodeManager:
             # 5.1 is mixed to stereo with the centre (dialogue) channel at full level and the
             # surrounds lowered, so speech isn't drowned out
             "-af", "aresample=async=1:ochl=stereo:clev=1.0:slev=0.6",
-            "-c:a", "aac", "-b:a", "192k", "-ac", "2",
+            "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000",
             "-f", "hls",
             "-hls_time", str(HLS_SEGMENT_SECONDS),
             *hls_args,
@@ -748,7 +748,7 @@ class TranscodeManager:
             "-i", playlist_url,
             *video,
             "-af", "aresample=async=1:ochl=stereo:clev=1.0:slev=0.6",
-            "-c:a", "aac", "-b:a", "192k", "-ac", "2",
+            "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000",
             "-f", "mpegts",
             str(part_path)
         ]
