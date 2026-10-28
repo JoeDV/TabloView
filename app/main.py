@@ -26,6 +26,7 @@ from .transcode import transcode_manager
 from .routes import auth, shows, episodes, system, debug, guide, live, watchlist
 from .routes import streaming as streaming_routes
 from .routes import devtools
+from .routes import plex_routes
 
 
 @asynccontextmanager
@@ -209,6 +210,7 @@ app.include_router(watchlist.router)
 if devtools.ENABLED:  # developer tools (TABLOVIEW_DEV_TOOLS=1): never in the app people use
     app.include_router(devtools.router)
 app.include_router(streaming_routes.router)
+app.include_router(plex_routes.router)
 
 
 # ---------------------------------------------------------------------------

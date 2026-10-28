@@ -823,6 +823,18 @@ class TranscodeManager:
         ]
 
     @staticmethod
+    def export_part_path(job_id: str, output_path: Path) -> Path:
+        """Where an export is written before it becomes the MP4: beside it, or on this PC when the MP4
+        goes to a network folder. Making the MP4 reads the whole recording back, so from a network
+        folder it crossed the network three times, and the last step took longer than the export
+        (2026-10-28, a Plex folder on a NAS). The folder is wiped at startup if left behind."""
+        if str(output_path).startswith(("\\\\", "//")):
+            folder = TRANSCODE_DIR / f"export_{job_id}"
+            folder.mkdir(parents=True, exist_ok=True)
+            return folder / (output_path.stem + ".part.ts")
+        return output_path.with_name(output_path.stem + ".part.ts")
+
+    @staticmethod
     def remux_cmd(part_path: Path, output_path: Path, tags: Optional[List[str]] = None) -> List[str]:
         """The finished (or salvaged) .ts as the MP4, without converting anything again, with the
         episode's details written in (export_tags)."""
@@ -874,7 +886,7 @@ class TranscodeManager:
     async def _run_ffmpeg_export(self, job_id: str, playlist_url: str, output_path: Path, expected_duration: int,
                                  enc: Optional[Dict[str, Any]] = None, last_try: bool = True,
                                  episode: Optional[Dict[str, Any]] = None) -> bool:
-        part_path = output_path.with_name(output_path.stem + ".part.ts")  # becomes the MP4 when done
+        part_path = self.export_part_path(job_id, output_path)  # becomes the MP4 when done
         from . import export_pace
         relay = export_pace.open_relay(playlist_url)  # TabloView paces it; or directly at EXPORT_READRATE
         cmd = self.export_cmd(relay.url if relay else playlist_url, part_path, enc, None if relay else EXPORT_READRATE)
@@ -966,6 +978,8 @@ class TranscodeManager:
                         output_path.with_suffix(".nfo").write_text(self.export_nfo(episode), encoding="utf-8")
                     except OSError as e:
                         print(f"[ExportWorker] Export {job_id}: couldn't save its .nfo file: {e}")
+                from . import plex
+                asyncio.create_task(plex.scan_after_export(output_path))  # shows up in Plex right away
                 size = output_path.stat().st_size
                 print(f"[ExportWorker] Export {job_id} completed successfully ({round(size / 1024**2, 1)} MB)")
                 save_export_job({
@@ -1003,6 +1017,8 @@ class TranscodeManager:
                     leftover.unlink(missing_ok=True)
                 except Exception:
                     pass
+            if part_path.parent != output_path.parent:
+                shutil.rmtree(part_path.parent, ignore_errors=True)
 
 
 transcode_manager = TranscodeManager()

@@ -63,6 +63,13 @@ class ExportMetadataTests(unittest.TestCase):
                 self.assertEqual(tm.export_folder(episode(show_title="Mr. Robot.")), Path(d) / "Mr. Robot" / "Season 03")
                 self.assertEqual(tm.export_folder(episode(show_title="What? Now:")), Path(d) / "What Now" / "Season 03")
 
+    def test_part_file_on_this_pc_for_network_folders(self):
+        local = TranscodeManager.export_part_path("j1", Path(r"D:\Videos\Show - S01E02.mp4"))
+        self.assertEqual(local, Path(r"D:\Videos\Show - S01E02.part.ts"))
+        net = TranscodeManager.export_part_path("j2", Path(r"\\NAS\Plex\TV\Show\Show - S01E02.mp4"))
+        self.assertEqual(net, transcode.TRANSCODE_DIR / "export_j2" / "Show - S01E02.part.ts")
+        net.parent.rmdir()
+
     def test_tags_written_into_mp4(self):
         if not Path(FFMPEG_PATH).with_name("ffprobe" + Path(FFMPEG_PATH).suffix).exists():
             self.skipTest("no ffprobe beside FFmpeg")

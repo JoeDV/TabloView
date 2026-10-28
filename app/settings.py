@@ -37,6 +37,10 @@ DEFAULTS: Dict[str, Any] = {
     "export_folder": None,  # where MP4 exports go; None = DOWNLOADS_DIR (Downloads\TabloView)
     "export_show_folders": False,  # exports go in Show\Season 01\ folders (the layout Plex, Jellyfin and Kodi expect)
     "export_nfo": False,  # a Kodi-style .nfo file beside each export (Jellyfin, Emby, Kodi read them)
+    "plex_client_id": None,  # TabloView's id with Plex (app/plex.py)
+    "plex_token": None,  # the Plex account's token, from Plex's sign-in (never shown or logged)
+    "plex_server": None,  # {id, name, uri, token}: the Plex server new exports are scanned in
+    "plex_scan": True,  # ask Plex to scan each finished export's folder
     "rerecord_failed": True,  # schedule a rerun of a recording that failed or came out short (app/rerecord.py)
     "commercial_shows": [],  # show ids whose recordings get commercial breaks found (app/commercials.py)
     "commercial_episodes": [],  # single recordings asked for from the episode menu

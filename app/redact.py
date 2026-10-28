@@ -9,12 +9,14 @@ the account's tokens and email, any account path and Bearer value, are replaced.
 import logging
 import re
 import sys
+import threading
 from pathlib import Path
 from typing import List
 
 HIDDEN = "<hidden>"
 _ACCOUNT_PATH = re.compile(r"(/api/v2/account/)[^/\s'\"?]+")
 _BEARER = re.compile(r"(Bearer\s+)[A-Za-z0-9._~+/=-]+")
+_reading = threading.local()  # inside _secrets, reading settings (see there)
 
 
 def _secrets() -> List[str]:
@@ -26,6 +28,18 @@ def _secrets() -> List[str]:
     for dev in [tablo_manager.device, *tablo_manager.devices]:
         if dev:
             values += [dev.lighthouse_token, dev.account_token]
+    # Reading settings can itself print (a damaged settings.json), which comes back here: skip the
+    # Plex tokens on that inner pass instead of reading again forever
+    if not getattr(_reading, "on", False):
+        _reading.on = True
+        try:
+            from .settings import load_settings
+            s = load_settings()
+            values += [s.get("plex_token"), (s.get("plex_server") or {}).get("token")]
+        except Exception:
+            pass
+        finally:
+            _reading.on = False
     return [v for v in values if isinstance(v, str) and len(v) >= 6]
 
 

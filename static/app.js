@@ -1359,7 +1359,7 @@ async function chooseExportFolder(btn, typed = false) {
     if (!path) return;
   } catch (err) {
     // No picker here (Mac, Linux, another device) or it couldn't open: type the path instead
-    const current = btn.parentElement.querySelector('.path-box')?.title || '';
+    const current = btn.closest('.export-folder')?.querySelector('.path-box')?.title || '';
     path = await promptExportFolder(err.status === 500 ? 'The folder window couldn’t open on this PC. ' : '', current);
     if (!path) return;
   } finally {
@@ -3317,6 +3317,18 @@ PAGES.device = async (r, token) => {
           </select>
         </label>
         <p class="dim" style="margin-top:6px;font-size:12.5px">Smaller exports are converted to H.264 (with your graphics chip when it can): about 2.2 GB per hour of HD instead of 3.2 GB, and they play on almost anything. Original keeps the broadcast video exactly as recorded.</p>
+        <div class="export-folder" style="margin-top:16px">
+          <div class="switch-row" style="font-weight:400;cursor:default;align-items:center">
+            <span style="flex-shrink:0">Save exports to</span>
+            <code class="path-box" title="${esc(info.downloads_dir || '')}">${esc(info.downloads_dir || '')}</code>
+          </div>
+          <div class="panel-actions" style="margin-top:8px">
+            <button class="btn btn-sm" data-action="export-folder">Change…</button>
+            <button class="btn btn-sm btn-ghost" data-action="export-folder-type" title="Type or paste a folder's path, such as a network folder">Type a path…</button>
+            ${info.downloads_dir && info.default_downloads_dir && info.downloads_dir !== info.default_downloads_dir
+              ? '<button class="btn btn-sm btn-ghost" data-action="export-folder-reset">Reset</button>' : ''}
+          </div>
+        </div>
         <label class="switch-row" style="margin-top:16px">
           <input type="checkbox" class="switch" data-change="export-show-folders" ${settings.export_show_folders ? 'checked' : ''}>
           <span>Sort exports into show and season folders</span>
@@ -3327,14 +3339,6 @@ PAGES.device = async (r, token) => {
           <span>Save an .nfo file with each export</span>
         </label>
         <p class="dim" style="margin-top:6px;font-size:12.5px">A small file beside the video with its details, which Jellyfin, Emby and Kodi use as is (Plex doesn’t read them).</p>
-        <div class="switch-row" style="font-weight:400;cursor:default;margin-top:14px;align-items:center">
-          <span style="flex-shrink:0">Save exports to</span>
-          <code class="path-box" title="${esc(info.downloads_dir || '')}">${esc(info.downloads_dir || '')}</code>
-          <button class="btn btn-sm" data-action="export-folder">Change…</button>
-          <button class="btn btn-sm btn-ghost" data-action="export-folder-type" title="Type or paste a folder's path, such as a network folder">Type a path…</button>
-          ${info.downloads_dir && info.default_downloads_dir && info.downloads_dir !== info.default_downloads_dir
-            ? '<button class="btn btn-sm btn-ghost" data-action="export-folder-reset">Reset</button>' : ''}
-        </div>
       </div>
 `;
   const appearancePanel = `
@@ -3376,6 +3380,7 @@ PAGES.device = async (r, token) => {
     ['general', 'General', connection + libraryPanel + appearancePanel],
     ['playback', 'Playback', playbackPanel],
     ['storage', 'Storage', storagePanel + exportsPanel + spaceByShowPanel(space, storage.connected ? storage.used_gb : 0)],
+    ['plex', 'Plex', '<div class="panel" id="plexPanel"><h3>Plex</h3><div class="panel-sub"><span class="spinner"></span></div></div>'],
     ['signal', 'Signal health', signalHtml],
     ['desktop', 'Desktop & network', networkPanel() + desktop + network],
     ['diagnostics', 'Diagnostics', diagnosticsPanel],
@@ -3390,8 +3395,82 @@ PAGES.device = async (r, token) => {
 ${current[2]}
     </div>
   </div>`);
+  if (current[0] === 'plex') loadPlex(token);
   if (current[0] === 'desktop') { loadNetwork(token); loadLanActivity(token); if (info.listening_on_network) loadLanAccess(token, info); }
 };
+
+// Device → Plex: sign in, choose the server, and have Plex scan each new export (app/plex.py)
+async function loadPlex(token) {
+  let d;
+  try { d = await api('/api/plex'); } catch (err) { d = { error: err.message }; }
+  const el = $('#plexPanel');
+  if (stale(token) || !el) return;
+  const intro = 'Plex usually doesn’t notice new files on a network drive by itself, so exports wait for its next scheduled scan. Connected, TabloView asks Plex to scan each export as soon as it’s saved.';
+  let body;
+  if (!d.signed_in) {
+    body = `<div class="panel-sub">Not connected</div>
+      <p class="dim" style="font-size:13px">${intro}</p>
+      <p class="dim" style="font-size:13px;margin-top:8px">Signing in opens Plex’s own page, where you approve TabloView. TabloView never sees your Plex password.</p>
+      ${d.error ? `<p style="color:var(--warn);font-size:13px;margin-top:8px">${esc(d.error)}</p>` : ''}
+      <div class="panel-actions"><button class="btn btn-primary btn-sm" data-action="plex-signin">Sign in to Plex</button></div>`;
+  } else if (!d.server) {
+    const servers = d.servers || [];
+    body = `<div class="panel-sub">Signed in. Which Plex server should scan your exports?</div>
+      ${d.error ? `<p style="color:var(--warn);font-size:13px">${esc(d.error)}</p>` : ''}
+      ${servers.length ? `<div class="panel-actions"><select class="select" id="plexServer">${servers.map(x => `<option value="${esc(x.id)}">${esc(x.name)}${x.owned ? '' : ' (shared with you)'}</option>`).join('')}</select>
+        <button class="btn btn-primary btn-sm" data-action="plex-server">Use this server</button></div>`
+        : '<p class="dim" style="font-size:13px">No Plex servers on this account.</p>'}
+      <div class="panel-actions"><button class="btn btn-sm btn-ghost" data-action="plex-signout">Sign out of Plex</button></div>`;
+  } else {
+    const lib = d.export_library;
+    const where = d.error ? `<span style="color:var(--warn)">${esc(d.error)}</span>`
+      : lib ? `${esc(lib.title)} <span class="dim">(${esc(lib.path)})</span>`
+      : `<span style="color:var(--warn)">Your export folder (${esc(d.export_folder)}) isn’t in any of this server’s libraries.</span> Add it to a TV Shows library in Plex, or save exports to a folder that’s in one (<a href="#/device?tab=storage">Storage → Exports</a>).`;
+    body = `<div class="panel-sub">Connected</div>
+      <dl class="kv">
+        <dt>Server</dt><dd>${esc(d.server.name)} <span class="dim">(${esc(d.server.uri)})</span></dd>
+        <dt>Exports go to</dt><dd>${where}</dd>
+      </dl>
+      <label class="switch-row" style="margin-top:14px">
+        <input type="checkbox" class="switch" data-change="plex-scan" ${d.scan ? 'checked' : ''}>
+        <span>Ask Plex to scan each new export</span>
+      </label>
+      <p class="dim" style="margin-top:6px;font-size:12.5px">${intro} Turn on <b>Sort exports into show and season folders</b> (<a href="#/device?tab=storage">Storage → Exports</a>) so Plex recognizes each show.</p>
+      <div class="panel-actions">
+        <button class="btn btn-sm" data-action="plex-scan-now" ${lib ? '' : 'disabled'}>Scan now</button>
+        <button class="btn btn-sm btn-ghost" data-action="plex-signout">Sign out of Plex</button>
+      </div>`;
+  }
+  el.innerHTML = `<h3>Plex</h3>${body}`;
+}
+
+async function plexSignin(btn) {
+  // Opened right away: a window opened after waiting for TabloView would be blocked as a pop-up
+  const win = window.open('about:blank', '_blank');
+  btn.disabled = true;
+  try {
+    const pin = await api('/api/plex/signin', { method: 'POST' });
+    if (win) win.location = pin.url; else window.open(pin.url, '_blank');
+    toast('Approve TabloView on the Plex page that opened');
+    const token = routeToken;
+    for (let i = 0; i < 150 && !stale(token); i++) {  // up to 5 minutes
+      await new Promise(r => setTimeout(r, 2000));
+      const res = await api(`/api/plex/signin/${pin.id}`);
+      if (res.done) {
+        try { win && win.close(); } catch {}
+        toast(res.error || 'Signed in to Plex', res.error ? 'error' : 'success');
+        loadPlex(token);
+        return;
+      }
+    }
+    toast('Plex sign-in timed out. Try again.', 'error');
+  } catch (err) {
+    try { win && win.close(); } catch {}
+    toast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
 
 // Device → Desktop & network: how the Tablo and this PC are connected, and a test of the link
 // between them (app/netcheck.py)
@@ -5429,6 +5508,25 @@ const ACTIONS = {
     location.href = '/tv';
   },
   'net-test': el => testNetwork(el),
+  'plex-signin': el => plexSignin(el),
+  'plex-server': async el => {
+    el.disabled = true;
+    try {
+      const res = await api('/api/plex/server', { method: 'POST', body: JSON.stringify({ id: $('#plexServer').value }) });
+      toast(`Connected to ${res.name}`, 'success');
+      loadPlex(routeToken);
+    } catch (err) { toast(err.message, 'error'); el.disabled = false; }
+  },
+  'plex-scan-now': async el => {
+    el.disabled = true;
+    try { toast((await api('/api/plex/scan', { method: 'POST' })).message, 'success'); }
+    catch (err) { toast(err.message, 'error'); }
+    finally { el.disabled = false; }
+  },
+  'plex-signout': async () => {
+    if (!await confirmDialog({ title: 'Sign out of Plex?', text: 'TabloView stops asking Plex to scan new exports. Your Plex libraries aren’t changed.', confirm: 'Sign out' })) return;
+    try { await api('/api/plex/signout', { method: 'POST' }); loadPlex(routeToken); } catch (err) { toast(err.message, 'error'); }
+  },
   'help-jump': (el, e) => { if (e) e.preventDefault(); document.getElementById(el.dataset.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
   'pb-shape': el => pictureShape.menu(el),
   'export-folder': el => chooseExportFolder(el),
@@ -5663,6 +5761,12 @@ const CHANGES = {
       await api('/api/settings', { method: 'POST', body: JSON.stringify({ export_format: el.value }) });
       toast(el.value === 'smaller' ? 'Exports will be converted to smaller files' : 'Exports will keep the original video');
     } catch (err) { toast(err.message, 'error'); }
+  },
+  'plex-scan': async el => {
+    try {
+      await api('/api/plex/settings', { method: 'POST', body: JSON.stringify({ scan: el.checked }) });
+      toast(el.checked ? 'Plex will scan each new export' : 'Plex will find new exports on its own schedule');
+    } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
   },
   'export-show-folders': async el => {
     try {

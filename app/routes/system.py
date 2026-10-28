@@ -46,7 +46,7 @@ class SettingsUpdate(BaseModel):
     home_hidden: Optional[List[HomeSection]] = Field(default=None, max_length=20)
 
 
-PRIVATE_SETTINGS = ("lan_pin", "lan_secret")
+PRIVATE_SETTINGS = ("lan_pin", "lan_secret", "plex_token", "plex_server")
 MAX_PICTURE_SHAPES = 500  # far more channels than a lineup has; keeps settings.json small
 
 
