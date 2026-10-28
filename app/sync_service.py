@@ -506,6 +506,15 @@ def _age_seconds(iso: Optional[str]) -> float:
         return float("inf")
 
 
+def _ended_since_sync(sync_age: float) -> bool:
+    """A recording the library has as recording was due to end after the last sync. (One the Tablo
+    still records past its end, e.g. a game running long, isn't synced for again every minute: the
+    sync after its end counts.)"""
+    from .database import recordings_past_end
+    last_sync = datetime.now(timezone.utc).timestamp() - sync_age
+    return any(end.timestamp() > last_sync for end in recordings_past_end())
+
+
 async def auto_sync_loop(service: "LibrarySyncService"):
     """Background schedule: recordings every N minutes (setting), guide every GUIDE_SYNC_HOURS.
     Re-reads settings each minute so changes on the Device page apply without a restart."""
@@ -518,8 +527,14 @@ async def auto_sync_loop(service: "LibrarySyncService"):
             if not tablo_manager.is_authenticated:
                 continue
             minutes = int(load_settings().get("auto_sync_minutes") or 0)
-            if minutes > 0 and not service.is_syncing and _age_seconds(get_sync_meta("last_sync")) >= minutes * 60:
+            age = _age_seconds(get_sync_meta("last_sync"))
+            if minutes > 0 and not service.is_syncing and age >= minutes * 60:
                 print(f"[AutoSync] Recordings (every {minutes} min)")
+                await service.sync_library(include_guide=False)
+            elif minutes > 0 and not service.is_syncing and _ended_since_sync(age):
+                # A recording's scheduled end has passed with no sync since: it would say
+                # "Recording" for up to the whole interval otherwise
+                print("[AutoSync] Recordings (a recording has ended)")
                 await service.sync_library(include_guide=False)
             if (minutes > 0 and not service.is_guide_syncing
                     and _age_seconds(get_sync_meta("last_guide_sync")) >= GUIDE_SYNC_HOURS * 3600):

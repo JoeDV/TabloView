@@ -399,6 +399,27 @@ def get_show_by_id(show_id: str) -> Optional[Dict[str, Any]]:
 SHORT_RECORDING_SECONDS = 60
 
 
+def recordings_past_end(grace: int = 90) -> List[datetime]:
+    """When recordings the library still has as recording were scheduled to end (plus `grace`
+    seconds), for those whose end has passed: the next sync shows them finished."""
+    now = datetime.now(timezone.utc)
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT air_date, duration FROM episodes
+            WHERE json_extract(raw_json, '$.video_details.state') = 'recording'
+        """).fetchall()
+    ends = []
+    for r in rows:
+        try:
+            start = datetime.fromisoformat(str(r["air_date"]).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        end = start + timedelta(seconds=int(r["duration"] or 0) + grace)
+        if end <= now:
+            ends.append(end)
+    return ends
+
+
 def recording_details(raw_json: Any) -> Dict[str, Any]:
     """Fields from the Tablo's own recording object (kept in raw_json at sync)."""
     try:

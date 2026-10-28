@@ -3765,6 +3765,16 @@ const player = {
       this.start(res.stream_url, start && (resuming || typeof mode === 'number') ? `Resumed at ${fmtClock(start)}` : 'Recording');
       state.stream.progressTimer = setInterval(() => this.saveProgress(), 30000);
     } catch (err) {
+      if (err.status === 410) {
+        // Deleted from the Tablo by another app since the last sync: TabloView has taken it out of
+        // the library, so show the page without it (and save no resume point for it)
+        state.stream.markedWatched = true;
+        this.close();
+        toast(err.message, 'info');
+        state.shows = null;
+        route();
+        return;
+      }
       this.setStatus(`<span style="color:var(--rec)">Couldn't start playback: ${esc(err.message)}. Try “Open in VLC”.</span>`);
     }
   },

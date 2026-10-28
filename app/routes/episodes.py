@@ -155,6 +155,26 @@ async def set_protected(episode_id: str, req: ProtectRequest):
     return {"success": True, "protected": req.protected}
 
 
+GONE_MESSAGE = "This recording was deleted from your Tablo, so it's been taken out of your library"
+
+
+async def _deleted_elsewhere(error: Exception, ep: dict) -> bool:
+    """The Tablo answered "not found" to playing a recording: deleted from another app since the last
+    sync. Checked once more by asking for the recording itself, then taken out of the library so it
+    doesn't stay in Continue watching and the show's list until the next sync."""
+    if not (isinstance(error, httpx.HTTPStatusError) and error.response.status_code == 404):
+        return False
+    try:
+        resp = await tablo_manager.request_local("GET", ep["path"])
+    except Exception:
+        return False
+    if resp.status_code != 404:
+        return False
+    print(f"[Watch] {ep['path']} is no longer on the Tablo; removed from the library")
+    delete_episode(ep["id"])
+    return True
+
+
 @router.post("/{episode_id}/watch")
 async def watch_episode(
     episode_id: str,
@@ -176,6 +196,8 @@ async def watch_episode(
         raise HTTPException(status_code=503, detail=tablo_manager.UNREACHABLE_MESSAGE)
     except Exception as e:
         print(f"[Watch] Watch request for {airing_path} failed: {e!r}")
+        if await _deleted_elsewhere(e, ep):
+            raise HTTPException(status_code=410, detail=GONE_MESSAGE)
         raise HTTPException(status_code=502, detail=f"Failed to start watch session on Tablo: {e or type(e).__name__}")
 
     playlist_url = watch_data.get("playlist_url")
