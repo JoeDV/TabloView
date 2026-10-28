@@ -10,7 +10,7 @@ import sys
 import socket
 import time
 from pathlib import Path
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -25,6 +25,10 @@ from ..database import get_sync_meta, get_export_jobs, delete_export_job, get_st
 router = APIRouter(prefix="/api", tags=["system"])
 
 
+# Home's sections (static/app.js HOME_SECTIONS; TV view has the first four)
+HomeSection = Literal["continue", "onnow", "recent", "soon", "back", "premieres", "primetime"]
+
+
 class SettingsUpdate(BaseModel):
     allow_lan: Optional[bool] = None
     auto_sync_minutes: Optional[int] = Field(default=None, ge=0, le=1440)
@@ -36,6 +40,8 @@ class SettingsUpdate(BaseModel):
     rerecord_failed: Optional[bool] = None
     skip_commercials: Optional[bool] = None
     skip_dropouts: Optional[bool] = None
+    home_order: Optional[List[HomeSection]] = Field(default=None, max_length=20)
+    home_hidden: Optional[List[HomeSection]] = Field(default=None, max_length=20)
 
 
 PRIVATE_SETTINGS = ("lan_pin", "lan_secret")

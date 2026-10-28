@@ -792,10 +792,95 @@ async function pickDevice(sid) {
 // ---------------------------------------------------------------------------
 // Home
 // ---------------------------------------------------------------------------
+// Home's sections as designed; Customize saves another order and the ones to hide (settings
+// home_order and home_hidden, on the PC, so TV view follows them too)
+const HOME_SECTIONS = [
+  ['continue', 'Continue watching'], ['onnow', 'On now'], ['recent', 'Recently recorded'], ['soon', 'Recording soon'],
+  ['back', 'Back for a new season'], ['premieres', 'Season premieres'], ['primetime', 'New in primetime'],
+];
+
+function homeLayout(settings) {
+  const ids = HOME_SECTIONS.map(([id]) => id);
+  const chosen = ((settings && settings.home_order) || []).filter(id => ids.includes(id));
+  // A section added in a later version goes where it is in HOME_SECTIONS, after the ones before it
+  const order = [...new Set(chosen)];
+  ids.forEach((id, i) => {
+    if (order.includes(id)) return;
+    const prev = ids.slice(0, i).reverse().find(p => order.includes(p));
+    order.splice(prev ? order.indexOf(prev) + 1 : 0, 0, id);
+  });
+  return { order, hidden: new Set((settings && settings.home_hidden) || []) };
+}
+
+async function customizeHome() {
+  const layout = state.homeLayout || homeLayout(null);
+  const name = id => HOME_SECTIONS.find(([s]) => s === id)[1];
+  const row = id => `
+    <div class="hs-row" draggable="true" data-id="${id}">
+      <span class="hs-grip" title="Drag to move">⋮⋮</span>
+      <label class="hs-name"><input type="checkbox" class="switch" ${layout.hidden.has(id) ? '' : 'checked'}><span>${esc(name(id))}</span></label>
+      <button class="icon-btn" data-move="-1" title="Move up">${icon('up', 16)}</button>
+      <button class="icon-btn" data-move="1" title="Move down">${icon('down', 16)}</button>
+    </div>`;
+  let list;
+  const ok = await openModal(`
+    <div class="dialog-body">
+      <div class="dialog-title">Customize Home</div>
+      <div class="dialog-text">Drag the sections into the order you like, and turn off the ones you don’t use. TV view follows it too.</div>
+      <div class="hs-list">${layout.order.map(row).join('')}</div>
+    </div>
+    <div class="dialog-foot">
+      <button class="btn btn-ghost" data-reset style="margin-right:auto">As designed</button>
+      <button class="btn" data-action="modal-cancel">Cancel</button>
+      <button class="btn btn-primary" data-action="modal-ok" data-autofocus>Save</button>
+    </div>`, {
+    onReady: el => {
+      list = el.querySelector('.hs-list');
+      let dragged = null;
+      list.addEventListener('click', e => {
+        const b = e.target.closest('[data-move]');
+        if (!b) return;
+        const r = b.closest('.hs-row');
+        if (b.dataset.move === '-1' && r.previousElementSibling) list.insertBefore(r, r.previousElementSibling);
+        if (b.dataset.move === '1' && r.nextElementSibling) list.insertBefore(r.nextElementSibling, r);
+        b.focus();
+      });
+      list.addEventListener('dragstart', e => {
+        dragged = e.target.closest('.hs-row');
+        dragged.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      list.addEventListener('dragend', () => { if (dragged) dragged.classList.remove('dragging'); dragged = null; });
+      list.addEventListener('dragover', e => {
+        if (!dragged) return;
+        e.preventDefault();
+        const over = e.target.closest('.hs-row');
+        if (!over || over === dragged) return;
+        const r = over.getBoundingClientRect();
+        list.insertBefore(dragged, e.clientY > r.top + r.height / 2 ? over.nextElementSibling : over);
+      });
+      el.querySelector('[data-reset]').addEventListener('click', () => {
+        list.innerHTML = HOME_SECTIONS.map(([id]) => row(id)).join('');
+        list.querySelectorAll('input').forEach(i => { i.checked = true; });
+        hydrateIcons(list);
+      });
+    },
+  });
+  if (!ok) return;
+  const rows = [...list.querySelectorAll('.hs-row')];
+  try {
+    await api('/api/settings', { method: 'POST', body: JSON.stringify({
+      home_order: rows.map(r => r.dataset.id),
+      home_hidden: rows.filter(r => !r.querySelector('input').checked).map(r => r.dataset.id),
+    }) });
+    route();
+  } catch (err) { toast(`Couldn't save: ${err.message}`, 'error'); }
+}
+
 PAGES.home = async (r, token) => {
   paint(`<div class="page"><div class="page-head"><div><h1 class="page-title">Home</h1><div class="page-sub">&nbsp;</div></div></div>${skeletonGrid(5)}</div>`);
 
-  const [shows, sched, prem, prime, progress, upcomingRes, , back] = await Promise.allSettled([
+  const [shows, sched, prem, prime, progress, upcomingRes, , back, settings] = await Promise.allSettled([
     loadShows(),
     loadScheduled(),
     api('/api/guide/shows?highlight=premieres&sort=soonest&limit=24').then(r => cacheGuide(r.shows)),
@@ -804,6 +889,7 @@ PAGES.home = async (r, token) => {
     loadUpcoming(),
     player.ensureEpg(),
     api('/api/guide/returning').then(r => cacheGuide(r.shows)),
+    api('/api/settings'),
   ]);
   if (stale(token)) return;
   state.inProgress = progress.value || [];
@@ -815,13 +901,19 @@ PAGES.home = async (r, token) => {
   const unwatched = showList.reduce((n, s) => n + (s.unwatched_count || 0), 0);
 
   const parts = [];
+  // The sections, in the order chosen under Customize (HOME_SECTIONS); hidden ones are left out, but
+  // not the messages that stand in for Recently recorded (syncing, no recordings yet, an error)
+  const layout = homeLayout(settings.value);
+  state.homeLayout = layout;
+  const blocks = {};
+  const shown = id => !layout.hidden.has(id);
 
   if (homeConflicts.length) parts.push(`<section class="section">${conflictBanner(homeConflicts, { compact: true })}</section>`);
   const missed = missedNew(upcomingRes.value);
   if (missed.length) parts.push(`<section class="section">${missedNewBanner(missed, { compact: true })}</section>`);
 
-  if (state.inProgress.length) {
-    parts.push(section({
+  if (state.inProgress.length && shown('continue')) {
+    blocks.continue = (section({
       title: 'Continue watching',
       rowId: state.inProgress.length > 5 ? 'rowContinue' : '',
       body: `<div class="card-row" id="rowContinue">${state.inProgress.map(continueCard).join('')}</div>`,
@@ -829,8 +921,8 @@ PAGES.home = async (r, token) => {
   }
 
   const onNow = onNowCards();
-  if (onNow) {
-    parts.push(section({
+  if (onNow && shown('onnow')) {
+    blocks.onnow = (section({
       title: 'On now',
       sub: hasFavorites() ? 'Your favorite channels' : 'Antenna channels',
       link: '#/live',
@@ -840,9 +932,9 @@ PAGES.home = async (r, token) => {
   }
 
   if (shows.status === 'rejected') {
-    parts.push(section({ title: 'Recordings', body: errorState(shows.reason) }));
+    blocks.recent = section({ title: 'Recordings', body: errorState(shows.reason) });
   } else if (showList.length) {
-    parts.push(section({
+    if (shown('recent')) blocks.recent = (section({
       title: 'Recently recorded',
       sub: unwatched ? `${unwatched} unwatched` : '',
       link: '#/library',
@@ -850,9 +942,9 @@ PAGES.home = async (r, token) => {
       body: `<div class="card-row" id="rowRecent">${showList.slice(0, 20).map(showCard).join('')}</div>`,
     }));
   } else if (state.isSyncing) {
-    parts.push(section({ title: 'Recordings', body: `<div class="list"><div class="loading-line"><span class="spinner"></span>Syncing your recordings from your Tablo. The first sync takes a minute or two; this page updates when it's done.</div></div>` }));
+    blocks.recent = (section({ title: 'Recordings', body: `<div class="list"><div class="loading-line"><span class="spinner"></span>Syncing your recordings from your Tablo. The first sync takes a minute or two; this page updates when it's done.</div></div>` }));
   } else {
-    parts.push(section({ title: 'Recordings', body: emptyState('No recordings yet', 'Schedule a series from the guide and it will show up here.', '<a class="btn btn-primary" href="#/guide">Browse the guide</a>') }));
+    blocks.recent = (section({ title: 'Recordings', body: emptyState('No recordings yet', 'Schedule a series from the guide and it will show up here.', '<a class="btn btn-primary" href="#/guide">Browse the guide</a>') }));
   }
 
   // Recordings the Tablo will actually make in the next 48 hours (not just each series' next airing,
@@ -860,8 +952,8 @@ PAGES.home = async (r, token) => {
   const horizon = Date.now() + 48 * 3600 * 1000;
   const upcoming = (upcomingRes.value && upcomingRes.value.recordings) || [];
   const upNext = upcoming.filter(a => new Date(a.air_datetime).getTime() < horizon).slice(0, 8);
-  if (upNext.length) {
-    parts.push(section({
+  if (upNext.length && shown('soon')) {
+    blocks.soon = (section({
       title: 'Recording soon',
       sub: 'Next 48 hours',
       link: '#/scheduled?view=upcoming',
@@ -885,9 +977,10 @@ PAGES.home = async (r, token) => {
   }
 
   // Series you recorded before, back with a new season and not set to record
-  const backList = back.value || [];
+  // (a show is listed in only one of these three, the first shown)
+  const backList = shown('back') ? back.value || [] : [];
   if (backList.length) {
-    parts.push(section({
+    blocks.back = (section({
       title: 'Back for a new season',
       sub: 'Shows you’ve recorded before',
       rowId: 'rowBack',
@@ -897,8 +990,8 @@ PAGES.home = async (r, token) => {
   const backPaths = new Set(backList.map(g => g.path));
 
   const premList = (prem.value || []).filter(g => !backPaths.has(g.path));
-  if (premList.length) {
-    parts.push(section({
+  if (premList.length && shown('premieres')) {
+    blocks.premieres = (section({
       title: 'Season premieres',
       sub: 'Upcoming on your antenna channels',
       link: '#/guide?highlight=premieres',
@@ -907,10 +1000,10 @@ PAGES.home = async (r, token) => {
     }));
   }
 
-  const premPaths = new Set(premList.map(g => g.path));
+  const premPaths = new Set(shown('premieres') ? premList.map(g => g.path) : []);
   const primeList = (prime.value || []).filter(g => !premPaths.has(g.path));
-  if (primeList.length) {
-    parts.push(section({
+  if (primeList.length && shown('primetime')) {
+    blocks.primetime = (section({
       title: 'New in primetime',
       sub: 'Fresh episodes this week',
       link: '#/guide?highlight=primetime_new',
@@ -919,12 +1012,15 @@ PAGES.home = async (r, token) => {
     }));
   }
 
+  for (const id of layout.order) if (blocks[id]) parts.push(blocks[id]);
+
   const subBits = [plural(showList.length, 'show'), plural(totalEps, 'recording')];
   if (schedList.length) subBits.push(`${schedList.length} series scheduled`);
   if (state.storage && state.storage.connected) subBits.push(`${fmt.size(state.storage.free_gb)} free`);
 
   paint(`<div class="page">
-    <div class="page-head"><div><h1 class="page-title">Home</h1><div class="page-sub">${esc(subBits.join(' · '))}</div></div></div>
+    <div class="page-head"><div><h1 class="page-title">Home</h1><div class="page-sub">${esc(subBits.join(' · '))}</div></div>
+      <div class="page-head-actions"><button class="btn btn-sm btn-ghost" data-action="home-customize" title="Choose the order of Home's sections, and which ones to show">${icon('settings', 15)}Customize</button></div></div>
     ${parts.join('')}
   </div>`);
 };
@@ -5218,6 +5314,7 @@ const ACTIONS = {
   'watch-live': el => watchLiveChecked(el.dataset.id, el.dataset.name, el.dataset.kind),
 
   'modal-ok': () => closeModal(true),
+  'home-customize': () => customizeHome(),
   'modal-choice': el => closeModal(el.dataset.value),
   'modal-value': el => closeModal(el.dataset.value),
   'mark-show-watched': el => markShowWatched(el.dataset.value !== 'false'),

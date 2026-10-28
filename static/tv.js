@@ -184,17 +184,25 @@ function recTags(e) {
 const chNum = c => (c.major > 0 ? `${c.major}.${c.minor}` : '');
 
 // Home: rows to scroll along (Continue watching, On now, Recently recorded, Recording soon), as on the PC
+const HOME_ROWS = ['continue', 'onnow', 'recent', 'soon'];  // TV view's rows, as designed
+
 async function showHome() {
   loading('#/');
-  const [progress, shows, , upcoming] = await Promise.allSettled([
-    api('/api/episodes/in_progress'), api('/api/shows'), loadLive(), api('/api/guide/upcoming'),
+  const [progress, shows, , upcoming, settings] = await Promise.allSettled([
+    api('/api/episodes/in_progress'), api('/api/shows'), loadLive(), api('/api/guide/upcoming'), api('/api/settings'),
   ]);
   if (progress.status === 'rejected' && shows.status === 'rejected') return failed(progress.reason, '#/');
-  const shelves = [];
-  const shelf = (title, tiles) => tiles.length && shelves.push(`<section class="shelf"><h2>${esc(title)}</h2><div class="strip">${tiles.join('')}</div></section>`);
+  // The rows in the order chosen under Customize on the PC's Home, without the ones turned off there
+  const prefs = settings.status === 'fulfilled' ? settings.value : {};
+  const hidden = new Set(prefs.home_hidden || []);
+  const order = prefs.home_order || [];
+  const shelves = {};
+  const shelf = (id, title, tiles) => {
+    if (tiles.length && !hidden.has(id)) shelves[id] = `<section class="shelf"><h2>${esc(title)}</h2><div class="strip">${tiles.join('')}</div></section>`;
+  };
 
   const eps = remember(progress.status === 'fulfilled' ? progress.value.episodes || [] : []);
-  shelf('Continue watching', eps.map(e => `
+  shelf('continue', 'Continue watching', eps.map(e => `
     <button class="tile f" data-go="#/ep/${encodeURIComponent(e.id)}" data-key="cw-${esc(e.id)}">
       <div class="art" ${art(e.snapshot_url || e.backdrop_url || e.cover_url)}>${progressBar(e.position, e.duration)}</div>
       <div class="label"><div class="name">${esc(e.show_title)}</div>
@@ -205,7 +213,7 @@ async function showHome() {
   const channels = (state.live && state.live.channels) || [];
   const fav = channels.some(c => c.favorite);
   const now = Date.now();
-  shelf(fav ? 'On now · Your favorite channels' : 'On now', channels.filter(c => (fav ? c.favorite : c.kind !== 'fast') && nowNext(c, now).now).slice(0, 16).map(c => {
+  shelf('onnow', fav ? 'On now · Your favorite channels' : 'On now', channels.filter(c => (fav ? c.favorite : c.kind !== 'fast') && nowNext(c, now).now).slice(0, 16).map(c => {
     const on = nowNext(c, now).now;
     const start = new Date(on.air_datetime).getTime();
     const pct = on.duration ? Math.min(100, ((now - start) / (on.duration * 1000)) * 100) : 0;
@@ -219,12 +227,12 @@ async function showHome() {
 
   const recent = (shows.status === 'fulfilled' ? shows.value.shows || [] : [])
     .sort((a, b) => String(b.latest_recording_date || '').localeCompare(String(a.latest_recording_date || ''))).slice(0, 20);
-  shelf('Recently recorded', recent.map(s => showTile(s, 'wide', 'rr')));
+  shelf('recent', 'Recently recorded', recent.map(s => showTile(s, 'wide', 'rr')));
 
   // What the Tablo will record in the next 48 hours
   const horizon = now + 48 * 3600000;
   const soon = (upcoming.status === 'fulfilled' ? upcoming.value.recordings || [] : []).filter(a => new Date(a.air_datetime).getTime() < horizon).slice(0, 12);
-  shelf('Recording soon', soon.map((a, i) => {
+  shelf('soon', 'Recording soon', soon.map((a, i) => {
     const t = new Date(a.air_datetime).getTime();
     const when = t <= now ? '<span class="tag live">REC</span>' : esc(`${fmt.dayLabel(a.air_datetime)} ${fmt.time(t)}`);
     return `<button class="tile f" data-go="#/upcoming" data-key="rs-${i}">
@@ -234,11 +242,13 @@ async function showHome() {
     </button>`;
   }));
 
-  if (!shelves.length) {
+  const ids = Object.keys(shelves).sort((a, b) => rank(a) - rank(b));
+  function rank(id) { const i = order.indexOf(id); return i < 0 ? 100 + HOME_ROWS.indexOf(id) : i; }
+  if (!ids.length) {
     return setScreen(`<div class="empty">Nothing here yet.<br>
       <button class="btn primary f" data-go="#/library" data-key="go-lib">Go to your Library</button></div>`, '#/');
   }
-  setScreen(shelves.join(''), '#/');
+  setScreen(ids.map(id => shelves[id]).join(''), '#/');
 }
 
 function showTile(s, layout, prefix) {

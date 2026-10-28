@@ -608,6 +608,11 @@ button.tuner-pill:hover { border-color: var(--border-strong); color: var(--text)
 .dialog-body.scroll { max-height: 70vh; overflow-y: auto; }
 .dialog-title { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
 .dialog-text { color: var(--text-2); margin-top: 8px; }
+.hs-list { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; }
+.hs-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); cursor: grab; }
+.hs-row.dragging { opacity: 0.45; }
+.hs-grip { color: var(--text-3); font-size: 18px; line-height: 1; letter-spacing: -5px; padding-right: 5px; user-select: none; }
+.hs-name { display: flex; align-items: center; gap: 10px; flex: 1; cursor: pointer; font-weight: 500; }
 .dialog-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 18px 22px 20px; }
 .airing-modal-head { display: flex; gap: 14px; align-items: center; margin-bottom: 14px; }
 .airing-modal-head img { width: 56px; height: 36px; object-fit: contain; }
