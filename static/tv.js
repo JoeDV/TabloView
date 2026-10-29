@@ -871,6 +871,7 @@ const player = {
     this.s = { kind: 'rec', id, ep, duration: ep.actual_duration || ep.duration || 0, shapeKey: ep.channel_identifier || ep.channel_name };
     if (previous) { this.teardown(); await this.stopById(previous); }
     this.loadBreaks(this.s);
+    this.loadPreviews(this.s);
     if (!run) this.findNext(this.s);
     const counter = run && state.run.eps.length > 1 ? ` · ${state.run.index + 1} of ${state.run.eps.length}` : '';
     this.show(ep.show_title || 'Recording', [fmt.se(ep.season_number, ep.episode_number), ep.title !== ep.show_title ? ep.title : ''].filter(Boolean).join(' · ') + counter);
@@ -895,6 +896,47 @@ const player = {
     Object.assign(s, { breaks: res.breaks || [], dropouts: res.dropouts || [], autoSkip: !!res.auto_skip,
       autoSkipDropouts: !!res.auto_skip_dropouts, skippedBreaks: new Set(), skippedDropouts: new Set() });
     this.drawMarks();
+  },
+
+  // Timeline previews from the Tablo's own trick-play file, as on the PC (the server fetches it in
+  // the background once the recording starts, so ask again for a few seconds)
+  async loadPreviews(s) {
+    for (let i = 0; i < 6; i++) {
+      await new Promise(r => setTimeout(r, i ? 1500 : 500));
+      if (this.s !== s) return;
+      try {
+        const res = await api(`/api/episodes/${encodeURIComponent(s.id)}/previews`);
+        if (res.times && res.times.length) { s.previewTimes = res.times; return; }
+      } catch { /* try again */ }
+    }
+  },
+
+  // The picture for a time in the recording: the Tablo's (whole recording) or, without those, the
+  // frames FFmpeg saves as it converts (only what's converted so far)
+  previewUrl(t) {
+    const s = this.s, times = s.previewTimes || [];
+    if (times.length) {
+      let n = 0;
+      while (n + 1 < times.length && times[n + 1] <= t) n++;
+      return `/api/episodes/${encodeURIComponent(s.id)}/previews/${n}`;
+    }
+    return s.sessionId ? `/api/transcoded/${s.sessionId}/p${String(Math.floor(t / 5)).padStart(5, '0')}.jpg` : '';
+  },
+
+  // While skipping: the picture at the time being skipped to, until a moment after the last press
+  showPreview(t) {
+    const s = this.s, box = $('#osdPreview'), img = $('#osdPreviewImg');
+    if (!s.duration) return;
+    const url = this.previewUrl(t);
+    img.onerror = () => img.classList.add('none');
+    img.onload = () => img.classList.remove('none');
+    if (url && img.getAttribute('src') !== url) img.src = url;
+    img.classList.toggle('none', !url);
+    $('#osdPreviewTime').textContent = fmt.clock(t);
+    box.style.left = `${Math.max(11, Math.min(89, (t / s.duration) * 100))}%`;
+    box.classList.remove('hidden');
+    clearTimeout(this.previewTimer);
+    this.previewTimer = setTimeout(() => box.classList.add('hidden'), 1500);
   },
 
   drawMarks() {
@@ -1118,6 +1160,7 @@ const player = {
       return;
     }
     this.seekTo(this.position() + seconds);
+    this.showPreview(this.position());
   },
 
   seekTo(time) {
@@ -1232,6 +1275,8 @@ const player = {
     this.hideControls();
     this.showSkip(null);
     $('#osdMarks').innerHTML = '';
+    clearTimeout(this.previewTimer);
+    $('#osdPreview').classList.add('hidden');
     clearInterval(this.progressTimer);
     clearTimeout(this.surfTimer);
     this.teardown();

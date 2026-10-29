@@ -171,6 +171,15 @@ h2 { font-size: 1.7vw; margin: 2.4vw 0 1.2vw; color: var(--dim); font-weight: 60
 .skip-banner { position: absolute; right: 4vw; bottom: 11vw; padding: 1vw 1.8vw; border-radius: 3vw; background: rgba(0,0,0,0.78);
   border: 0.2vw solid #fff; font-weight: 600; font-size: 1.6vw; cursor: pointer; }
 .osd-played { height: 100%; width: 0; background: var(--accent); }
+/* Skipping through a recording: the picture at the time being skipped to, above that spot on the bar */
+.osd-track { position: relative; }
+.osd-preview { position: absolute; bottom: 1.4vw; transform: translateX(-50%); width: 20vw; aspect-ratio: 16 / 9;
+  border-radius: 0.6vw; border: 0.2vw solid #fff; background: #111; overflow: hidden; }
+.osd-preview img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.osd-preview img.none { visibility: hidden; }
+/* The time, over the bottom of the picture */
+.osd-preview span { position: absolute; left: 50%; bottom: 0.6vw; transform: translateX(-50%); padding: 0.2vw 0.9vw; border-radius: 1vw;
+  background: rgba(0,0,0,0.75); font-weight: 700; font-variant-numeric: tabular-nums; }
 .osd-times { white-space: pre; display: flex; justify-content: space-between; margin-top: 0.8vw; color: var(--dim); font-variant-numeric: tabular-nums; }
 /* OK in the player: a row of big buttons (TV browsers don't always pass the remote's Back to the page) */
 .osd-controls { display: flex; flex-direction: column; align-items: center; gap: 1vw; margin-top: 1.6vw; }

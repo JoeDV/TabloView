@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   <script src="/static/vendor/hls.min.js?v=1.5.20"></script>
-  <link rel="stylesheet" href="/static/tv.css?v=14">
+  <link rel="stylesheet" href="/static/tv.css?v=16">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235b8cff'/%3E%3Crect x='7' y='10' width='18' height='13' rx='2' fill='none' stroke='white' stroke-width='2'/%3E%3Cpath d='m12 6 4 4 4-4' fill='none' stroke='white' stroke-width='2'/%3E%3C/svg%3E">
 </head>
 <body>
@@ -32,7 +32,10 @@
     <div class="osd" id="osd">
       <div class="osd-title" id="osdTitle"></div>
       <div class="osd-sub" id="osdSub"></div>
-      <div class="osd-bar"><div class="osd-played" id="osdPlayed"></div><div id="osdMarks"></div></div>
+      <div class="osd-track">
+        <div class="osd-preview hidden" id="osdPreview"><img id="osdPreviewImg" alt=""><span id="osdPreviewTime"></span></div>
+        <div class="osd-bar"><div class="osd-played" id="osdPlayed"></div><div id="osdMarks"></div></div>
+      </div>
       <div class="osd-times"><span id="osdNow"></span><span id="osdHint"></span><span id="osdEnd"></span></div>
       <div class="osd-controls hidden" id="osdControls"></div>
     </div>
@@ -41,6 +44,6 @@
   </div>
 
   <div class="dialog hidden" id="dialog"></div>
-  <script src="/static/tv.js?v=29"></script>
+  <script src="/static/tv.js?v=30"></script>
 </body>
 </html>
