@@ -398,9 +398,11 @@ class TranscodeManager:
         else:
             # Deinterlace only frames that are interlaced (1080i), leaving 720p/progressive alone;
             # send_field turns each field into a frame (60 fps) for smooth motion. It also doubles
-            # sources that are already 60 fps (720p), so cap the result at 59.94.
+            # sources that are already 60 fps (720p), so cap the result at 59.94. Without smooth
+            # motion 720p channels (ABC, Fox) come down to 29.97 like 1080i ones: at 60 fps they made
+            # the Google TV app skip and lag (2026-10-29, Shark Tank on ABC through AMD AMF)
             deint = ("bwdif=mode=send_field:deint=interlaced,fps=60000/1001" if plan["smooth"]
-                     else "bwdif=mode=send_frame:deint=interlaced")
+                     else "bwdif=mode=send_frame:deint=interlaced,fps=30000/1001")
             video = ["-vf", deint, *enc["args"], "-pix_fmt", enc["pix_fmt"],
                      # A keyframe every segment: segments start cleanly and playback starts sooner
                      "-force_key_frames", f"expr:gte(t,n_forced*{HLS_SEGMENT_SECONDS})"]

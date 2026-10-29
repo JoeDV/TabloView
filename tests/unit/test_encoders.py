@@ -47,6 +47,7 @@ class CommandTests(unittest.TestCase):
     def test_smooth_motion_is_opt_in(self):
         c = self.cmd(self.plan())
         self.assertIn("bwdif=mode=send_frame:deint=interlaced", c)
+        self.assertIn("fps=30000/1001", c)  # 720p channels too, not only 1080i
         self.assertIn("-force_key_frames", c)
         self.assertIn("192k", c)
 
