@@ -682,6 +682,22 @@ function showPin(code) {
   });
 }
 
+// Broadcast captions moved up to `bottom` (% from the top), clear of the title and bar. Roll-up captions
+// have two or three rows up at once, each its own cue (hls.js numbers them by row): they're kept a row
+// apart in their order. Moved all to one spot, the line scrolling away showed through the new one
+// (a forum report from the Google TV app, 2026-10-28)
+const CAPTION_ROW = 5.5;
+function stackCues(track, bottom) {
+  const cues = [...(track.activeCues || [])];
+  for (const c of cues) if (c.__row === undefined) c.__row = typeof c.line === 'number' ? c.line : 99;
+  cues.sort((a, b) => b.__row - a.__row || b.startTime - a.startTime);
+  let top = bottom;
+  cues.forEach((c, i) => {
+    if (i) top -= CAPTION_ROW * String(c.text || '').split('\n').length;
+    if (c.line !== top || c.snapToLines) { c.snapToLines = false; c.line = top; }
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Player: recordings (resume, skip, progress saved to the Tablo) and live TV (channel up/down)
 // ---------------------------------------------------------------------------
@@ -826,9 +842,7 @@ const player = {
   // down once they fade
   placeCaptions() {
     const line = $('#player').classList.contains('idle') ? 84 : 64;
-    for (const t of this.video().textTracks) {
-      for (const c of t.activeCues || []) if (c.line !== line) { c.snapToLines = false; c.line = line; }
-    }
+    for (const t of this.video().textTracks) stackCues(t, line);
   },
 
   message(text) {
