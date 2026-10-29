@@ -395,6 +395,7 @@ async function pollStatus() {
     showGuideProgress(s.guide_progress);
     showGuidePartial(s.guide_progress ? null : s.guide_incomplete);
     showCommercialProgress(s.commercials);
+    showDropoutProgress(s.dropouts);
     // While a guide load waits out the Tablo's break, its banner already says so
     const waiting = s.guide_progress && s.guide_progress.waiting_seconds !== null;
     $('#reachBanner').classList.toggle('hidden', !s.tablo_unreachable || !!s.auth_problem || !!waiting);
@@ -508,6 +509,22 @@ function showCommercialProgress(c) {
   }
   // One finished: show its result on the show page
   if (was && was.state === 'running' && (!c || c.episode_id !== was.episode_id)) refreshCurrentPageQuietly();
+}
+
+// The signal-dropout check (recordings the Tablo flagged as not clean): a line under commercial finding
+function showDropoutProgress(d) {
+  const line = $('#dropLine');
+  if (!line) return;
+  line.classList.toggle('hidden', !d);
+  if (!d) return;
+  const left = d.minutes_left ? ` · about ${d.minutes_left} min left` : '';
+  const more = d.waiting ? ` (${d.waiting} more waiting)` : '';
+  $('#dropText').innerHTML = d.state === 'running'
+    ? `<b>Checking signal${d.percent != null ? ` · ${d.percent}%` : ''}</b><span>${esc(d.title || '')}${left}${more}</span>`
+    : d.state === 'paused'
+      ? `<b>Checking signal paused</b><span>${d.reason === 'exporting' ? 'while an export runs' : 'while something plays'} · ${plural(d.waiting, 'recording')} waiting</span>`
+      : `<b>Checking signal</b><span>${plural(d.waiting, 'recording')} waiting${d.state === 'after_commercials' ? ', after commercial finding' : ''}</span>`;
+  $('#dropSpin').classList.toggle('hidden', d.state !== 'running');
 }
 
 function refreshGuidePages() {
@@ -3352,6 +3369,11 @@ PAGES.settings = async (r, token) => {
         </label>
         <p class="dim" style="margin-top:6px;font-size:12.5px">When a weak signal left part of a recording broken up or frozen, TabloView finds it in the background and marks it in red on the timeline. Off: a Skip dropout button appears instead (or press S).</p>
         <label class="switch-row" style="margin-top:16px">
+          <input type="checkbox" class="switch" data-change="find-dropouts" ${settings.find_dropouts !== false ? 'checked' : ''}>
+          <span>Check flagged recordings for signal dropouts</span>
+        </label>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">Recordings your Tablo marks as not clean are read once each in the background, when nothing is playing, to find those spots. It takes about a quarter of the recording’s length and most of one CPU core while it runs; the status line shows it. Off: nothing is checked, and recordings already checked keep their marks.</p>
+        <label class="switch-row" style="margin-top:16px">
           <input type="checkbox" class="switch" data-change="autoplay" ${state.autoplay ? 'checked' : ''}>
           <span>Play the next episode automatically</span>
         </label>
@@ -5833,6 +5855,13 @@ const CHANGES = {
     try {
       await api('/api/settings', { method: 'POST', body: JSON.stringify({ skip_dropouts: el.checked }) });
       toast(el.checked ? 'Signal dropouts will be skipped automatically' : 'A Skip dropout button will appear instead');
+    } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
+  },
+  'find-dropouts': async el => {
+    try {
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ find_dropouts: el.checked }) });
+      toast(el.checked ? 'Flagged recordings will be checked for signal dropouts in the background' : 'Recordings won’t be checked for signal dropouts');
+      pollStatus();
     } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
   },
   'export-format': async el => {

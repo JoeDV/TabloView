@@ -49,6 +49,7 @@ DEFAULTS: Dict[str, Any] = {
     "commercial_episodes": [],  # single recordings asked for from the episode menu
     "auto_export_shows": [],  # show ids whose new recordings are exported to MP4 automatically (app/autoexport.py)
     "skip_commercials": False,  # skip breaks automatically in the player (otherwise a Skip button)
+    "find_dropouts": True,  # read recordings the Tablo flagged as not clean for signal dropouts (app/dropouts.py)
     "skip_dropouts": False,  # skip signal dropouts in recordings automatically (otherwise a Skip button)
     "picture_shapes": {},  # channel identifier -> "4:3", "16:9" or "zoom" in the player (no entry = as broadcast)
     "cleanup_days": {},  # show_id -> delete watched recordings this many days after watching (app/cleanup.py)

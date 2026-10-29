@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from ..config import APP_NAME, APP_VERSION, IS_PACKAGED, IS_STORE, FFMPEG_PATH, HOME_DIR, DOWNLOADS_DIR
 from ..settings import load_settings, save_settings, exports_dir
 from ..updates import check_for_update
-from .. import commercials, encoders, lanauth, netcheck, notifications, presence, startup, whatsnew
+from .. import commercials, dropouts, encoders, lanauth, netcheck, notifications, presence, startup, whatsnew
 from ..tablo_client import tablo_manager
 from ..sync_service import sync_service
 from ..database import get_sync_meta, get_export_jobs, delete_export_job, get_storage_by_show
@@ -42,6 +42,7 @@ class SettingsUpdate(BaseModel):
     rerecord_failed: Optional[bool] = None
     skip_commercials: Optional[bool] = None
     skip_dropouts: Optional[bool] = None
+    find_dropouts: Optional[bool] = None
     home_order: Optional[List[HomeSection]] = Field(default=None, max_length=20)
     home_hidden: Optional[List[HomeSection]] = Field(default=None, max_length=20)
 
@@ -599,6 +600,7 @@ async def get_library_status():
         "guide_progress": guide_progress(),
         "guide_incomplete": sync_service.guide_incomplete,
         "commercials": commercials.summary(),
+        "dropouts": dropouts.summary(),
         "total_shows": int(total_shows),
         "total_episodes": int(total_episodes)
     }

@@ -1,5 +1,9 @@
 import json
+import tempfile
+import time
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from app import database as db
 from app import dropouts
@@ -80,6 +84,43 @@ class PendingTests(unittest.TestCase):
         dropouts.save("ep_flagged", "done", [{"start": 9.0, "end": 16.0}])
         self.assertEqual(dropouts.pending(), [])
         self.assertEqual(dropouts.get("ep_flagged")["spans"], [{"start": 9.0, "end": 16.0}])
+
+
+class SummaryTests(unittest.TestCase):
+    """The status line says when recordings are being checked for dropouts, and the check can be
+    turned off (forum, 2026-10-29: FFmpeg busy for hours on Linux with nothing saying why)."""
+
+    def setUp(self):
+        dropouts._pending_cache.update(at=0.0, value=[])
+        dropouts.status.clear()
+        dropouts.status["current"] = None
+
+    def summary(self, settings=None, queue=(), busy=None, ads=None):
+        with mock.patch.object(dropouts, "load_settings", return_value=settings or {}), \
+                mock.patch.object(dropouts, "pending", return_value=list(queue)), \
+                mock.patch.object(dropouts, "_busy_with", return_value=busy), \
+                mock.patch("app.commercials.status", {"current": ads}):
+            return dropouts.summary()
+
+    def test_off_or_nothing_to_do(self):
+        self.assertIsNone(self.summary(queue=[]))
+        self.assertIsNone(self.summary(settings={"find_dropouts": False}, queue=[{"id": "a"}]))
+
+    def test_waiting(self):
+        q = [{"id": "a"}, {"id": "b"}]
+        self.assertEqual(self.summary(queue=q)["state"], "waiting")
+        dropouts._pending_cache["at"] = 0.0
+        self.assertEqual(self.summary(queue=q, busy="playing")["state"], "paused")
+        dropouts._pending_cache["at"] = 0.0
+        self.assertEqual(self.summary(queue=q, ads="ep9")["state"], "after_commercials")
+
+    def test_running_progress(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "x.log"
+            log.write_text("frame= 900 fps=120 q=-0.0 size=N/A time=00:15:00.00 bitrate=N/A speed=4x\n")
+            dropouts.status.update(current="a", title="Show", total=3600, started=time.time() - 225, log=log)
+            s = self.summary(queue=[{"id": "a"}, {"id": "b"}])
+        self.assertEqual((s["state"], s["percent"], s["minutes_left"], s["waiting"]), ("running", 25, 11, 1))
 
 
 if __name__ == "__main__":
