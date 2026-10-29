@@ -1,11 +1,14 @@
 """Settings → Plex: sign in to Plex, choose the server, and have it scan new exports (app/plex.py)."""
 
+from typing import Optional
+
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from .. import plex
-from ..settings import exports_dir, save_settings
+from ..database import get_episodes_by_show, get_show_by_id
+from ..settings import exports_dir, load_settings, save_settings
 from .system import _only_this_pc
 
 router = APIRouter(prefix="/api/plex", tags=["plex"])
@@ -16,7 +19,13 @@ class ServerChoice(BaseModel):
 
 
 class PlexSettings(BaseModel):
-    scan: bool
+    scan: Optional[bool] = None
+    fix_match: Optional[bool] = None
+    copy_watched: Optional[bool] = None
+
+
+class ArchiveRequest(BaseModel):
+    on: bool
 
 
 @router.get("")
@@ -59,8 +68,11 @@ async def plex_server(choice: ServerChoice, request: Request):
 @router.post("/settings")
 async def plex_settings(update: PlexSettings, request: Request):
     _only_this_pc(request)
-    save_settings({"plex_scan": update.scan})
-    return {"scan": update.scan}
+    changes = {f"plex_{k}": v for k, v in update.model_dump().items() if v is not None}
+    save_settings(changes)
+    s = load_settings()
+    return {"scan": s.get("plex_scan", True), "fix_match": s.get("plex_fix_match", True),
+            "copy_watched": s.get("plex_copy_watched", True)}
 
 
 @router.post("/scan")
@@ -71,6 +83,25 @@ async def plex_scan_now(request: Request):
         return {"message": await plex.scan(exports_dir())}
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"Couldn't reach Plex: {e}")
+
+
+@router.get("/have")
+async def plex_have(show_id: str = Query(...)):
+    """This show's recordings that Plex has already (for the In Plex tags on its page)."""
+    try:
+        return {"ids": await plex.in_plex(get_episodes_by_show(show_id))}
+    except (httpx.HTTPError, ValueError, KeyError) as e:
+        return {"ids": [], "error": str(e)}
+
+
+@router.post("/archive")
+async def plex_archive(req: ArchiveRequest, request: Request, show_id: str = Query(...)):
+    """Delete this show's recordings from the Tablo once Plex has their exports, or stop."""
+    _only_this_pc(request)
+    if not get_show_by_id(show_id):
+        raise HTTPException(status_code=404, detail="Show not found")
+    plex.set_archive(show_id, req.on)
+    return {"on": req.on}
 
 
 @router.post("/signout")

@@ -17,7 +17,8 @@ from ..database import (
     set_show_keep,
 )
 from ..tablo_client import tablo_manager
-from .. import autoexport, cleanup, commercials
+from .. import autoexport, cleanup, commercials, plex
+from ..settings import load_settings
 from ..sync_service import slugify_show_title
 
 router = APIRouter(prefix="/api/shows", tags=["shows"])
@@ -45,7 +46,9 @@ def _with_rules(show: Optional[dict]) -> Optional[dict]:
     if show:
         show = {**show, "keep": show_keep(show), "cleanup_days": cleanup.rules().get(show["id"]),
                 "find_commercials": show["id"] in commercials.enabled_shows(),
-                "auto_export": show["id"] in autoexport.enabled_shows()}
+                "auto_export": show["id"] in autoexport.enabled_shows(),
+                "plex": bool(load_settings().get("plex_server")),
+                "plex_archive": show["id"] in plex.archived_shows()}
     return show
 
 

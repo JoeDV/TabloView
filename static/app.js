@@ -1103,6 +1103,7 @@ PAGES.show = async (r, token) => {
   state.seriesLink = null;
   renderShowPage();
   findSeriesForShow(state.show.title, token);
+  loadInPlex(token);
 };
 
 function renderShowPage() {
@@ -1214,6 +1215,10 @@ function showRules(s, eps) {
         <input type="checkbox" class="switch" data-change="show-auto-export" ${s.auto_export ? 'checked' : ''}>
         <span>Export to MP4</span>
       </label>
+      ${s.plex || s.plex_archive ? `<label class="rule-field" title="Once Plex has a recording’s export (the same size, the recording complete), TabloView deletes the recording from your Tablo, while it’s running. Protected recordings are kept.">
+        <input type="checkbox" class="switch" data-change="show-plex-archive" ${s.plex_archive ? 'checked' : ''}>
+        <span>Delete once in Plex</span>
+      </label>` : ''}
       ${keep}
       <label class="rule-field" title="TabloView deletes watched recordings of this show this long after you watch them, while it’s running (also in the tray). Protected recordings are kept.">
         <span>Delete watched</span>
@@ -1252,6 +1257,48 @@ async function setAutoExport(el) {
       ? `Exporting ${plural(res.waiting, 'recording')} of ${s.title}, one at a time; new ones follow as they finish recording. Track them under Downloads.`
       : `New recordings of ${s.title} will be exported to MP4 once they finish recording`, 'success');
   } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
+}
+
+// Delete a show's recordings from the Tablo once Plex has their exports (app/plex.py archive)
+async function setPlexArchive(el) {
+  const s = state.show;
+  if (el.checked) {
+    const ok = await confirmDialog({
+      title: `Delete ${s.title} from your Tablo once it’s in Plex?`,
+      text: 'After each export of this show is in Plex, the recording is deleted from your Tablo. Plex keeps the only copy, so this can’t be undone. Protected and incomplete recordings are kept. Turn on Export to MP4 too to have every new recording go to Plex.',
+      confirm: 'Delete once in Plex', danger: true,
+    });
+    if (!ok) { el.checked = false; return; }
+  }
+  try {
+    await api(`/api/plex/archive?show_id=${encodeURIComponent(s.id)}`, { method: 'POST', body: JSON.stringify({ on: el.checked }) });
+    mergeShow({ ...s, plex_archive: el.checked });
+    toast(el.checked ? `Recordings of ${s.title} will be deleted from your Tablo once they’re in Plex` : `Recordings of ${s.title} stay on your Tablo`, 'success');
+  } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
+}
+
+// Which of the show's recordings Plex has already: an In Plex tag, and a question before exporting again
+async function loadInPlex(token) {
+  if (!state.show || !state.show.plex) return;
+  let res;
+  try { res = await api(`/api/plex/have?show_id=${encodeURIComponent(state.show.id)}`); } catch { return; }
+  if (stale(token) || !(res.ids || []).length) return;
+  const ids = new Set(res.ids);
+  for (const ep of state.episodes) ep.in_plex = ids.has(ep.id);
+  for (const ep of state.episodes) {
+    const cell = ep.in_plex && $(`[data-ep-row="${CSS.escape(ep.id)}"] .ep-col-status`);
+    if (cell) cell.innerHTML = episodeStatus(ep);
+  }
+}
+
+async function confirmReexport(eps) {
+  const there = eps.filter(e => e && e.in_plex);
+  if (!there.length) return true;
+  return confirmDialog({
+    title: eps.length === 1 ? 'This one is in Plex already' : `${plural(there.length, 'recording')} ${there.length === 1 ? 'is' : 'are'} in Plex already`,
+    text: 'Exporting again makes another copy, which Plex lists twice. Export anyway?',
+    confirm: 'Export anyway',
+  });
 }
 
 function mergeShow(show) {
@@ -1454,7 +1501,8 @@ async function setProtected(id, value) {
 }
 
 function episodeStatus(ep) {
-  const tag = episodeStatusTag(ep) + commercialTag(ep) + dropoutTag(ep);
+  const tag = episodeStatusTag(ep) + commercialTag(ep) + dropoutTag(ep)
+    + (ep.in_plex ? '<span class="ad-tag" title="Plex has this episode already">In Plex</span>' : '');
   return ep.incomplete
     ? `${tag}<button class="link-btn" data-action="rerecord" data-id="${esc(ep.id)}" title="Find another airing of this episode to record">Record again</button>`
     : tag;
@@ -1650,6 +1698,7 @@ function afterEpisodeChange() {
 async function bulkExport() {
   const ids = Array.from(state.selected);
   if (!ids.length) return;
+  if (!await confirmReexport(ids.map(findEpisode))) return;
   try {
     const res = await api('/api/episodes/export_batch', { method: 'POST', body: JSON.stringify({ episode_ids: ids }) });
     setActiveExports(state.activeExports + (res.count || ids.length));
@@ -1661,6 +1710,7 @@ async function bulkExport() {
 }
 
 async function exportEpisode(id) {
+  if (!await confirmReexport([findEpisode(id)])) return;
   try {
     await api(`/api/episodes/${encodeURIComponent(id)}/export`, { method: 'POST' });
     setActiveExports(state.activeExports + 1);
@@ -3440,6 +3490,17 @@ async function loadPlex(token) {
         <span>Ask Plex to scan each new export</span>
       </label>
       <p class="dim" style="margin-top:6px;font-size:12.5px">${intro} Turn on <b>Sort exports into show and season folders</b> (<a href="#/settings?tab=storage">Storage → Exports</a>) so Plex recognizes each show.</p>
+      <label class="switch-row" style="margin-top:14px">
+        <input type="checkbox" class="switch" data-change="plex-copy-watched" ${d.copy_watched ? 'checked' : ''}>
+        <span>Carry over watched and resume point</span>
+      </label>
+      <p class="dim" style="margin-top:6px;font-size:12.5px">Once Plex has a new export, it’s marked watched there if you watched the recording, or resumes where you stopped.</p>
+      <label class="switch-row" style="margin-top:14px">
+        <input type="checkbox" class="switch" data-change="plex-fix-match" ${d.fix_match ? 'checked' : ''}>
+        <span>Fix exports Plex matches to the wrong show</span>
+      </label>
+      <p class="dim" style="margin-top:6px;font-size:12.5px">If Plex puts a new export under another series, TabloView matches it to the show it was recorded as. Only with show folders on, and only for a show whose folder holds nothing else.${d.show_folders ? '' : ' <span style="color:var(--warn)">Show folders are off, so this does nothing now.</span>'}</p>
+      <p class="dim" style="margin-top:14px;font-size:12.5px">To have a show’s recordings deleted from your Tablo once they’re in Plex, turn on <b>Delete once in Plex</b> on its page.${d.archive_shows ? ` On for ${esc(plural(d.archive_shows, 'show'))}.` : ''}</p>
       <div class="panel-actions">
         <button class="btn btn-sm" data-action="plex-scan-now" ${lib ? '' : 'disabled'}>Scan now</button>
         <button class="btn btn-sm btn-ghost" data-action="plex-signout">Sign out of Plex</button>
@@ -5772,6 +5833,19 @@ const CHANGES = {
       toast(el.checked ? 'Plex will scan each new export' : 'Plex will find new exports on its own schedule');
     } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
   },
+  'plex-copy-watched': async el => {
+    try {
+      await api('/api/plex/settings', { method: 'POST', body: JSON.stringify({ copy_watched: el.checked }) });
+      toast(el.checked ? 'New exports will be marked watched in Plex if you watched them' : 'Plex will keep its own watched status');
+    } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
+  },
+  'plex-fix-match': async el => {
+    try {
+      await api('/api/plex/settings', { method: 'POST', body: JSON.stringify({ fix_match: el.checked }) });
+      toast(el.checked ? 'TabloView will fix exports Plex matches to the wrong show' : 'Plex’s matches will be left as they are');
+    } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
+  },
+  'show-plex-archive': el => setPlexArchive(el),
   'export-show-folders': async el => {
     try {
       await api('/api/settings', { method: 'POST', body: JSON.stringify({ export_show_folders: el.checked }) });

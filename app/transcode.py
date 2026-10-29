@@ -979,7 +979,7 @@ class TranscodeManager:
                     except OSError as e:
                         print(f"[ExportWorker] Export {job_id}: couldn't save its .nfo file: {e}")
                 from . import plex
-                asyncio.create_task(plex.scan_after_export(output_path))  # shows up in Plex right away
+                asyncio.create_task(plex.after_export(output_path, episode))  # shows up in Plex right away
                 size = output_path.stat().st_size
                 print(f"[ExportWorker] Export {job_id} completed successfully ({round(size / 1024**2, 1)} MB)")
                 save_export_job({

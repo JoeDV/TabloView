@@ -41,6 +41,9 @@ DEFAULTS: Dict[str, Any] = {
     "plex_token": None,  # the Plex account's token, from Plex's sign-in (never shown or logged)
     "plex_server": None,  # {id, name, uri, token}: the Plex server new exports are scanned in
     "plex_scan": True,  # ask Plex to scan each finished export's folder
+    "plex_fix_match": True,  # match an export Plex put under the wrong show to the right one
+    "plex_copy_watched": True,  # carry a recording's watched status or resume point over to Plex
+    "plex_archive_shows": [],  # shows whose recordings are deleted from the Tablo once Plex has the export
     "rerecord_failed": True,  # schedule a rerun of a recording that failed or came out short (app/rerecord.py)
     "commercial_shows": [],  # show ids whose recordings get commercial breaks found (app/commercials.py)
     "commercial_episodes": [],  # single recordings asked for from the episode menu
