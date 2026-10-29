@@ -13,7 +13,7 @@ import shutil
 from pathlib import Path
 
 APP_NAME = "TabloView"
-APP_VERSION = "1.2.9"
+APP_VERSION = "1.3.0"
 
 # Update notices: a public URL to version.json ({"version", "download_url", "notes"}). It lives in a
 # secret GitHub gist (OneDrive share links can't be downloaded without signing in); build.ps1 writes

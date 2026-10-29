@@ -13,6 +13,16 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.3.0": [
+        "Plex: sign in under Settings → Plex, and Plex picks up each new export right away. Once it's there, it's marked watched in Plex if you watched it (or resumes where you stopped), and if Plex matched it to the wrong show, TabloView fixes the match.",
+        "A show's page marks the recordings Plex has already (In Plex) and asks before exporting one again. Turn on Delete once in Plex to have a show's recordings removed from your Tablo once Plex has them.",
+        "Exports work better with Plex, Jellyfin and Kodi: the title, show, season and episode, description and air date are written into every MP4, and you can have them sorted into show and season folders, with an optional .nfo file beside each one (Settings → Storage → Exports).",
+        "Choosing the export folder uses Windows' own folder picker, so network drives and NAS shares show up, and you can type a path like \\\\NAS\\TV. Exports to a network folder are made on this PC and copied over when finished.",
+        "Customize Home: put Home's sections in your own order and hide the ones you don't use. TV view's Home follows it.",
+        "A show opened from the Guide or Scheduled has the same controls as in the Library when it has recordings, and Skip commercials can be turned on before anything has recorded.",
+        "TV view shows how each recording turned out, like the PC does: failed, partial or short recordings, signal problems, commercial breaks found and protected recordings. The Device page is now called Settings.",
+        "Fixed: a recording deleted from the Tablo by another app stayed in the Library until the next sync, and a recording could keep saying Recording after it had finished.",
+    ],
     "1.2.9": [
         "TV view is redesigned: a menu down the left side (press Left or Back to open it), Home rows for Continue watching, On now, Recently recorded and Recording soon, a page for each recording with Play, Watch list, Mark watched, Protect and Delete, and a Coming up list of what will record.",
         "TV view's Live TV has a Guide of the next 6 hours: select a later show to record it. While watching live TV, Record (press OK) records what's on.",
