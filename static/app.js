@@ -1123,12 +1123,49 @@ PAGES.show = async (r, token) => {
   loadInPlex(token);
 };
 
+// Pick out a group of a show's recordings to act on together (Delete, Export, Watch list): a season,
+// those without one (Tablo's "Other"), watched or not. Shift-click a checkbox for every row in between
+function selectMenu(eps) {
+  const seasons = [...new Set(eps.map(e => e.season_number).filter(n => n > 0))].sort((a, b) => a - b);
+  const none = eps.filter(e => !(e.season_number > 0)).length;
+  const watched = eps.filter(e => e.status === 'Watched').length;
+  const opt = (v, label) => `<option value="${v}">${esc(label)}</option>`;
+  return `
+    <div class="ep-tools" style="display:flex;gap:8px;align-items:center;margin:20px 28px -12px">
+      <select class="select select-sm" data-change="ep-select-group" title="Select a group of recordings to delete, export or add to the watch list together (Shift-click a checkbox to select every row in between)">
+        <option value="">Select…</option>
+        ${seasons.length > 1 ? seasons.map(n => opt(`season:${n}`, `Season ${n} (${eps.filter(e => e.season_number === n).length})`)).join('') : ''}
+        ${none && seasons.length ? opt('none', `No season (${none})`) : ''}
+        ${watched ? opt('watched', `Watched (${watched})`) : ''}
+        ${watched < eps.length ? opt('unwatched', `Not watched (${eps.length - watched})`) : ''}
+      </select>
+    </div>`;
+}
+
+function setSelected(ids) {
+  state.selected = new Set(ids);
+  $$('[data-change="ep-select"]').forEach(c => {
+    c.checked = state.selected.has(c.dataset.id);
+    c.closest('.ep-row').classList.toggle('selected', c.checked);
+  });
+  const all = $('[data-change="ep-select-all"]');
+  if (all) all.checked = state.selected.size > 0 && state.selected.size === state.episodes.length;
+  updateBulkBar();
+}
+
+// Whether the last click on a recording's checkbox had Shift held (the change event doesn't say)
+let epSelectShift = false;
+document.addEventListener('click', e => {
+  if (e.target.matches && e.target.matches('[data-change="ep-select"]')) epSelectShift = e.shiftKey;
+}, true);
+
 function renderShowPage() {
   // The same show opened from the Guide or Scheduled (with its upcoming airings below)
   if (parseRoute().name === 'series') { renderSeriesPage({ keepAirings: true }); return; }
   const eps = state.episodes;
   paint(`
     ${showHero({ s: state.show, eps, g: state.seriesLink, where: 'library' })}
+    ${eps.length > 1 ? selectMenu(eps) : ''}
     <div class="ep-table">
       <div class="ep-head">
         <input type="checkbox" class="checkbox" data-change="ep-select-all" title="Select all" ${state.selected.size && state.selected.size === eps.length ? 'checked' : ''}>
@@ -5814,7 +5851,31 @@ const CHANGES = {
   'fast-recordable': el => { state.fast.recordable = el.checked; loadStreaming(routeToken); },
   'guide-rule': el => { state.guide.rule = el.value; loadGuide(routeToken); },
   'guide-sort': el => { state.guide.sort = el.value; loadGuide(routeToken); },
+  'ep-select-group': el => {
+    const v = el.value;
+    el.value = '';
+    if (!v) return;
+    const eps = state.episodes;
+    const pick = v === 'watched' ? eps.filter(e => e.status === 'Watched')
+      : v === 'unwatched' ? eps.filter(e => e.status !== 'Watched')
+      : v === 'none' ? eps.filter(e => !(e.season_number > 0))
+      : eps.filter(e => e.season_number === Number(v.split(':')[1]));
+    setSelected(pick.map(e => e.id));
+    if (pick.length) toast(`${plural(pick.length, 'recording')} selected: Delete, Export MP4 or Add to watch list below`);
+  },
   'ep-select': el => {
+    // Shift-click: every recording from the last one clicked to this one, the same way
+    const ids = state.episodes.map(e => e.id);
+    const from = ids.indexOf(state.lastEpSelect), to = ids.indexOf(el.dataset.id);
+    if (epSelectShift && from >= 0 && to >= 0 && from !== to) {
+      const range = ids.slice(Math.min(from, to), Math.max(from, to) + 1);
+      const next = new Set(state.selected);
+      range.forEach(id => (el.checked ? next.add(id) : next.delete(id)));
+      state.lastEpSelect = el.dataset.id;
+      setSelected([...next]);
+      return;
+    }
+    state.lastEpSelect = el.dataset.id;
     el.checked ? state.selected.add(el.dataset.id) : state.selected.delete(el.dataset.id);
     const row = el.closest('.ep-row');
     row && row.classList.toggle('selected', el.checked);
