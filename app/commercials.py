@@ -320,7 +320,23 @@ def find_breaks(hists: List[List[float]], blacks: List[float], corners: Optional
     if quiet:
         breaks = _join(breaks + _marked_pieces(scores, t, edges, n, program_end))
         breaks = _without_long_pieces(breaks, edges, n)
+        breaks = _opening_to_edge(breaks, edges)
     return breaks
+
+
+def _opening_to_edge(breaks: List[Dict[str, float]], edges: List[float]) -> List[Dict[str, float]]:
+    """A break at the very start of the recording (the end of whatever aired before) that doesn't end
+    at a black-and-silent moment ends at its last one instead: Survivor's ran on from 0:20 to a black
+    frame at 0:54, skipping the show's first 31 s (2026-10-30). The other seven test recordings'
+    openings end at such a moment already, or have none."""
+    out = []
+    for br in breaks:
+        if br["start"] < 1 and not any(abs(e - br["end"]) <= 1 for e in edges):
+            before = [e for e in edges if 10 <= e < br["end"]]
+            if before:
+                br = {"start": 0.0, "end": round(max(before), 1)}
+        out.append(br)
+    return out
 
 
 def _without_long_pieces(breaks: List[Dict[str, float]], edges: List[float], n: int) -> List[Dict[str, float]]:

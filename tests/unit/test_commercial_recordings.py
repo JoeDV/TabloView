@@ -30,9 +30,10 @@ FLOORS = {  # name: (share of ads skipped, most show skipped, show_end)
     "shark_tank": (0.97, 15, 3509),
     # CBS, no logo: the firelit Tribal Council scores less like the show than the ads do, so colour alone
     # took ten minutes of it for a break (627 s of show) until a break could no longer hold a whole long
-    # stretch between black-and-silent moments; two real breaks are still missed. With an Anthropic key,
+    # stretch between black-and-silent moments (and its opening break ran 31 s into the show until it
+    # ended at its last such moment); two real breaks are still missed. With an Anthropic key,
     # Claude finds them all (ClaudeAnswerTests)
-    "survivor": (0.55, 35, 5250),
+    "survivor": (0.55, 5, 5250),
 }
 
 # Claude's answers from the preview sheets (app/claude_ads.py, prompt as shipped), 2026-10-30, one run
