@@ -13,6 +13,13 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.3.1": [
+        "Commercial skip is more accurate on ABC: skips no longer run on into the show after a break, and bright scenes in the show are no longer mistaken for breaks. Recordings you haven't watched are looked at again once, in the background.",
+        "TV view: pressing left or right (or rewind and fast-forward) shows a picture of where you're skipping to, with the time, like on the PC.",
+        "ABC and Fox recordings play more smoothly on TVs and slower devices: with Smooth motion off they now play at 30 frames a second like other channels, with half the data.",
+        "The signal-dropout check now shows in the status line (the recording, how far along, and what's waiting), and Settings → Playback has a switch to turn it off.",
+        "Fixed: when captions showed two or three lines at once, they could pile up in one spot, so the line scrolling away showed through the new one like a shadow.",
+    ],
     "1.3.0": [
         "Plex: sign in under Settings → Plex, and Plex picks up each new export right away. Once it's there, it's marked watched in Plex if you watched it (or resumes where you stopped), and if Plex matched it to the wrong show, TabloView fixes the match.",
         "A show's page marks the recordings Plex has already (In Plex) and asks before exporting one again. Turn on Delete once in Plex to have a show's recordings removed from your Tablo once Plex has them.",

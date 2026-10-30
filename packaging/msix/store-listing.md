@@ -21,6 +21,13 @@ TabloView is a fast desktop interface for your Tablo DVR. Browse and play your r
 Sign in with your own Tablo account. Your password goes only to Tablo's sign-in service and is never saved. TabloView runs only on your PC unless you turn on network access for other devices at home.
 
 ## What's new in this version
+1.3.1:
+• Commercial skip more accurate on ABC
+• TV view: pictures while fast-forwarding and rewinding
+• ABC and Fox play more smoothly on TVs
+• Dropout check shows its progress and can be turned off
+• Fixed: overlapping captions looked like a shadow
+
 1.3.0:
 • Plex: new exports show up right away, marked watched if you watched them
 • See which recordings Plex has, and clear them from your Tablo
