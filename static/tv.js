@@ -1492,6 +1492,20 @@ function init() {
   setInterval(() => {
     if (player.s.sessionId) api('/api/live/alive', { method: 'POST', body: JSON.stringify({ session_ids: [player.s.sessionId] }) }).catch(() => {});
   }, 60000);
+  // TabloView updated on the PC: load the new page. The TV app keeps this page open for days (Home
+  // and back only hides it), so it went on running the old version's player after an update
+  let version = null;
+  const checkVersion = async () => {
+    if (player.open || document.hidden) return;
+    try {
+      const v = (await api('/api/system/info')).version;
+      if (version && v && v !== version && !player.open) location.reload();
+      version = version || v;
+    } catch { /* PC asleep or restarting: try again later */ }
+  };
+  checkVersion();
+  setInterval(checkVersion, 5 * 60000);
+  document.addEventListener('visibilitychange', checkVersion);
   tickClock();
   setInterval(tickClock, 15000);
   api('/api/settings').then(s => { state.shapes = s.picture_shapes || {}; }).catch(() => {});
