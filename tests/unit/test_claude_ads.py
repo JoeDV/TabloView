@@ -65,6 +65,14 @@ class KeyTests(unittest.TestCase):
         self.settings.update(claude_api_key=None, claude_key_added="2999-01-01T00:00:00+00:00")
         self.assertEqual(self.ids(), ["a2"])  # a2 was never done at all
 
+    def test_a_recording_asked_for_again_is_redone_once_even_if_watched(self):
+        db.save_commercials("a3", "done", [], method=commercials.METHOD)
+        self.settings["commercial_redo"] = ["a3"]
+        with mock.patch.object(commercials, "save_settings", side_effect=lambda u: self.settings.update(u)):
+            self.assertEqual(self.ids()[0], "a3")
+            commercials._redo_done("a3")
+        self.assertNotIn("a3", self.ids())
+
     def test_the_key_is_never_sent_to_the_page(self):
         from app.routes import system
         self.assertIn("claude_api_key", system.PRIVATE_SETTINGS)

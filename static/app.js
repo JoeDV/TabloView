@@ -1569,7 +1569,7 @@ function episodeStatus(ep) {
 function commercialTag(ep) {
   if (ep.commercials === 'done') {
     return ep.commercial_breaks
-      ? `<span class="ad-tag" title="${plural(ep.commercial_breaks, 'commercial break')} marked; skip them in the player">${icon('next', 11)}${ep.commercial_breaks}</span>`
+      ? `<span class="ad-tag" title="${plural(ep.commercial_breaks, 'commercial break')} marked${ep.commercials_by_claude ? ' by Claude' : ''}; skip them in the player">${icon('next', 11)}${ep.commercial_breaks}</span>`
       : '<span class="ad-tag dim" title="No commercial breaks found">0</span>';
   }
   if (ep.commercials === 'queued' || ep.commercials === 'analyzing') {
@@ -5485,6 +5485,8 @@ const ACTIONS = {
       ...(ep.incomplete ? [{ label: 'Record again…', icon: 'refresh', run: () => rerecordDialog(id) }] : []),
       ...(ep.recording_state === 'finished' && !['done', 'analyzing', 'queued'].includes(ep.commercials)
         ? [{ label: 'Find commercials', icon: 'next', run: () => findCommercials(id) }] : []),
+      ...(ep.claude_can_redo && !['analyzing', 'queued'].includes(ep.commercials)
+        ? [{ label: 'Find commercials with Claude', icon: 'next', run: () => findCommercials(id) }] : []),
       ep.protected
         ? { label: 'Unprotect', icon: 'lock', run: () => setProtected(id, false) }
         : { label: 'Protect from deletion', icon: 'lock', run: () => setProtected(id, true) },

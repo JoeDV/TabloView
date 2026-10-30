@@ -171,10 +171,16 @@ def _with_commercials(episodes: List[dict]) -> List[dict]:
     found = get_commercials([e["id"] for e in episodes])
     current = commercials.status["current"]
     queued = set(commercials.queued_episodes())
+    redo = set(commercials.redo_episodes())
+    claude_key = bool(load_settings().get("claude_api_key"))
     drops = {e["id"]: dropouts.get(e["id"]) for e in episodes}
-    return [{**e, "commercials": (found[e["id"]]["status"] if e["id"] in found else "analyzing" if e["id"] == current
-                                  else "queued" if e["id"] in queued else None),
+    return [{**e, "commercials": ("analyzing" if e["id"] == current else "queued" if e["id"] in redo
+                                  else found[e["id"]]["status"] if e["id"] in found else "queued" if e["id"] in queued else None),
              "commercial_breaks": len(found[e["id"]]["breaks"]) if e["id"] in found else 0,
+             "commercials_by_claude": bool(found.get(e["id"], {}).get("by_claude")),
+             # Done by TabloView's own finder while there's a Claude key: the menu offers Claude's go
+             "claude_can_redo": claude_key and e["id"] in found and not found[e["id"]]["by_claude"]
+                                and found[e["id"]]["status"] in ("done", "unreliable"),
              # Signal dropouts found (recordings the Tablo flagged as not clean; app/dropouts.py)
              "dropouts": (drops[e["id"]] or {}).get("spans", []),
              "finding_dropouts": dropouts.status["current"] == e["id"]} for e in episodes]

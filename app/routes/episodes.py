@@ -118,9 +118,16 @@ async def find_commercials(episode_id: str):
         raise HTTPException(status_code=404, detail="Episode not found")
     if ep.get("recording_state") != "finished":
         raise HTTPException(status_code=400, detail="This recording isn't finished yet")
-    if get_commercials([episode_id]).get(episode_id, {}).get("status") == "done":
-        return {"queued": False, "ahead": 0}
-    commercials.queue_episode(episode_id)
+    found = get_commercials([episode_id]).get(episode_id) or {}
+    if found.get("status") in ("done", "unreliable"):
+        from ..settings import load_settings
+        # Done by the finder alone, and there's a Claude key now: once more, with Claude
+        if found.get("by_claude") or not load_settings().get("claude_api_key"):
+            return {"queued": False, "ahead": 0}
+        commercials.queue_redo(episode_id)
+    else:
+        commercials.queue_episode(episode_id)
+    commercials._summary_cache["at"] = 0.0
     queue = commercials.pending()
     return {"queued": True, "ahead": next((i for i, e in enumerate(queue) if e["id"] == episode_id), 0)}
 

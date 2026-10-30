@@ -394,15 +394,31 @@ def queue_episode(episode_id: str) -> None:
     save_settings({"commercial_episodes": [e for e in queued_episodes() if e != episode_id] + [episode_id]})
 
 
+def redo_episodes() -> List[str]:
+    """Recordings done by the finder alone, asked to be done again with Claude (episode menu)."""
+    return list(load_settings().get("commercial_redo") or [])
+
+
+def queue_redo(episode_id: str) -> None:
+    save_settings({"commercial_redo": [e for e in redo_episodes() if e != episode_id] + [episode_id]})
+
+
+def _redo_done(episode_id: str) -> None:
+    if episode_id in redo_episodes():
+        save_settings({"commercial_redo": [e for e in redo_episodes() if e != episode_id]})
+
+
 def pending(shows: Optional[List[str]] = None) -> List[Dict[str, str]]:
     """Finished recordings not analyzed yet: single ones asked for first, then the unwatched ones of
     the enabled shows, newest first."""
     shows = enabled_shows() if shows is None else shows
     queued = queued_episodes()
-    if not shows and not queued:
+    redo = redo_episodes()
+    if not shows and not queued and not redo:
         return []
     marks = ",".join("?" * len(shows)) or "''"
     qmarks = ",".join("?" * len(queued)) or "''"
+    rmarks = ",".join("?" * len(redo)) or "''"
     # A Claude key added since a recording was done: once more, for Claude's breaks (one try each,
     # so a key that stops working doesn't read the same recordings over and over)
     settings = load_settings()
@@ -418,8 +434,10 @@ def pending(shows: Optional[List[str]] = None) -> List[Dict[str, str]]:
                    OR (? IS NOT NULL AND COALESCE(c.by_claude, 0) = 0 AND c.analyzed_at < ?
                        AND c.status IN ('done', 'unreliable') AND e.status != 'Watched'))
               AND (e.id IN ({qmarks}) OR (e.show_id IN ({marks}) AND e.status != 'Watched'))
+               -- asked for again with Claude from the episode menu, watched or not
+               OR e.id IN ({rmarks})
             ORDER BY e.air_date DESC
-        """, [claude_since, claude_since, *queued, *shows]).fetchall()
+        """, [claude_since, claude_since, *queued, *shows, *redo]).fetchall()
     found = []
     for r in rows:
         details = recording_details(r["raw_json"])
@@ -429,7 +447,8 @@ def pending(shows: Optional[List[str]] = None) -> List[Dict[str, str]]:
                           "title": f"{r['show_title']}{se}", "duration": details["actual_duration"] or r["duration"] or 0,
                           # where the show is scheduled to end in the recording (it starts a little in)
                           "program_end": details["program_start"] + r["duration"] if r["duration"] else None})
-    return sorted(found, key=lambda ep: ep["id"] not in queued)  # stable: keeps newest first within each
+    first = set(queued) | set(redo)
+    return sorted(found, key=lambda ep: ep["id"] not in first)  # stable: keeps newest first within each
 
 
 def summary() -> Optional[Dict[str, object]]:
@@ -454,7 +473,7 @@ def summary() -> Optional[Dict[str, object]]:
 def _cached_pending() -> List[Dict[str, str]]:
     """pending(), at most every 15 s (the status line asks every few seconds)."""
     if time.time() - float(_summary_cache["at"]) > 15:
-        _summary_cache["value"] = pending() if (enabled_shows() or queued_episodes()) else []
+        _summary_cache["value"] = pending() if (enabled_shows() or queued_episodes() or redo_episodes()) else []
         _summary_cache["at"] = time.time()
     return _summary_cache["value"] or []
 
@@ -603,8 +622,10 @@ async def worker_loop() -> None:
             ep = queue[0]
             status.update(current=ep["id"], title=ep["title"], done=0, total=ep["duration"], started=time.time())
             try:
-                await analyze(ep)
+                if await analyze(ep) is not None:  # not interrupted by playback
+                    _redo_done(ep["id"])
             except Exception as e:
+                _redo_done(ep["id"])
                 print(f"[Commercials] Couldn't analyze {ep['show_title']} {ep['id']}: {e}")
                 save_commercials(ep["id"], "failed", error=str(e)[:300])
             finally:
