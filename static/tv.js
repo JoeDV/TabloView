@@ -966,7 +966,7 @@ const player = {
       return;
     }
     // Watching it anyway (or went back into one already skipped): OK skips it
-    this.showSkip({ end: b.end, text: `${kind === 'break' ? 'Commercial break' : 'Signal dropout'} · ${fmt.clock(b.end - pos)} · OK to skip` });
+    this.showSkip({ end: b.end, text: `${kind === 'break' ? 'Commercial break' : 'Signal dropout'} · ${fmt.clock(b.end - pos)} · OK to skip · ▼ for controls` });
   },
 
   showSkip(skip) {
@@ -1365,7 +1365,9 @@ function onKey(e) {
       MediaPlay: () => player.video().play(), MediaPause: () => player.video().pause(),
       ArrowLeft: () => player.skip(-10), MediaRewind: () => player.skip(-10),
       ArrowRight: () => player.skip(30), MediaFastForward: () => player.skip(30),
-      ArrowUp: () => (live ? player.surf(-1) : player.wake()), ArrowDown: () => (live ? player.surf(1) : player.wake()),
+      // Down also opens the buttons in a recording: during a commercial break OK skips it, and a
+      // remote without rewind/fast-forward keys (Google TV Streamer) had no other way to them
+      ArrowUp: () => (live ? player.surf(-1) : player.wake()), ArrowDown: () => (live ? player.surf(1) : player.showControls()),
       ChannelUp: () => live && player.surf(-1), ChannelDown: () => live && player.surf(1),
       PageUp: () => live && player.surf(-1), PageDown: () => live && player.surf(1),
     };
