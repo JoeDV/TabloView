@@ -13,6 +13,13 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.3.2": [
+        "Find commercials with Claude: add your own Anthropic API key under Settings → Playback, and Claude looks at each recording's preview pictures to find the breaks. It's far more accurate on channels without a logo in the corner, like CBS: on a Survivor episode it skipped 99% of the ads and none of the show, where TabloView alone skipped ten minutes of Tribal Council. Each recording costs a few cents on your Anthropic account, and the pictures are sent to Anthropic.",
+        "With a key added, recordings that already have their breaks found are done again once, and any recording can be done again with Claude from its ⋯ menu.",
+        "TV view: press Down to bring up the player's controls at any time, even during a commercial break (OK skips the break), so remotes without rewind and fast-forward buttons, like the Google TV Streamer's, can always reach them.",
+        "TV view: while a recording or channel starts, its picture is shown behind \"Starting…\" instead of a big grey play button, and the title bar now fades by itself once it plays.",
+        "TV view reloads itself after TabloView on your PC is updated, so the TV app always has the newest features without restarting it.",
+    ],
     "1.3.1": [
         "Commercial skip is more accurate on ABC: skips no longer run on into the show after a break, and bright scenes in the show are no longer mistaken for breaks. Recordings you haven't watched are looked at again once, in the background.",
         "TV view: pressing left or right (or rewind and fast-forward) shows a picture of where you're skipping to, with the time, like on the PC.",
