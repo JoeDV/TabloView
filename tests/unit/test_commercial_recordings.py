@@ -25,6 +25,9 @@ FLOORS = {  # name: (share of ads skipped, most show skipped, show_end)
     "elsbeth": (0.97, 10, 3409),         # CBS drama: no logo
     "jeopardy": (0.97, 10, 1685),        # syndicated, no logo; Final Jeopardy runs into the closing break
     "tracker": (0.97, 10, 3453),         # CBS drama: the logo too faint to use; a dim drug ad opens a break
+    # ABC: a see-through logo that drops out on bright scenes and comes back 18-37 s after the show
+    # does (checked against the Tablo's 10-second previews; before the fix 248 s of show was skipped)
+    "shark_tank": (0.97, 15, 3509),
 }
 
 

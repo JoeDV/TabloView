@@ -55,8 +55,9 @@ AD_PIECE_SHARE = 0.85  # a piece averaging below this share of the show's long p
 LEVEL_SECONDS = 0.05  # the sound's loudness is measured this often (speech dips between syllables)
 
 # The detector, saved with each result: results from an older one are redone (1: colour only;
-# 2: the channel logo, black frames and silences; 3: up to a minute of show-like ad next to a break)
-METHOD = 3
+# 2: the channel logo, black frames and silences; 3: up to a minute of show-like ad next to a break;
+# 4: a break ends where the show comes back, not a fixed time before the logo does)
+METHOD = 4
 
 # The channel logo: the bottom-right corner of a 160x90 copy of each second's frame (the logo is a few
 # pixels of light text there, still clear at that size)
@@ -72,6 +73,15 @@ LOGO_SNAP_SECONDS = 12  # move a break edge to a black-and-silent moment (or a b
 # first seconds back (Hell's Kitchen: 15-16 s after each of four breaks). If a channel brings it back
 # at once, the cost is a few seconds of ad left in, not show skipped
 LOGO_RETURN_LAG = 15
+# ABC brings it back later still: 18-37 s after the show (Shark Tank, 2026-10-29; ending each break
+# LOGO_RETURN_LAG before the logo skipped up to 22 s of the show). So a break ends at its last
+# black-and-silent moment up to this long before the logo returns
+LOGO_RETURN_MAX = 45
+# A break has the logo gone for at least LOGO_SOLID_SECONDS in a row (ignoring blips of it of up to
+# LOGO_BLIP_SECONDS). ABC's see-through logo dropped out for 5-10 s at a time on bright scenes, and
+# 87 s of Shark Tank was taken for a break
+LOGO_SOLID_SECONDS = 20
+LOGO_BLIP_SECONDS = 1
 
 
 def histogram(frame: bytes) -> List[float]:
@@ -196,10 +206,28 @@ def _logo_breaks(scores: List[float], t: float, edges: List[float], blacks: List
             merged[-1][1] = e
         else:
             merged.append([s, e])
+    # Where the logo is gone for good (a second or two of it showing aside): a break has at least one
+    # such stretch and its edges are at the first and last of them. A see-through logo (ABC) flickers
+    # out on bright scenes in the show, which the smoothing alone took for breaks or joined onto them
+    off = [not x for x in on]
+    for s, e in _runs(on):
+        if e - s <= LOGO_BLIP_SECONDS:
+            off[s:e] = [True] * (e - s)
+    solid = [r for r in _runs(off) if r[1] - r[0] >= LOGO_SOLID_SECONDS]
+    trimmed = []
+    for s, e in merged:
+        inside = [r for r in solid if r[0] < e and r[1] > s]
+        if inside:
+            trimmed.append([max(s, inside[0][0]), min(e, inside[-1][1])])
+    merged = trimmed
 
     def snap(t: float, marks: List[float]) -> Optional[float]:
         near = [b for b in marks if abs(b - t) <= LOGO_SNAP_SECONDS]
         return min(near, key=lambda b: abs(b - t)) if near else None
+
+    def last_before(t: float, marks: List[float]) -> Optional[float]:
+        near = [b for b in marks if t - LOGO_RETURN_MAX <= b <= t]
+        return max(near) if near else None
 
     breaks = []
     for s, e in merged:
@@ -217,10 +245,13 @@ def _logo_breaks(scores: List[float], t: float, edges: List[float], blacks: List
             continue
         start = snap(float(s), edges) or snap(float(s), blacks)
         start = float(s) + 1 if start is None else start
-        # The show was back LOGO_RETURN_LAG before the logo: end at the black frame there
-        back = float(e) - LOGO_RETURN_LAG
-        end = snap(back, blacks)
-        end = back if end is None else end
+        # The show comes back before the logo does, at the break's last black frame (silent on ABC,
+        # not always on Fox); without one, LOGO_RETURN_LAG before the logo
+        end = last_before(float(e), blacks)
+        if end is None or end <= start:
+            back = float(e) - LOGO_RETURN_LAG
+            end = snap(back, blacks)
+            end = back if end is None else end
         if end - start >= MIN_BREAK_SECONDS:
             breaks.append({"start": round(start, 1), "end": round(end, 1)})
     return breaks
