@@ -30,7 +30,7 @@ import time
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 from . import childproc
-from .config import FFMPEG_PATH, TRANSCODE_DIR
+from .config import DATA_DIR, FFMPEG_PATH, TRANSCODE_DIR
 from .database import get_connection, save_commercials, recording_details
 from .settings import load_settings, save_settings
 
@@ -597,39 +597,111 @@ def _analyze(url: str, log_path, stop: threading.Event, progress: Optional[Dict[
     return None if proc.returncode != 0 and len(hists) < 60 else (hists, corners)
 
 
+# What the one pass measured, kept per recording (the test recordings' format, tests/data/ads): finding
+# the breaks again after a fix, or with Claude, takes a moment instead of reading the recording from
+# the Tablo again. About 1-2 MB per hour; kept FEATURES_KEEP_DAYS after the last use
+FEATURES_DIR = DATA_DIR / "ad_features"
+FEATURES_KEEP_DAYS = 90
+FEATURES_VERSION = 1  # bump when the pass measures differently (corner size...): older files are read again
+
+
+def _features_path(episode_id: str):
+    return FEATURES_DIR / ("".join(c for c in episode_id if c.isalnum() or c in "_-") + ".json.gz")
+
+
+def save_features(episode_id: str, hists: List[List[float]], corners: List[Tuple[bytes, ...]], blacks: List[float],
+                  quiet: List[Tuple[float, float]], loud: List[float]) -> None:
+    import base64
+    import gzip
+    import json
+    bits = bytearray()
+    for frame in corners:
+        for corner in frame:
+            lit = lighter_pixels(corner)
+            for b in range(0, len(lit), 8):
+                bits.append(sum(1 << x for x, on in enumerate(lit[b:b + 8]) if on))
+    data = {"version": FEATURES_VERSION, "seconds": len(hists),
+            "hists": base64.b64encode(bytes(min(255, round(v * 255)) for h in hists for v in h)).decode(),
+            "lit": base64.b64encode(bytes(bits)).decode(),
+            "blacks": [round(x, 2) for x in blacks], "silences": [[round(a, 2), round(b, 2)] for a, b in quiet],
+            "loudness": base64.b64encode(bytes(max(0, min(255, round(-v * 2))) for v in loud)).decode()}  # -dB x 2
+    try:
+        FEATURES_DIR.mkdir(parents=True, exist_ok=True)
+        with gzip.open(_features_path(episode_id), "wt", encoding="utf-8") as f:
+            json.dump(data, f)
+        cutoff = time.time() - FEATURES_KEEP_DAYS * 86400
+        for p in FEATURES_DIR.glob("*.json.gz"):
+            if p.stat().st_mtime < cutoff:
+                p.unlink(missing_ok=True)
+    except OSError as e:
+        print(f"[Commercials] Couldn't keep what was measured: {e}")
+
+
+def load_features(episode_id: str) -> Optional[Dict[str, object]]:
+    """{hists, corners, blacks, quiet} as the pass gave them, or None if not kept (or measured differently)."""
+    import base64
+    import gzip
+    import json
+    path = _features_path(episode_id)
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            data = json.load(f)
+        if data.get("version") != FEATURES_VERSION:
+            return None
+        path.touch()  # in use: kept longer
+    except (OSError, ValueError):
+        return None
+    n = data["seconds"]
+    raw = base64.b64decode(data["hists"])
+    hists = [[v / 255 for v in raw[i * BINS:(i + 1) * BINS]] for i in range(n)]
+    bits = base64.b64decode(data["lit"])
+    px = CORNER_W * CORNER_H
+    per = (px + 7) // 8
+    corners = [tuple([bool(bits[(i * len(CORNERS) + j) * per + p // 8] >> (p % 8) & 1) for p in range(px)]
+                     for j in range(len(CORNERS))) for i in range(n)]
+    return {"hists": hists, "corners": corners, "blacks": data["blacks"],
+            "quiet": [tuple(s) for s in data["silences"]]}
+
+
 async def analyze(ep: Dict[str, str]) -> Optional[str]:
     """Find the breaks in one recording and save them. Returns the status, or None if it was
     interrupted (something started playing) and should be tried again later."""
     from .tablo_client import tablo_manager
     from .export_pace import something_playing
     from . import claude_ads, previews
-    watch = await tablo_manager.get_airing_watch_url(ep["path"])
-    url = watch.get("playlist_url")
-    if not url:
-        raise RuntimeError("the Tablo didn't return a stream")
-    if claude_ads.api_key() and watch.get("bif_url_hd"):
-        await previews.fetch(ep["id"], watch["bif_url_hd"], True)  # the pictures Claude reads
-    log_path = TRANSCODE_DIR / f"ads_{ep['id']}.log"
-    stop = threading.Event()
-    rate = READ_RATE if await something_playing() else None
-    job = asyncio.get_running_loop().run_in_executor(None, _analyze, url, log_path, stop, status, rate)
-    while not job.done():
-        await asyncio.sleep(2)
-        if _busy():
-            stop.set()
-            await job
+    feats = await asyncio.to_thread(load_features, ep["id"])
+    want_previews = claude_ads.api_key() and not previews.times(ep["id"])
+    if feats is None or want_previews:
+        watch = await tablo_manager.get_airing_watch_url(ep["path"])
+        if want_previews and watch.get("bif_url_hd"):
+            await previews.fetch(ep["id"], watch["bif_url_hd"], True)  # the pictures Claude reads
+    if feats is None:
+        url = watch.get("playlist_url")
+        if not url:
+            raise RuntimeError("the Tablo didn't return a stream")
+        log_path = TRANSCODE_DIR / f"ads_{ep['id']}.log"
+        stop = threading.Event()
+        rate = READ_RATE if await something_playing() else None
+        job = asyncio.get_running_loop().run_in_executor(None, _analyze, url, log_path, stop, status, rate)
+        while not job.done():
+            await asyncio.sleep(2)
+            if _busy():
+                stop.set()
+                await job
+                return None
+        result = await job
+        if result is None:
             return None
-    result = await job
-    if result is None:
-        return None
-    hists, corners = result
-    try:
-        log = log_path.read_text(encoding="utf-8", errors="replace")
-    finally:
-        log_path.unlink(missing_ok=True)
-    blacks = black_frames(log)
+        hists, corners = result
+        try:
+            log = log_path.read_text(encoding="utf-8", errors="replace")
+        finally:
+            log_path.unlink(missing_ok=True)
+        feats = {"hists": hists, "corners": corners, "blacks": black_frames(log), "quiet": silences(log)}
+        await asyncio.to_thread(save_features, ep["id"], hists, corners, feats["blacks"], feats["quiet"], loudness(log))
+    hists, blacks = feats["hists"], feats["blacks"]
     how: Dict[str, str] = {}
-    breaks = find_breaks(hists, blacks, corners, silences(log), ep.get("program_end"), how)
+    breaks = find_breaks(hists, blacks, feats["corners"], feats["quiet"], ep.get("program_end"), how)
     # With the user's Anthropic key: Claude's reading of the previews, on these black frames
     by_claude = await asyncio.to_thread(claude_ads.find, ep, sorted(blacks), float(len(hists)))
     if by_claude is not None:
