@@ -3445,7 +3445,7 @@ PAGES.settings = async (r, token) => {
           <span>Find commercials with Claude</span>
           <span class="dim" style="font-size:13px">${settings.claude_key_set ? 'On' : 'Off'}</span>
         </div>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">More accurate on channels without a logo in the corner, such as CBS: with your own Anthropic API key, Claude looks at each recording’s preview pictures (one every 10 seconds) to see where the breaks are. Those pictures are sent to Anthropic, and each recording costs a few cents on your Anthropic account. Without a key, or if Claude can’t be reached, TabloView finds the breaks itself as before.</p>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">More accurate on channels without a logo in the corner, such as CBS: with your own Anthropic API key, Claude looks at each recording’s preview pictures (one every 10 seconds) to see where the breaks are. Those pictures are sent to Anthropic, and it costs about 5 cents per hour of TV on your Anthropic account (7 cents for a 90-minute show). Without a key, or if Claude can’t be reached, TabloView finds the breaks itself as before.</p>
         ${settings.claude_key_set && settings.claude_last_cost != null ? `<p class="dim" style="margin-top:6px;font-size:12.5px">The last recording cost about $${settings.claude_last_cost.toFixed(2)}.</p>` : ''}
         ${settings.claude_key_set && settings.claude_error ? `<p style="margin-top:6px;font-size:12.5px;color:var(--warn)">Last try didn’t work: ${esc(settings.claude_error)}</p>` : ''}
         <div class="panel-actions" style="margin-top:8px">
