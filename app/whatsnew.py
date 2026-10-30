@@ -13,6 +13,16 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.3.3": [
+        "Commercial skip is much better on CBS without a Claude key: TabloView now spots CBS's see-through eye in the corner. On Survivor it skips 96% of the ads (60% before) and on The Price Is Right 99% (90% before), with none of the show skipped.",
+        "A stretch of show is no longer taken for a long commercial break: Survivor's Tribal Council used to be skipped as a 10-minute break.",
+        "Undo a skip: if an automatic skip cut into the show, press Undo on the message (or U). On a TV, press Up within a few seconds. It goes back to where the skip started, and that part is never skipped again in that recording.",
+        "Find again: a button beside Skip commercials on a show's page finds the breaks again in its unwatched recordings with the improved finder (or Find commercials again in a recording's ⋯ menu). Updates don't redo anything by themselves, and a redo now takes seconds for recordings found from now on.",
+        "Select a whole season on a show's page: Select… picks a season, the recordings without one (Tablo's \"Other\"), or the watched or unwatched ones, to delete, export or add to the Watch list together. Shift-click ticks every recording in between.",
+        "TV view: a show's page has Delete watched, to clear its watched recordings in one go (protected ones are kept).",
+        "With a Claude key: if Claude can't be reached, it's asked again later (the recording shows No Claude meanwhile), and Settings now says what it costs: about 5 cents per hour of TV.",
+        "Fixed: the commercial break at the very start of a recording could run into the opening of the show.",
+    ],
     "1.3.2": [
         "Find commercials with Claude: add your own Anthropic API key under Settings → Playback, and Claude looks at each recording's preview pictures to find the breaks. It's far more accurate on channels without a logo in the corner, like CBS: on a Survivor episode it skipped 99% of the ads and none of the show, where TabloView alone skipped ten minutes of Tribal Council. Each recording costs a few cents on your Anthropic account, and the pictures are sent to Anthropic.",
         "With a key added, recordings that already have their breaks found are done again once, and any recording can be done again with Claude from its ⋯ menu.",

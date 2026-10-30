@@ -21,6 +21,13 @@ TabloView is a fast desktop interface for your Tablo DVR. Browse and play your r
 Sign in with your own Tablo account. Your password goes only to Tablo's sign-in service and is never saved. TabloView runs only on your PC unless you turn on network access for other devices at home.
 
 ## What's new in this version
+1.3.3:
+• Much better commercial skip on CBS, no Claude key needed
+• Undo a skip that cut into the show
+• Find again redoes a show's commercials with the improved finder
+• Select a whole season to delete it in one go
+• TV view: Delete watched on a show's page
+
 1.3.2:
 • Find commercials with Claude, using your own Anthropic API key
 • Much more accurate commercial skip on CBS and other channels without a logo
