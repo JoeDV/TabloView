@@ -234,6 +234,9 @@ def init_db():
         if "method" not in cm_cols:
             # Which detector found the breaks (app/commercials.py METHOD); older ones are redone
             cursor.execute("ALTER TABLE commercials ADD COLUMN method INTEGER DEFAULT 1")
+        if "by_claude" not in cm_cols:
+            # The breaks came from Claude reading the previews (app/claude_ads.py), not the finder alone
+            cursor.execute("ALTER TABLE commercials ADD COLUMN by_claude INTEGER DEFAULT 0")
 
         # Indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_episodes_show_id ON episodes(show_id)")
@@ -515,19 +518,20 @@ def set_show_keep(show_id: str, keep: Dict[str, Any]) -> None:
 
 
 def save_commercials(episode_id: str, status: str, breaks: Optional[List[Dict[str, float]]] = None,
-                     error: Optional[str] = None, method: int = 1) -> None:
+                     error: Optional[str] = None, method: int = 1, by_claude: bool = False) -> None:
     with get_connection() as conn:
         conn.execute("""
-            INSERT INTO commercials (episode_id, status, breaks_json, error, analyzed_at, method) VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO commercials (episode_id, status, breaks_json, error, analyzed_at, method, by_claude) VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(episode_id) DO UPDATE SET status = excluded.status, breaks_json = excluded.breaks_json,
-                error = excluded.error, analyzed_at = excluded.analyzed_at, method = excluded.method
+                error = excluded.error, analyzed_at = excluded.analyzed_at, method = excluded.method,
+                by_claude = excluded.by_claude
         """, (episode_id, status, json.dumps(breaks) if breaks is not None else None, error,
-              datetime.now(timezone.utc).isoformat(), method))
+              datetime.now(timezone.utc).isoformat(), method, int(by_claude)))
         conn.commit()
 
 
 def get_commercials(episode_ids: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
-    """episode_id -> {'status', 'breaks', 'error'}."""
+    """episode_id -> {'status', 'breaks', 'error', 'by_claude'}."""
     with get_connection() as conn:
         if episode_ids is None:
             rows = conn.execute("SELECT * FROM commercials").fetchall()
@@ -535,7 +539,7 @@ def get_commercials(episode_ids: Optional[List[str]] = None) -> Dict[str, Dict[s
             marks = ",".join("?" * len(episode_ids)) or "''"
             rows = conn.execute(f"SELECT * FROM commercials WHERE episode_id IN ({marks})", episode_ids).fetchall()
     return {r["episode_id"]: {"status": r["status"], "breaks": json.loads(r["breaks_json"]) if r["breaks_json"] else [],
-                              "error": r["error"]} for r in rows}
+                              "error": r["error"], "by_claude": bool(r["by_claude"])} for r in rows}
 
 
 def get_watched_episodes() -> List[Dict[str, Any]]:

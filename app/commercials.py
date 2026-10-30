@@ -403,6 +403,10 @@ def pending(shows: Optional[List[str]] = None) -> List[Dict[str, str]]:
         return []
     marks = ",".join("?" * len(shows)) or "''"
     qmarks = ",".join("?" * len(queued)) or "''"
+    # A Claude key added since a recording was done: once more, for Claude's breaks (one try each,
+    # so a key that stops working doesn't read the same recordings over and over)
+    settings = load_settings()
+    claude_since = settings.get("claude_key_added") if settings.get("claude_api_key") else None
     with get_connection() as conn:
         rows = conn.execute(f"""
             SELECT e.id, e.path, e.show_id, e.show_title, e.season_number, e.episode_number, e.duration, e.raw_json
@@ -410,10 +414,12 @@ def pending(shows: Optional[List[str]] = None) -> List[Dict[str, str]]:
             LEFT JOIN commercials c ON c.episode_id = e.id
             WHERE (c.episode_id IS NULL
                    -- found by an older detector: again (it kept the old breaks meanwhile), unless watched
-                   OR (COALESCE(c.method, 1) < {METHOD} AND c.status IN ('done', 'unreliable') AND e.status != 'Watched'))
+                   OR (COALESCE(c.method, 1) < {METHOD} AND c.status IN ('done', 'unreliable') AND e.status != 'Watched')
+                   OR (? IS NOT NULL AND COALESCE(c.by_claude, 0) = 0 AND c.analyzed_at < ?
+                       AND c.status IN ('done', 'unreliable') AND e.status != 'Watched'))
               AND (e.id IN ({qmarks}) OR (e.show_id IN ({marks}) AND e.status != 'Watched'))
             ORDER BY e.air_date DESC
-        """, [*queued, *shows]).fetchall()
+        """, [claude_since, claude_since, *queued, *shows]).fetchall()
     found = []
     for r in rows:
         details = recording_details(r["raw_json"])
@@ -543,9 +549,13 @@ async def analyze(ep: Dict[str, str]) -> Optional[str]:
     interrupted (something started playing) and should be tried again later."""
     from .tablo_client import tablo_manager
     from .export_pace import something_playing
-    url = (await tablo_manager.get_airing_watch_url(ep["path"])).get("playlist_url")
+    from . import claude_ads, previews
+    watch = await tablo_manager.get_airing_watch_url(ep["path"])
+    url = watch.get("playlist_url")
     if not url:
         raise RuntimeError("the Tablo didn't return a stream")
+    if claude_ads.api_key() and watch.get("bif_url_hd"):
+        await previews.fetch(ep["id"], watch["bif_url_hd"], True)  # the pictures Claude reads
     log_path = TRANSCODE_DIR / f"ads_{ep['id']}.log"
     stop = threading.Event()
     rate = READ_RATE if await something_playing() else None
@@ -564,10 +574,17 @@ async def analyze(ep: Dict[str, str]) -> Optional[str]:
         log = log_path.read_text(encoding="utf-8", errors="replace")
     finally:
         log_path.unlink(missing_ok=True)
-    breaks = find_breaks(hists, black_frames(log), corners, silences(log), ep.get("program_end"))
-    save_commercials(ep["id"], "unreliable" if breaks is None else "done", breaks, method=METHOD)
+    blacks = black_frames(log)
+    breaks = find_breaks(hists, blacks, corners, silences(log), ep.get("program_end"))
+    # With the user's Anthropic key: Claude's reading of the previews, on these black frames
+    by_claude = await asyncio.to_thread(claude_ads.find, ep, sorted(blacks), float(len(hists)))
+    if by_claude is not None:
+        breaks = by_claude
+    save_commercials(ep["id"], "unreliable" if breaks is None else "done", breaks, method=METHOD,
+                     by_claude=by_claude is not None)
     print(f"[Commercials] {ep['show_title']} {ep['id']}: "
-          f"{'show and ads could not be told apart' if breaks is None else f'{len(breaks)} breaks'}")
+          f"{'show and ads could not be told apart' if breaks is None else f'{len(breaks)} breaks'}"
+          f"{' (found by Claude)' if by_claude is not None else ''}")
     return "unreliable" if breaks is None else "done"
 
 

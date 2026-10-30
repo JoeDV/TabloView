@@ -35,7 +35,7 @@ def _secrets() -> List[str]:
         try:
             from .settings import load_settings
             s = load_settings()
-            values += [s.get("plex_token"), (s.get("plex_server") or {}).get("token")]
+            values += [s.get("plex_token"), (s.get("plex_server") or {}).get("token"), s.get("claude_api_key")]
         except Exception:
             pass
         finally:

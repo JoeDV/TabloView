@@ -28,6 +28,23 @@ FLOORS = {  # name: (share of ads skipped, most show skipped, show_end)
     # ABC: a see-through logo that drops out on bright scenes and comes back 18-37 s after the show
     # does (checked against the Tablo's 10-second previews; before the fix 248 s of show was skipped)
     "shark_tank": (0.97, 15, 3509),
+    # CBS, no logo: the firelit Tribal Council scores less like the show than the ads do, so colour alone
+    # takes ten minutes of it for a break and misses two real ones. Here so it gets no worse; with an
+    # Anthropic key, Claude finds this one (ClaudeAnswerTests)
+    "survivor": (0.55, 630, 5250),
+}
+
+# Claude's answers from the preview sheets (app/claude_ads.py, prompt as shipped), 2026-10-30, one run
+# each: they go through the same edge rule as in the app, so a change to it is checked against them
+CLAUDE = {
+    "survivor": [[0, 24.5], [875.5, 1045.5], [1465.5, 1626.5], [1967, 2277], [2817.5, 3137], [3798, 3968.5], [4369, 4649], [5250, 5470]],
+    "hells_kitchen": [[0, 35], [815.5, 1026], [1456, 1706.5], [2056.5, 2297], [2677, 2937], [3237.5, 3428], [3738, 3788]],
+    "price_is_right": [[0, 25], [625, 775], [1065, 1255], [1375, 1525], [1725, 1835], [2055, 2205], [2565, 2715], [2835, 3005], [3235, 3405], [3495, 3680]],
+    "boston_blue": [[0, 24], [585, 755.5], [1175.5, 1345.5], [1947, 2247], [2777, 3047.5], [3478, 3683]],
+    "elsbeth": [[0, 5], [775.5, 895], [1596, 1736], [2297, 2557], [2807, 3097.5], [3408, 3518], [3548, 3603]],
+    "jeopardy": [[0, 14], [304.5, 424.5], [726, 895], [1355.5, 1576.5], [1686.5, 1876]],
+    "tracker": [[0, 25], [975, 1125], [1575, 1735], [2105, 2405], [2855, 3145], [3455, 3595], [3625, 3680]],
+    "shark_tank": [[0, 25], [625, 805], [1216, 1416], [1736, 1966], [2447, 2667], [3137.5, 3348], [3538, 3613]],
 }
 
 
@@ -65,6 +82,22 @@ class RealRecordingTests(unittest.TestCase):
                 print(f"\n  {name} ({rec['channel']}): {share:.0%} of ad time skipped, {show} s of show skipped")
                 self.assertGreaterEqual(share, floor)
                 self.assertLessEqual(show, show_limit)
+
+
+class ClaudeAnswerTests(unittest.TestCase):
+    def test_claude_answers_on_black_frames(self):
+        from app import claude_ads
+        total = 0
+        for name, answer in CLAUDE.items():
+            with self.subTest(name):
+                rec, _, _ = load(name)
+                found = claude_ads.onto_black_frames(answer, sorted(rec["blacks"]), rec["seconds"])
+                share, show = score(found, rec["breaks"], FLOORS[name][2])
+                print(f"\n  {name} with Claude: {share:.0%} of ad time skipped, {show} s of show skipped")
+                self.assertGreaterEqual(share, 0.92)
+                self.assertLessEqual(show, 20)
+                total += show
+        self.assertLessEqual(total, 30)  # 25 s across all eight when checked; the finder alone, 654 s
 
 
 if __name__ == "__main__":

@@ -49,6 +49,8 @@ DEFAULTS: Dict[str, Any] = {
     "commercial_episodes": [],  # single recordings asked for from the episode menu
     "auto_export_shows": [],  # show ids whose new recordings are exported to MP4 automatically (app/autoexport.py)
     "skip_commercials": False,  # skip breaks automatically in the player (otherwise a Skip button)
+    "claude_api_key": None,  # the user's Anthropic key: Claude finds the breaks (app/claude_ads.py; never shown or logged)
+    "claude_key_added": None,  # when it was saved (UTC, ISO): recordings done before then are redone once
     "find_dropouts": True,  # read recordings the Tablo flagged as not clean for signal dropouts (app/dropouts.py)
     "skip_dropouts": False,  # skip signal dropouts in recordings automatically (otherwise a Skip button)
     "picture_shapes": {},  # channel identifier -> "4:3", "16:9" or "zoom" in the player (no entry = as broadcast)

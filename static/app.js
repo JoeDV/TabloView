@@ -1492,6 +1492,46 @@ async function setPinDialog(title = 'PIN for other devices', text = 'Phones, tab
   return saved;
 }
 
+// The user's own Anthropic key, for finding commercials with Claude (checked with Anthropic on saving)
+async function claudeKeyDialog() {
+  let saved = false;
+  await openModal(`
+    <form class="dialog-body" id="claudeKeyForm">
+      <div class="dialog-title">Find commercials with Claude</div>
+      <div class="dialog-text">Paste an API key from your Anthropic account (console.anthropic.com → API keys). It stays on this PC and is only sent to Anthropic.</div>
+      <input class="input" id="claudeKey" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" data-autofocus style="margin-top:14px;width:100%">
+      <div class="pin-error" id="claudeKeyError"></div>
+    </form>
+    <div class="dialog-foot">
+      <button class="btn" data-action="modal-cancel">Cancel</button>
+      <button class="btn btn-primary" id="saveClaudeKey">Save key</button>
+    </div>`, {
+    onReady: el => {
+      const save = async e => {
+        e && e.preventDefault();
+        const key = el.querySelector('#claudeKey').value.trim();
+        if (!key) { el.querySelector('#claudeKeyError').textContent = 'Paste your API key.'; return; }
+        const btn = el.querySelector('#saveClaudeKey');
+        btn.disabled = true;
+        btn.textContent = 'Checking…';
+        try {
+          await api('/api/settings/claude_key', { method: 'POST', body: JSON.stringify({ key }) });
+          saved = true;
+          toast('Claude will find the commercials from now on', 'success');
+          closeModal(true);
+        } catch (err) {
+          el.querySelector('#claudeKeyError').textContent = err.message;
+          btn.disabled = false;
+          btn.textContent = 'Save key';
+        }
+      };
+      el.querySelector('#claudeKeyForm').addEventListener('submit', save);
+      el.querySelector('#saveClaudeKey').addEventListener('click', save);
+    },
+  });
+  return saved;
+}
+
 // Just this recording, whatever its show's Skip commercials setting
 async function findCommercials(id) {
   try {
@@ -3363,6 +3403,16 @@ PAGES.settings = async (r, token) => {
           <span>Skip commercial breaks automatically</span>
         </label>
         <p class="dim" style="margin-top:6px;font-size:12.5px">For shows with “Skip commercials” turned on (on the show’s page). Off: a Skip break button appears instead (or press S).</p>
+        <div class="switch-row" style="font-weight:400;cursor:default;margin-top:16px">
+          <span>Find commercials with Claude</span>
+          <span class="dim" style="font-size:13px">${settings.claude_key_set ? 'On' : 'Off'}</span>
+        </div>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">More accurate on channels without a logo in the corner, such as CBS: with your own Anthropic API key, Claude looks at each recording’s preview pictures (one every 10 seconds) to see where the breaks are. Those pictures are sent to Anthropic, and each recording costs a few cents on your Anthropic account. Without a key, or if Claude can’t be reached, TabloView finds the breaks itself as before.</p>
+        ${settings.claude_key_set && settings.claude_error ? `<p style="margin-top:6px;font-size:12.5px;color:var(--warn)">Last try didn’t work: ${esc(settings.claude_error)}</p>` : ''}
+        <div class="panel-actions" style="margin-top:8px">
+          <button class="btn btn-sm" data-action="claude-key">${settings.claude_key_set ? 'Change key' : 'Add API key'}</button>
+          ${settings.claude_key_set ? '<button class="btn btn-sm btn-ghost" data-action="claude-key-remove">Remove key</button>' : ''}
+        </div>
         <label class="switch-row" style="margin-top:16px">
           <input type="checkbox" class="switch" data-change="skip-dropouts" ${settings.skip_dropouts ? 'checked' : ''}>
           <span>Skip signal dropouts automatically</span>
@@ -5655,6 +5705,14 @@ const ACTIONS = {
       <a class="btn btn-primary" href="/api/guide/upcoming.ics" download onclick="setTimeout(() => closeModal(true), 300)">${icon('download', 15)}Download calendar file</a>
     </div>`),
   'set-pin': async () => { if (await setPinDialog()) route(); },
+  'claude-key': async () => { if (await claudeKeyDialog()) route(); },
+  'claude-key-remove': async () => {
+    try {
+      await api('/api/settings/claude_key', { method: 'POST', body: JSON.stringify({ key: null }) });
+      toast('Key removed: TabloView finds the commercials itself again');
+      route();
+    } catch (err) { toast(err.message, 'error'); }
+  },
   'lan-events': () => { state.lanEventsOpen = !state.lanEventsOpen; loadLanActivity(routeToken); },
   'lan-activity-clear': async () => {
     if (!await confirmDialog({ title: 'Clear the sign-in record?', text: 'The list of devices and sign-ins starts again. Nobody is signed out.', confirm: 'Clear' })) return;

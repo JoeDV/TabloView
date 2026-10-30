@@ -12,3 +12,7 @@ python-dotenv>=1.0.1,<2
 requests>=2.31.0,<3
 # HTTPS trust store (via httpx/requests): 2026.10.19 drops emSign CAs whose intermediate keys leaked
 certifi>=2026.10.19
+# Finding commercials with Claude (Settings > Playback, with the user's own API key): Anthropic's
+# official package for the call, and Pillow to lay the preview pictures out on sheets
+anthropic>=2.3.0,<3
+pillow>=11,<14

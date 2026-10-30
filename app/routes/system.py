@@ -9,6 +9,7 @@ import subprocess
 import sys
 import socket
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Literal, Optional
 from fastapi import APIRouter, HTTPException, Request
@@ -47,7 +48,7 @@ class SettingsUpdate(BaseModel):
     home_hidden: Optional[List[HomeSection]] = Field(default=None, max_length=20)
 
 
-PRIVATE_SETTINGS = ("lan_pin", "lan_secret", "plex_token", "plex_server")
+PRIVATE_SETTINGS = ("lan_pin", "lan_secret", "plex_token", "plex_server", "claude_api_key")
 MAX_PICTURE_SHAPES = 500  # far more channels than a lineup has; keeps settings.json small
 
 
@@ -447,8 +448,35 @@ async def set_picture_shape(req: PictureShapeRequest):
 async def get_settings(request: Request):
     # Never the PIN's hash or the secret that signs remembered devices: with those, a device could
     # find the PIN or stay signed in after "sign out all devices"
-    settings = {k: v for k, v in load_settings().items() if k not in PRIVATE_SETTINGS}
-    return {**settings, "can_apply_now": hasattr(request.app.state, "request_restart")}
+    all_settings = load_settings()
+    settings = {k: v for k, v in all_settings.items() if k not in PRIVATE_SETTINGS}
+    from .. import claude_ads
+    return {**settings, "can_apply_now": hasattr(request.app.state, "request_restart"),
+            # The Anthropic key itself never leaves this PC: only whether there is one, and its last failure
+            "claude_key_set": bool(all_settings.get("claude_api_key")), "claude_error": claude_ads.status["error"]}
+
+
+class ClaudeKeyRequest(BaseModel):
+    key: Optional[str] = Field(default=None, max_length=300)  # None or "": forget the key
+
+
+@router.post("/settings/claude_key")
+async def set_claude_key(body: ClaudeKeyRequest):
+    """Save the user's Anthropic API key for finding commercials with Claude (checked with Anthropic
+    first, at no cost), or forget it. Recordings already done are redone once with it."""
+    from .. import claude_ads
+    key = (body.key or "").strip()
+    if not key:
+        save_settings({"claude_api_key": None, "claude_key_added": None})
+        claude_ads.status["error"] = None
+        return {"claude_key_set": False}
+    problem = await asyncio.to_thread(claude_ads.check_key, key)
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
+    save_settings({"claude_api_key": key, "claude_key_added": datetime.now(timezone.utc).isoformat()})
+    claude_ads.status["error"] = None
+    commercials._summary_cache["at"] = 0.0  # the status line counts the recordings to redo at once
+    return {"claude_key_set": True}
 
 
 @router.post("/settings")
