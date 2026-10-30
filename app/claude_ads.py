@@ -150,9 +150,10 @@ def onto_black_frames(found: List[List[float]], blacks: List[float], n: float) -
     return out
 
 
-def find(ep: Dict[str, str], blacks: List[float], n: float) -> Optional[List[Dict[str, float]]]:
+def find(ep: Dict[str, str], blacks: List[float], n: float, failed: Optional[Dict[str, bool]] = None) -> Optional[List[Dict[str, float]]]:
     """The breaks per Claude, on the finder's black frames, or None to keep the finder's own (no key,
-    no previews, or Claude couldn't be asked). Blocking: run it in a thread."""
+    no previews, or Claude couldn't be asked: then failed["yes"] is set, and it's tried again later).
+    Blocking: run it in a thread."""
     key = api_key()
     if not key:
         return None
@@ -165,6 +166,8 @@ def find(ep: Dict[str, str], blacks: List[float], n: float) -> Optional[List[Dic
     except Exception as e:
         print(f"[Commercials] Claude couldn't find the breaks in {ep['title']}: {e}")
         status["error"] = str(e)[:300]
+        if failed is not None:
+            failed["yes"] = True
         return None
     status["error"] = None
     return onto_black_frames(found, blacks, n)

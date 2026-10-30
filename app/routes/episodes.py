@@ -108,6 +108,21 @@ async def episode_commercials(episode_id: str):
             "auto_skip_dropouts": bool(settings.get("skip_dropouts"))}
 
 
+class NotABreakRequest(BaseModel):
+    start: float = Field(ge=0)
+    end: float = Field(ge=0)
+
+
+@router.post("/{episode_id}/commercials/not_a_break")
+async def not_a_break(episode_id: str, req: NotABreakRequest):
+    """Undo after a skip: this "break" was the show. It's never skipped again in this recording."""
+    from ..database import add_not_a_break
+    if req.end <= req.start:
+        raise HTTPException(status_code=400, detail="The end must come after the start")
+    add_not_a_break(episode_id, req.start, req.end)
+    return {"ok": True}
+
+
 @router.post("/{episode_id}/find_commercials")
 async def find_commercials(episode_id: str):
     """Find the commercial breaks in just this recording (in the background, when nothing is playing)."""

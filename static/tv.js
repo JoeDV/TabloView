@@ -313,10 +313,13 @@ function renderShow(id) {
   const at = location.hash;
   if (firstNew && eps.includes(firstNew) && !state.focus[at]) state.focus[at] = `ep-${firstNew.id}`;
   const unwatched = all.filter(e => e.status !== 'Watched').length;
+  // Watched ones can go in one press (protected recordings are kept), as on the PC
+  const deletable = all.filter(e => e.status === 'Watched' && !e.protected).length;
   setScreen(`<div class="show-head" ${art(show.backdrop_url || show.cover_url)}>
       <h1>${esc(d.show_title || show.title || '')}</h1>
       <div class="dim">${all.length === 1 ? '1 recording' : `${all.length} recordings`}${unwatched ? ` · ${unwatched} not watched` : ''}</div>
       ${show.description ? `<p class="desc">${esc(show.description)}</p>` : ''}
+      ${deletable ? `<div class="actions" style="margin-top:1vw"><button class="btn f" data-act="delete-watched" data-show="${esc(id)}" data-count="${deletable}" data-key="delete-watched">Delete watched (${deletable})</button></div>` : ''}
     </div>
     ${seasons.length > 1 ? `<div class="subtabs">${seasons.map(n => `<button class="btn f ${n === season ? 'primary' : ''}" data-act="season" data-show="${esc(id)}" data-season="${n}" data-key="season-${n}">${n ? `Season ${n}` : 'Other'}</button>`).join('')}</div>` : ''}
     ${eps.length ? `<div class="rows">${eps.map(e => {
@@ -327,6 +330,23 @@ function renderShow(id) {
           <div class="meta">${esc([e.air_date ? fmt.day(e.air_date) : '', e.duration ? fmt.mins(e.actual_duration || e.duration) : '', timeLeft(e), e.channel_name].filter(Boolean).join(' · '))}</div></div>
       </button>`;
     }).join('')}</div>` : '<div class="empty">No recordings left.</div>'}`, '#/library');
+}
+
+// A show's watched recordings, all at once (protected ones are kept, as on the PC)
+async function deleteWatched(id, n) {
+  const d = state.shows[id] || {};
+  const title = d.show_title || (d.show || {}).title || 'this show';
+  if (!await choose(`Delete ${n === 1 ? 'the watched recording' : `${n} watched recordings`}?`,
+    `${n === 1 ? 'It' : 'They'} will be removed from your Tablo for good. Protected recordings of ${title} are kept.`,
+    [{ label: 'Cancel', value: false }, { label: 'Delete', value: true, danger: true }])) return;
+  try {
+    const res = await api(`/api/shows/delete_watched?show_id=${encodeURIComponent(id)}`, { method: 'POST' });
+    (res.deleted_ids || []).forEach(x => state.eps.delete(x));
+    await showShow(id);
+    if (res.errors && res.errors.length) await choose(`${res.errors.length} couldn't be deleted`, res.errors[0], [{ label: 'OK', value: 1 }]);
+  } catch (err) {
+    await choose("Couldn't delete them", err.message, [{ label: 'OK', value: 1 }]);
+  }
 }
 
 // A recording: what it is, and what you can do with it (play, the Watch list, watched, protect, delete)
@@ -961,12 +981,31 @@ const player = {
     if (auto && !done.has(i)) {
       done.add(i);
       this.showSkip(null);
-      this.banner(kind === 'break' ? `Skipped a ${fmt.mins(b.end - b.start)} commercial break` : 'Skipped a signal dropout');
+      if (kind === 'break') {
+        // Up within a few seconds: it was the show (back, and never skipped again in this recording)
+        this.undo = () => this.notABreak(b, pos);
+        clearTimeout(this.undoTimer);
+        this.undoTimer = setTimeout(() => { this.undo = null; }, 8000);
+        this.banner(`Skipped a ${fmt.mins(b.end - b.start)} commercial break · ▲ to undo`, 8000);
+      } else this.banner('Skipped a signal dropout');
       this.seekTo(b.end);
       return;
     }
     // Watching it anyway (or went back into one already skipped): OK skips it
     this.showSkip({ end: b.end, text: `${kind === 'break' ? 'Commercial break' : 'Signal dropout'} · ${fmt.clock(b.end - pos)} · OK to skip · ▼ for controls` });
+  },
+
+  notABreak(b, from) {
+    const s = this.s;
+    this.undo = null;
+    clearTimeout(this.undoTimer);
+    s.breaks = (s.breaks || []).filter(x => x !== b);
+    s.skippedBreaks = new Set();
+    this.drawMarks();
+    this.seekTo(b.start);  // where the show was cut off
+    this.banner('Got it: that part won’t be skipped again');
+    api(`/api/episodes/${encodeURIComponent(s.id)}/commercials/not_a_break`, { method: 'POST', body: JSON.stringify({ start: b.start, end: b.end }) })
+      .catch(err => this.banner(`Couldn’t save that: ${err.message}`));
   },
 
   showSkip(skip) {
@@ -1083,13 +1122,13 @@ const player = {
     this.s = { ...this.s, id: next.channel_id };
   },
 
-  banner(text) {
+  banner(text, ms = 3000) {
     let b = $('#player .chan-banner');
     if (!b) { b = document.createElement('div'); b.className = 'chan-banner'; $('#player').appendChild(b); }
     b.textContent = text;
     b.classList.remove('hidden');
     clearTimeout(this.bannerTimer);
-    this.bannerTimer = setTimeout(() => b.classList.add('hidden'), 3000);
+    this.bannerTimer = setTimeout(() => b.classList.add('hidden'), ms);
   },
 
   attach(url) {
@@ -1269,6 +1308,7 @@ const player = {
   close(keepalive = false) {
     if (!this.open) return;
     if (APP) APP.setPlaying(false);
+    this.undo = null;
     clearTimeout(this.seekTimer);
     this.pendingSeek = null;
     if (this.s.kind === 'rec') this.s.gen = (this.s.gen || 0) + 1;  // a stream still starting is stopped when it arrives
@@ -1367,7 +1407,7 @@ function onKey(e) {
       ArrowRight: () => player.skip(30), MediaFastForward: () => player.skip(30),
       // Down also opens the buttons in a recording: during a commercial break OK skips it, and a
       // remote without rewind/fast-forward keys (Google TV Streamer) had no other way to them
-      ArrowUp: () => (live ? player.surf(-1) : player.wake()), ArrowDown: () => (live ? player.surf(1) : player.showControls()),
+      ArrowUp: () => (live ? player.surf(-1) : player.undo ? player.undo() : player.wake()), ArrowDown: () => (live ? player.surf(1) : player.showControls()),
       ChannelUp: () => live && player.surf(-1), ChannelDown: () => live && player.surf(1),
       PageUp: () => live && player.surf(-1), PageDown: () => live && player.surf(1),
     };
@@ -1432,6 +1472,7 @@ function onClick(e) {
   else if (act === 'g-air') guideAiring(el.dataset.ch, Number(el.dataset.i));
   else if (act === 'reload') location.reload();
   else if (act === 'upcoming') upcomingAction(Number(el.dataset.i));
+  else if (act === 'delete-watched') deleteWatched(el.dataset.show, Number(el.dataset.count));
   else if (act === 'season') {
     state.season[el.dataset.show] = Number(el.dataset.season);
     state.focus[location.hash] = el.dataset.key;

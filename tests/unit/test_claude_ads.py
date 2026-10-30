@@ -83,6 +83,32 @@ class KeyTests(unittest.TestCase):
         self.assertEqual(res["queued"], 1)  # a1; a2 was never done (it's waiting anyway), a3 is watched
         self.assertEqual(self.settings["commercial_redo"], ["a1"])
 
+    def test_claude_is_asked_again_after_a_failure_three_tries_in_all(self):
+        self.settings.update(claude_api_key="sk-ant-test", claude_key_added="2000-01-01T00:00:00+00:00")
+        old = "2000-01-02T00:00:00+00:00"
+        with mock.patch.object(db, "datetime") as dt:
+            dt.now.return_value.isoformat.return_value = old
+            db.save_commercials("a1", "done", [], method=commercials.METHOD, claude_failed=True)
+        self.assertIn("a1", self.ids())  # an hour has passed: once more
+        with mock.patch.object(db, "datetime") as dt:
+            dt.now.return_value.isoformat.return_value = old
+            db.save_commercials("a1", "done", [], method=commercials.METHOD, claude_failed=True)
+            db.save_commercials("a1", "done", [], method=commercials.METHOD, claude_failed=True)
+        self.assertNotIn("a1", self.ids())  # three failures: left alone
+        self.assertEqual(db.get_commercials(["a1"])["a1"]["claude_failed"], 3)
+        db.save_commercials("a1", "done", [], method=commercials.METHOD, by_claude=True, claude_failed=False)
+        self.assertEqual(db.get_commercials(["a1"])["a1"]["claude_failed"], 0)
+
+    def test_a_break_undone_in_the_player_stays_gone(self):
+        db.save_commercials("a1", "done", [{"start": 100.0, "end": 280.0}, {"start": 900.0, "end": 1100.0}],
+                            method=commercials.METHOD)
+        db.add_not_a_break("a1", 100.0, 280.0)
+        self.assertEqual(db.get_commercials(["a1"])["a1"]["breaks"], [{"start": 900.0, "end": 1100.0}])
+        # Found again later, a little different: still left out
+        db.save_commercials("a1", "done", [{"start": 104.0, "end": 290.0}, {"start": 900.0, "end": 1100.0}],
+                            method=commercials.METHOD)
+        self.assertEqual(db.get_commercials(["a1"])["a1"]["breaks"], [{"start": 900.0, "end": 1100.0}])
+
     def test_the_key_is_never_sent_to_the_page(self):
         from app.routes import system
         self.assertIn("claude_api_key", system.PRIVATE_SETTINGS)

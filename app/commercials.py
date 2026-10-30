@@ -21,6 +21,7 @@ missed. When a recording's show and ads don't separate clearly at all, nothing i
 """
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import os
 import re
@@ -514,6 +515,7 @@ def pending(shows: Optional[List[str]] = None) -> List[Dict[str, str]]:
     # so a key that stops working doesn't read the same recordings over and over)
     settings = load_settings()
     claude_since = settings.get("claude_key_added") if settings.get("claude_api_key") else None
+    retry_before = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     with get_connection() as conn:
         rows = conn.execute(f"""
             SELECT e.id, e.path, e.show_id, e.show_title, e.season_number, e.episode_number, e.duration, e.raw_json
@@ -523,12 +525,15 @@ def pending(shows: Optional[List[str]] = None) -> List[Dict[str, str]]:
                    -- found by an older detector: again (it kept the old breaks meanwhile), unless watched
                    OR (COALESCE(c.method, 1) < {METHOD} AND c.status IN ('done', 'unreliable') AND e.status != 'Watched')
                    OR (? IS NOT NULL AND COALESCE(c.by_claude, 0) = 0 AND c.analyzed_at < ?
-                       AND c.status IN ('done', 'unreliable') AND e.status != 'Watched'))
+                       AND c.status IN ('done', 'unreliable') AND e.status != 'Watched')
+                   -- Claude couldn't be asked last time (network, Anthropic busy): again an hour later, 3 tries in all
+                   OR (? IS NOT NULL AND COALESCE(c.claude_failed, 0) BETWEEN 1 AND 2 AND c.analyzed_at < ?
+                       AND e.status != 'Watched'))
               AND (e.id IN ({qmarks}) OR (e.show_id IN ({marks}) AND e.status != 'Watched'))
                -- asked for again with Claude from the episode menu, watched or not
                OR e.id IN ({rmarks})
             ORDER BY e.air_date DESC
-        """, [claude_since, claude_since, *queued, *shows, *redo]).fetchall()
+        """, [claude_since, claude_since, claude_since, retry_before, *queued, *shows, *redo]).fetchall()
     found = []
     for r in rows:
         details = recording_details(r["raw_json"])
@@ -819,11 +824,13 @@ async def analyze(ep: Dict[str, str]) -> Optional[str]:
     how: Dict[str, str] = {}
     breaks = find_breaks(hists, blacks, feats["corners"], feats["quiet"], ep.get("program_end"), how, feats.get("eye"))
     # With the user's Anthropic key: Claude's reading of the previews, on these black frames
-    by_claude = await asyncio.to_thread(claude_ads.find, ep, sorted(blacks), float(len(hists)))
+    failed: Dict[str, bool] = {}
+    by_claude = await asyncio.to_thread(claude_ads.find, ep, sorted(blacks), float(len(hists)), failed)
     if by_claude is not None:
         breaks = by_claude
     save_commercials(ep["id"], "unreliable" if breaks is None else "done", breaks, method=METHOD,
-                     by_claude=by_claude is not None, found_by="claude" if by_claude is not None else how.get("by"))
+                     by_claude=by_claude is not None, found_by="claude" if by_claude is not None else how.get("by"),
+                     claude_failed=bool(failed.get("yes")))
     print(f"[Commercials] {ep['show_title']} {ep['id']}: "
           f"{'show and ads could not be told apart' if breaks is None else f'{len(breaks)} breaks'}"
           f"{' (found by Claude)' if by_claude is not None else ''}")

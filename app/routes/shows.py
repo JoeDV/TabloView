@@ -178,6 +178,8 @@ def _with_commercials(episodes: List[dict]) -> List[dict]:
                                   else found[e["id"]]["status"] if e["id"] in found else "queued" if e["id"] in queued else None),
              "commercial_breaks": len(found[e["id"]]["breaks"]) if e["id"] in found else 0,
              "commercials_by_claude": bool(found.get(e["id"], {}).get("by_claude")),
+             # Claude couldn't be asked (it's tried again): these breaks are TabloView's own
+             "claude_failed": claude_key and bool(found.get(e["id"], {}).get("claude_failed")),
              # Done before: the menu offers to do it again (with Claude when there's a key)
              "commercials_can_redo": e["id"] in found and found[e["id"]]["status"] in ("done", "unreliable"),
              "claude_key": claude_key,

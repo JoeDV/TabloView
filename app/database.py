@@ -237,6 +237,12 @@ def init_db():
         if "by_claude" not in cm_cols:
             # The breaks came from Claude reading the previews (app/claude_ads.py), not the finder alone
             cursor.execute("ALTER TABLE commercials ADD COLUMN by_claude INTEGER DEFAULT 0")
+        if "claude_failed" not in cm_cols:
+            # Times Claude couldn't be asked about this recording (the finder's breaks kept meanwhile)
+            cursor.execute("ALTER TABLE commercials ADD COLUMN claude_failed INTEGER DEFAULT 0")
+        if "not_breaks_json" not in cm_cols:
+            # Spans the viewer said were the show (Undo after a skip): never skipped again, whatever is found
+            cursor.execute("ALTER TABLE commercials ADD COLUMN not_breaks_json TEXT")
         if "found_by" not in cm_cols:
             # How the breaks were found: logo, colour (no usable logo) or claude; NULL from before 1.3.3
             cursor.execute("ALTER TABLE commercials ADD COLUMN found_by TEXT")
@@ -522,16 +528,21 @@ def set_show_keep(show_id: str, keep: Dict[str, Any]) -> None:
 
 def save_commercials(episode_id: str, status: str, breaks: Optional[List[Dict[str, float]]] = None,
                      error: Optional[str] = None, method: int = 1, by_claude: bool = False,
-                     found_by: Optional[str] = None) -> None:
+                     found_by: Optional[str] = None, claude_failed: Optional[bool] = None) -> None:
+    """claude_failed: True adds one to the count of Claude's failures on this recording, False clears
+    it (Claude answered, or there's no key), None leaves it."""
     with get_connection() as conn:
         conn.execute("""
-            INSERT INTO commercials (episode_id, status, breaks_json, error, analyzed_at, method, by_claude, found_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO commercials (episode_id, status, breaks_json, error, analyzed_at, method, by_claude, found_by, claude_failed)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(episode_id) DO UPDATE SET status = excluded.status, breaks_json = excluded.breaks_json,
                 error = excluded.error, analyzed_at = excluded.analyzed_at, method = excluded.method,
-                by_claude = excluded.by_claude, found_by = excluded.found_by
+                by_claude = excluded.by_claude, found_by = excluded.found_by,
+                claude_failed = CASE WHEN ? IS NULL THEN commercials.claude_failed
+                                     WHEN ? = 1 THEN COALESCE(commercials.claude_failed, 0) + 1 ELSE 0 END
         """, (episode_id, status, json.dumps(breaks) if breaks is not None else None, error,
-              datetime.now(timezone.utc).isoformat(), method, int(by_claude), found_by))
+              datetime.now(timezone.utc).isoformat(), method, int(by_claude), found_by, int(bool(claude_failed)),
+              None if claude_failed is None else int(claude_failed), None if claude_failed is None else int(claude_failed)))
         conn.commit()
 
 
@@ -543,8 +554,30 @@ def get_commercials(episode_ids: Optional[List[str]] = None) -> Dict[str, Dict[s
         else:
             marks = ",".join("?" * len(episode_ids)) or "''"
             rows = conn.execute(f"SELECT * FROM commercials WHERE episode_id IN ({marks})", episode_ids).fetchall()
-    return {r["episode_id"]: {"status": r["status"], "breaks": json.loads(r["breaks_json"]) if r["breaks_json"] else [],
-                              "error": r["error"], "by_claude": bool(r["by_claude"])} for r in rows}
+    return {r["episode_id"]: {"status": r["status"],
+                              "breaks": _without_not_breaks(json.loads(r["breaks_json"]) if r["breaks_json"] else [],
+                                                            json.loads(r["not_breaks_json"]) if r["not_breaks_json"] else []),
+                              "error": r["error"], "by_claude": bool(r["by_claude"]), "found_by": r["found_by"],
+                              "claude_failed": r["claude_failed"] or 0} for r in rows}
+
+
+def _without_not_breaks(breaks: List[Dict[str, float]], not_breaks: List[List[float]]) -> List[Dict[str, float]]:
+    """Leave out breaks that are mostly a span the viewer said was the show."""
+    def overlap(b: Dict[str, float], span: List[float]) -> float:
+        return max(0.0, min(b["end"], span[1]) - max(b["start"], span[0]))
+    return [b for b in breaks if not any(overlap(b, n) > (b["end"] - b["start"]) / 2 for n in not_breaks)]
+
+
+def add_not_a_break(episode_id: str, start: float, end: float) -> None:
+    """The viewer says start-end was the show (Undo after a skip)."""
+    with get_connection() as conn:
+        row = conn.execute("SELECT not_breaks_json FROM commercials WHERE episode_id = ?", (episode_id,)).fetchone()
+        if not row:
+            return
+        spans = json.loads(row["not_breaks_json"]) if row["not_breaks_json"] else []
+        spans.append([round(start, 1), round(end, 1)])
+        conn.execute("UPDATE commercials SET not_breaks_json = ? WHERE episode_id = ?", (json.dumps(spans[-50:]), episode_id))
+        conn.commit()
 
 
 def get_watched_episodes() -> List[Dict[str, Any]]:

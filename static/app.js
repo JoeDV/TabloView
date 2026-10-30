@@ -261,6 +261,21 @@ function toast(message, type = 'info') {
   setTimeout(() => { el.classList.add('leaving'); setTimeout(() => el.remove(), 260); }, 4200);
 }
 
+// A message with one button (e.g. Undo), for a few seconds
+function actionToast(message, label, run, ms = 8000) {
+  const el = document.createElement('div');
+  el.className = 'toast info';
+  el.style.display = 'flex';
+  el.style.alignItems = 'center';
+  el.style.gap = '12px';
+  el.innerHTML = `<span>${esc(message)}</span><button class="btn btn-sm">${esc(label)}</button>`;
+  const close = () => { el.classList.add('leaving'); setTimeout(() => el.remove(), 260); };
+  el.querySelector('button').addEventListener('click', () => { close(); run(); });
+  $('#toasts').appendChild(el);
+  setTimeout(close, ms);
+  return close;
+}
+
 // A message that stays up and can be updated (e.g. a percentage), until it's closed
 function stickyToast(message, type = 'info') {
   const el = document.createElement('div');
@@ -1606,9 +1621,10 @@ function episodeStatus(ep) {
 // What the background commercial finder has done with this recording (shows with Skip commercials on)
 function commercialTag(ep) {
   if (ep.commercials === 'done') {
-    return ep.commercial_breaks
+    const noClaude = ep.claude_failed ? '<span class="ad-tag dim" title="Claude couldn’t be reached for this recording, so TabloView found its breaks itself. Claude is asked again later (Settings → Playback shows why)">No Claude</span>' : '';
+    return noClaude + (ep.commercial_breaks
       ? `<span class="ad-tag" title="${plural(ep.commercial_breaks, 'commercial break')} marked${ep.commercials_by_claude ? ' by Claude' : ''}; skip them in the player">${icon('next', 11)}${ep.commercial_breaks}</span>`
-      : '<span class="ad-tag dim" title="No commercial breaks found">0</span>';
+      : '<span class="ad-tag dim" title="No commercial breaks found">0</span>');
   }
   if (ep.commercials === 'queued' || ep.commercials === 'analyzing') {
     const running = ep.commercials === 'analyzing' || (state.adProgress && state.adProgress.episode_id === ep.id);
@@ -4229,7 +4245,7 @@ const player = {
     const keys = [['Space or K', 'Play / pause'], ['← or J', 'Back 10 seconds'], ['→ or L', 'Ahead 30 seconds'],
       ['↑ ↓', 'Volume'], ['M', 'Mute'], ['F', 'Full screen'], ['P', 'Picture in picture'],
       ['&lt; &gt;', 'Slower / faster (recordings)'], ['Home', 'Back to live (live TV)'],
-      ['Page Up / Down', 'Previous / next channel (live TV)'], ['S', 'Skip a commercial break'], ['T', 'Captions on / off'], ['A', 'Picture shape for this channel'], ['2', 'Watch a live channel alongside'], ['Tab', 'Hear the other channel'], ['V', 'Layout of two channels'], ['C', 'Channel list (live TV)'], ['↑ ↓ / Page Up / Down', 'In the channel list: move through it (Enter picks)'], ['Esc', 'Close the player']];
+      ['Page Up / Down', 'Previous / next channel (live TV)'], ['S', 'Skip a commercial break'], ['U', 'Undo a skip: it was the show'], ['T', 'Captions on / off'], ['A', 'Picture shape for this channel'], ['2', 'Watch a live channel alongside'], ['Tab', 'Hear the other channel'], ['V', 'Layout of two channels'], ['C', 'Channel list (live TV)'], ['↑ ↓ / Page Up / Down', 'In the channel list: move through it (Enter picks)'], ['Esc', 'Close the player']];
     openModal(`<div class="dialog-body"><div class="dialog-title">Keyboard shortcuts</div>
       <div class="kbd-list">${keys.map(([k, d]) => `<kbd>${k}</kbd><span>${d}</span>`).join('')}</div></div>
       <div class="dialog-foot"><button class="btn btn-primary" data-action="modal-ok" data-autofocus>Got it</button></div>`);
@@ -4354,7 +4370,10 @@ const player = {
     if (s.autoSkip && !s.skippedBreaks.has(i)) {
       s.skippedBreaks.add(i);
       btn.classList.add('hidden');
-      toast(`Skipped a ${fmt.dur(b.end - b.start) || 'short'} commercial break`);
+      // Undo (or U): it was the show. Back to where the skip started, and never skipped again
+      s.undo = () => this.notABreak(b, pos);
+      s.undoClose = actionToast(`Skipped a ${fmt.dur(b.end - b.start) || 'short'} commercial break`, 'Undo: it was the show', s.undo);
+      setTimeout(() => { if (s.undo && state.stream === s) s.undo = null; }, 8000);
       this.seekTo(b.end);
       return;
     }
@@ -4379,6 +4398,21 @@ const player = {
     btn.dataset.end = d.end;
     btn.innerHTML = `Skip dropout ${icon('next', 16)}<span>${fmtClock(d.end - pos)}</span>`;
     btn.classList.remove('hidden');
+  },
+
+  // The viewer says a skipped "break" was the show: back to where it was skipped, off the timeline, and
+  // never skipped again in this recording (kept on this PC, whatever is found later)
+  notABreak(b, from) {
+    const s = state.stream;
+    s.undo = null;
+    if (s.undoClose) { s.undoClose(); s.undoClose = null; }
+    api(`/api/episodes/${encodeURIComponent(s.episodeId)}/commercials/not_a_break`, { method: 'POST', body: JSON.stringify({ start: b.start, end: b.end }) })
+      .then(() => toast('Got it: that part won’t be skipped again'))
+      .catch(err => toast(`Couldn’t save that: ${err.message}`, 'error'));
+    s.breaks = (s.breaks || []).filter(x => x !== b);
+    s.skippedBreaks = new Set();
+    this.drawBreaks();
+    this.seekTo(b.start);  // where the show was cut off
   },
 
   skipBreak() {
@@ -6164,6 +6198,7 @@ function wireEvents() {
       PageUp: () => player.surf(-1), PageDown: () => player.surf(1),
       c: () => { if (state.stream.channelId) player.toggleChannels(); },
       s: () => { if (!$('#skipBreak').classList.contains('hidden')) player.skipBreak(); },
+      u: () => { if (state.stream.undo) state.stream.undo(); },
       t: () => player.toggleCaptions(),
       a: () => pictureShape.menu($('#pbShape')),
       2: () => dual.add(),
