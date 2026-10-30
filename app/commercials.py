@@ -21,6 +21,7 @@ missed. When a recording's show and ads don't separate clearly at all, nothing i
 """
 
 import asyncio
+from pathlib import Path
 import os
 import re
 import subprocess
@@ -84,6 +85,21 @@ LOGO_RETURN_MAX = 45
 # 87 s of Shark Tank was taken for a break
 LOGO_SOLID_SECONDS = 20
 LOGO_BLIP_SECONDS = 1
+# A faint logo: CBS's see-through eye is ~5 px wide in the 160x90 copy, too faint for the corners above
+# (and lit in under half the seconds: it vanishes on bright scenes, and ads are a quarter of the time).
+# In a 480x270 copy's corners (EYE_W x EYE_H) it's a clear ring. A pixel EYE_LIGHTER lighter than the
+# 5x5 around it (worked out by FFmpeg) and lit in over EYE_PIXEL_SHARE of the seconds is the logo; at
+# least EYE_MIN_PIXELS of them, or there's none; a second with EYE_ON of them lit has it on. On
+# Survivor that's on in 91% of show seconds and 6% of ad seconds
+EYE_SCALE_W, EYE_SCALE_H = 480, 270
+EYE_W, EYE_H = 108, 66
+EYE_LIGHTER = 8
+EYE_PIXEL_SHARE = 0.35
+EYE_MIN_PIXELS = 20
+EYE_ON = 0.3
+EYE_EDGE = 3
+EYE_GONE_EARLY = 20  # a break starts at the first black frame this long after the eye goes
+EYE_SAMPLE = 5  # which pixels are the logo: judged from every 5th second (the same answer, a fifth of the work)
 
 
 def histogram(frame: bytes) -> List[float]:
@@ -196,7 +212,8 @@ def best_logo(corners: List[Sequence[bytes]]) -> Optional[Tuple[List[float], flo
     return scores, t
 
 
-def _logo_breaks(scores: List[float], t: float, edges: List[float], blacks: List[float]) -> List[Dict[str, float]]:
+def _logo_breaks(scores: List[float], t: float, edges: List[float], blacks: List[float],
+                 nearest_start: bool = False) -> List[Dict[str, float]]:
     """Breaks from the seconds without the logo; edges are the black-and-silent moments."""
     n = len(scores)
     on = [s >= t for s in scores]
@@ -245,7 +262,13 @@ def _logo_breaks(scores: List[float], t: float, edges: List[float], blacks: List
             if end - start >= 10:
                 breaks.append({"start": round(start, 1), "end": round(end, 1)})
             continue
-        start = snap(float(s), edges) or snap(float(s), blacks)
+        # The faint logo (nearest_start): CBS takes the eye off up to ~15 s before it cuts away (The Price
+        # Is Right, 2026-10-30: gone at 35:48, black at 36:01), so the first black frame after it goes
+        if nearest_start:
+            after = [b for b in blacks if s - 2 <= b <= s + EYE_GONE_EARLY]
+            start = min(after) if after else None
+        else:
+            start = snap(float(s), edges) or snap(float(s), blacks)
         start = float(s) + 1 if start is None else start
         # The show comes back before the logo does, at the break's last black frame (silent on ABC,
         # not always on Fox); without one, LOGO_RETURN_LAG before the logo
@@ -261,11 +284,13 @@ def _logo_breaks(scores: List[float], t: float, edges: List[float], blacks: List
 
 def find_breaks(hists: List[List[float]], blacks: List[float], corners: Optional[List[Sequence[bytes]]] = None,
                 quiet: Optional[List[Tuple[float, float]]] = None,
-                program_end: Optional[float] = None, how: Optional[Dict[str, str]] = None) -> Optional[List[Dict[str, float]]]:
+                program_end: Optional[float] = None, how: Optional[Dict[str, str]] = None,
+                eye: Optional[List[float]] = None) -> Optional[List[Dict[str, float]]]:
     """Commercial breaks as [{'start', 'end'}] in seconds, or None if this recording's show and ads
     can't be told apart reliably. corners and quiet (silences) are used when there are any: the
     channel logo, edges at black frames that are also silent. program_end: where the show is
-    scheduled to end in the recording."""
+    scheduled to end in the recording. eye: per second, how much of a faint logo is showing in a
+    bigger corner (eye_scores), for channels without a clear one."""
     edges = sorted(b for b in blacks if any(a - 1 <= b <= z + 1 for a, z in quiet)) if quiet else sorted(blacks)
     if corners:
         found = best_logo([(c,) if isinstance(c, bytes) else c for c in corners])
@@ -275,6 +300,22 @@ def find_breaks(hists: List[List[float]], blacks: List[float], corners: Optional
             return _logo_breaks(found[0], found[1], edges, sorted(blacks))
     if how is not None:
         how["by"] = "colour"  # which way it went, saved with the result: a later fix can redo just these
+    breaks = _colour_breaks(hists, blacks, edges, quiet, program_end)
+    if not eye:
+        return breaks
+    # A faint logo (the CBS eye) as well: a break found either way. On three CBS recordings the eye
+    # alone never skipped any show and found what colour missed (Survivor 59% -> 96% of the ads),
+    # while colour found the breaks full of CBS's own promos, which carry the eye (2026-10-30)
+    if how is not None:
+        how["by"] = "colour+eye"
+    by_eye = _logo_breaks(eye, EYE_ON, edges, sorted(blacks), nearest_start=True)
+    return _join((breaks or []) + by_eye) if breaks is not None or by_eye else breaks
+
+
+def _colour_breaks(hists: List[List[float]], blacks: List[float], edges: List[float],
+                   quiet: Optional[List[Tuple[float, float]]], program_end: Optional[float]) -> Optional[List[Dict[str, float]]]:
+    """No clear logo: the seconds that don't look like the show, and the pieces between black-and-
+    silent moments that look like ads on average. None if show and ads don't separate."""
     n = len(hists)
     if n < 120:
         return None
@@ -563,7 +604,13 @@ def analysis_graph() -> str:
             f"[0:a]asplit[a1][a2];[a1]silencedetect=n=-50dB:d=0.15[sd];"
             f"[a2]aformat=sample_rates=8000:channel_layouts=mono,asetnsamples=n={int(8000 * LEVEL_SECONDS)}:p=0,"
             f"astats=metadata=1:reset=1:measure_overall=RMS_level:measure_perchannel=none,"
-            f"ametadata=mode=print:key=lavfi.astats.Overall.RMS_level[lv]")
+            f"ametadata=mode=print:key=lavfi.astats.Overall.RMS_level[lv];"
+            # [big]: which pixels of each bigger corner are lighter than the 5x5 around them, 1 bit each
+            f"[0:v]fps=1,scale={EYE_SCALE_W}:{EYE_SCALE_H},format=gray,split=2[e1][e2];[e2]boxblur=2:1[e3];"
+            f"[e1][e3]blend=all_expr='if(gt(A\\,B+{EYE_LIGHTER})\\,255\\,0)',split=4" + "".join(f"[g{i}]" for i in range(4)) + ";"
+            + "".join(f"[g{i}]crop={EYE_W}:{EYE_H}:{cx}:{cy}[h{i}];" for i, (cx, cy) in
+                      enumerate([(0, 0), (EYE_SCALE_W - EYE_W, 0), (0, EYE_SCALE_H - EYE_H), (EYE_SCALE_W - EYE_W, EYE_SCALE_H - EYE_H)]))
+            + "".join(f"[h{i}]" for i in range(4)) + "vstack=inputs=4,format=monob[big]")
 
 
 def _split_frame(frame: bytes) -> Tuple[bytes, Tuple[bytes, ...]]:
@@ -573,6 +620,53 @@ def _split_frame(frame: bytes) -> Tuple[bytes, Tuple[bytes, ...]]:
     corners = tuple(bytes(frame[(THUMB_H + k * CORNER_H + y) * row + x * 3] for y in range(CORNER_H) for x in range(CORNER_W))
                     for k in range(len(CORNERS)))
     return thumb, corners
+
+
+def eye_path(log_path) -> Path:
+    return Path(str(log_path) + ".eye")
+
+
+def eye_scores(path) -> Optional[List[float]]:
+    """From the pass's [big] file: per second, the share of the faint logo's pixels lit, in the
+    corner where it's clearest; None if no corner has one. Deletes the file."""
+    row = (EYE_W + 7) // 8
+    per_corner = row * EYE_H
+    per = per_corner * 4
+    try:
+        data = Path(path).read_bytes()
+    except OSError:
+        return None
+    finally:
+        Path(path).unlink(missing_ok=True)
+    n = len(data) // per
+    if n < 120:
+        return None
+
+    def bits(sec: int, k: int) -> bytes:
+        return data[sec * per + k * per_corner:sec * per + (k + 1) * per_corner]
+
+    best = None
+    for k in range(4):
+        # How often each pixel is lit, from every EYE_SAMPLE-th second
+        counts = [0] * (per_corner * 8)
+        samples = range(0, n, EYE_SAMPLE)
+        for sec in samples:
+            for j, byte in enumerate(bits(sec, k)):
+                if byte:
+                    for b in range(8):
+                        if byte & (0x80 >> b):
+                            counts[j * 8 + b] += 1
+        cut = EYE_PIXEL_SHARE * len(samples)
+        # Not the outer EYE_EDGE pixels: FFmpeg's blur makes the picture's own edge (often a thin line)
+        # look lighter than its surroundings in every second, ads included; no logo sits there
+        logo = [(i // 8, 0x80 >> (i % 8)) for i, cnt in enumerate(counts) if cnt > cut
+                and EYE_EDGE <= i % (row * 8) < EYE_W - EYE_EDGE and EYE_EDGE <= i // (row * 8) < EYE_H - EYE_EDGE]
+        if len(logo) >= EYE_MIN_PIXELS and (best is None or len(logo) > len(best[1])):
+            best = (k, logo)
+    if best is None:
+        return None
+    k, logo = best
+    return [sum(1 for j, mask in logo if bits(sec, k)[j] & mask) / len(logo) for sec in range(n)]
 
 
 def _analyze(url: str, log_path, stop: threading.Event, progress: Optional[Dict[str, object]] = None,
@@ -585,6 +679,7 @@ def _analyze(url: str, log_path, stop: threading.Event, progress: Optional[Dict[
            "-map", "[bd]", "-f", "null", "-",
            "-map", "[sd]", "-f", "null", "-",
            "-map", "[lv]", "-f", "null", "-",
+           "-map", "[big]", "-f", "rawvideo", "-y", str(eye_path(log_path)),
            "-map", "[o]", "-f", "rawvideo", "-"]
     size = OUT_W * OUT_H * 3
     hists: List[List[float]] = []
@@ -626,7 +721,7 @@ def _features_path(episode_id: str):
 
 
 def save_features(episode_id: str, hists: List[List[float]], corners: List[Tuple[bytes, ...]], blacks: List[float],
-                  quiet: List[Tuple[float, float]], loud: List[float]) -> None:
+                  quiet: List[Tuple[float, float]], loud: List[float], eye: Optional[List[float]] = None) -> None:
     import base64
     import gzip
     import json
@@ -640,7 +735,8 @@ def save_features(episode_id: str, hists: List[List[float]], corners: List[Tuple
             "hists": base64.b64encode(bytes(min(255, round(v * 255)) for h in hists for v in h)).decode(),
             "lit": base64.b64encode(bytes(bits)).decode(),
             "blacks": [round(x, 2) for x in blacks], "silences": [[round(a, 2), round(b, 2)] for a, b in quiet],
-            "loudness": base64.b64encode(bytes(max(0, min(255, round(-v * 2))) for v in loud)).decode()}  # -dB x 2
+            "loudness": base64.b64encode(bytes(max(0, min(255, round(-v * 2))) for v in loud)).decode(),  # -dB x 2
+            "eye": base64.b64encode(bytes(round(v * 255) for v in eye)).decode() if eye else None}
     try:
         FEATURES_DIR.mkdir(parents=True, exist_ok=True)
         with gzip.open(_features_path(episode_id), "wt", encoding="utf-8") as f:
@@ -676,7 +772,8 @@ def load_features(episode_id: str) -> Optional[Dict[str, object]]:
     corners = [tuple([bool(bits[(i * len(CORNERS) + j) * per + p // 8] >> (p % 8) & 1) for p in range(px)]
                      for j in range(len(CORNERS))) for i in range(n)]
     return {"hists": hists, "corners": corners, "blacks": data["blacks"],
-            "quiet": [tuple(s) for s in data["silences"]]}
+            "quiet": [tuple(s) for s in data["silences"]],
+            "eye": [v / 255 for v in base64.b64decode(data["eye"])] if data.get("eye") else None}
 
 
 async def analyze(ep: Dict[str, str]) -> Optional[str]:
@@ -704,20 +801,23 @@ async def analyze(ep: Dict[str, str]) -> Optional[str]:
             if _busy():
                 stop.set()
                 await job
+                eye_path(log_path).unlink(missing_ok=True)
                 return None
         result = await job
         if result is None:
+            eye_path(log_path).unlink(missing_ok=True)
             return None
         hists, corners = result
         try:
             log = log_path.read_text(encoding="utf-8", errors="replace")
         finally:
             log_path.unlink(missing_ok=True)
-        feats = {"hists": hists, "corners": corners, "blacks": black_frames(log), "quiet": silences(log)}
-        await asyncio.to_thread(save_features, ep["id"], hists, corners, feats["blacks"], feats["quiet"], loudness(log))
+        eye = await asyncio.to_thread(eye_scores, eye_path(log_path))
+        feats = {"hists": hists, "corners": corners, "blacks": black_frames(log), "quiet": silences(log), "eye": eye}
+        await asyncio.to_thread(save_features, ep["id"], hists, corners, feats["blacks"], feats["quiet"], loudness(log), eye)
     hists, blacks = feats["hists"], feats["blacks"]
     how: Dict[str, str] = {}
-    breaks = find_breaks(hists, blacks, feats["corners"], feats["quiet"], ep.get("program_end"), how)
+    breaks = find_breaks(hists, blacks, feats["corners"], feats["quiet"], ep.get("program_end"), how, feats.get("eye"))
     # With the user's Anthropic key: Claude's reading of the previews, on these black frames
     by_claude = await asyncio.to_thread(claude_ads.find, ep, sorted(blacks), float(len(hists)))
     if by_claude is not None:

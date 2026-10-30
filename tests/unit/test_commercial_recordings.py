@@ -28,12 +28,15 @@ FLOORS = {  # name: (share of ads skipped, most show skipped, show_end)
     # ABC: a see-through logo that drops out on bright scenes and comes back 18-37 s after the show
     # does (checked against the Tablo's 10-second previews; before the fix 248 s of show was skipped)
     "shark_tank": (0.97, 15, 3509),
-    # CBS, no logo: the firelit Tribal Council scores less like the show than the ads do, so colour alone
-    # took ten minutes of it for a break (627 s of show) until a break could no longer hold a whole long
-    # stretch between black-and-silent moments (and its opening break ran 31 s into the show until it
-    # ended at its last such moment); two real breaks are still missed. With an Anthropic key,
-    # Claude finds them all (ClaudeAnswerTests)
-    "survivor": (0.55, 5, 5250),
+    # CBS: the firelit Tribal Council scores less like the show than the ads do, so colour alone took ten
+    # minutes of it for a break (627 s of show) until a break could no longer hold a whole long stretch
+    # between black-and-silent moments, and missed two breaks (59%) until the CBS eye was looked for in
+    # bigger corners (96%). With an Anthropic key, Claude finds them all (ClaudeAnswerTests)
+    "survivor": (0.94, 5, 5250),
+    # CBS reality show (2026-10-30): colour finds the breaks full of CBS promos, which carry the eye
+    "amazing_race": (0.97, 20, 5265),
+    # CBS (2026-10-30, a second episode with the eye): colour 90%, the eye adds the break it missed
+    "price_is_right2": (0.97, 5, 3495),
 }
 
 # Claude's answers from the preview sheets (app/claude_ads.py, prompt as shipped), 2026-10-30, one run
@@ -79,7 +82,9 @@ class RealRecordingTests(unittest.TestCase):
         for name, (floor, show_limit, show_end) in FLOORS.items():
             with self.subTest(name):
                 rec, hists, corners = load(name)
-                found = c.find_breaks(hists, rec["blacks"], corners, [tuple(s) for s in rec["silences"]], rec["program_end"])
+                eye = [v / 255 for v in base64.b64decode(rec["eye"])] if rec.get("eye") else None
+                found = c.find_breaks(hists, rec["blacks"], corners, [tuple(s) for s in rec["silences"]], rec["program_end"],
+                                      eye=eye)
                 share, show = score(found, rec["breaks"], show_end)
                 print(f"\n  {name} ({rec['channel']}): {share:.0%} of ad time skipped, {show} s of show skipped")
                 self.assertGreaterEqual(share, floor)

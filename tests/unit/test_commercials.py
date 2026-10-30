@@ -142,3 +142,37 @@ class LogoTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EyeTests(unittest.TestCase):
+    """The faint-logo check (CBS's eye) on the 1-bit corner masks FFmpeg writes."""
+
+    def mask_file(self, seconds, lit):
+        """seconds of four EYE_W x EYE_H corners; lit(sec, corner, x, y) -> bool."""
+        import tempfile
+        row = (c.EYE_W + 7) // 8
+        out = bytearray()
+        for sec in range(seconds):
+            for k in range(4):
+                for y in range(c.EYE_H):
+                    bits = bytearray(row)
+                    for x in range(c.EYE_W):
+                        if lit(sec, k, x, y):
+                            bits[x // 8] |= 0x80 >> (x % 8)
+                    out += bits
+        f = tempfile.NamedTemporaryFile(suffix=".eye", delete=False)
+        f.write(bytes(out))
+        f.close()
+        return f.name
+
+    def test_the_eye_is_found_and_the_frame_edge_ignored(self):
+        ring = {(x, y) for x in range(20, 30) for y in range(40, 50) if x in (20, 29) or y in (40, 49)}
+        ads = range(200, 260)
+        # bottom-left corner: the ring, off during the ads; the picture's left edge lit all the time
+        path = self.mask_file(400, lambda sec, k, x, y: k == 2 and (x == 0 or ((x, y) in ring and sec not in ads)))
+        eye = c.eye_scores(path)
+        self.assertIsNotNone(eye)
+        self.assertEqual([round(v) for v in eye[195:205]], [1] * 5 + [0] * 5)
+
+    def test_no_corner_with_a_logo(self):
+        self.assertIsNone(c.eye_scores(self.mask_file(300, lambda sec, k, x, y: x == 0)))
