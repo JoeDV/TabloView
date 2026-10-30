@@ -707,10 +707,11 @@ const player = {
 
   video: () => $('#video'),
 
-  show(title, sub) {
+  show(title, sub, picture) {
     if (APP) APP.setPlaying(true);
     $('#osdTitle').textContent = title;
     $('#osdSub').textContent = sub || '';
+    $('#playerBack').style.backgroundImage = picture ? `url('${picture.replace(/'/g, '%27')}')` : '';
     $('#player').classList.remove('hidden');
     if (location.hash !== '#/play') { this.returnTo = location.hash || '#/'; location.hash = '#/play'; }
     this.open = true;
@@ -874,7 +875,8 @@ const player = {
     this.loadPreviews(this.s);
     if (!run) this.findNext(this.s);
     const counter = run && state.run.eps.length > 1 ? ` · ${state.run.index + 1} of ${state.run.eps.length}` : '';
-    this.show(ep.show_title || 'Recording', [fmt.se(ep.season_number, ep.episode_number), ep.title !== ep.show_title ? ep.title : ''].filter(Boolean).join(' · ') + counter);
+    this.show(ep.show_title || 'Recording', [fmt.se(ep.season_number, ep.episode_number), ep.title !== ep.show_title ? ep.title : ''].filter(Boolean).join(' · ') + counter,
+      ep.snapshot_url || ep.backdrop_url || ep.cover_url);
     await this.startRecording(start);
   },
 
@@ -1022,7 +1024,7 @@ const player = {
     const s = { kind: 'live', id: channelId, channel: c, shapeKey: channelId };
     this.s = s;
     const on = nowNext(c).now;
-    this.show(on ? on.title : c.name, `${c.major > 0 ? `${c.major}.${c.minor} ` : ''}${c.name}`);
+    this.show(on ? on.title : c.name, `${c.major > 0 ? `${c.major}.${c.minor} ` : ''}${c.name}`, on && (on.backdrop_url || on.cover_url));
     this.banner(`${c.major > 0 ? `${c.major}.${c.minor} ` : ''}${c.name}`);
     this.teardown();
     await this.stopById(previous);  // its tuner goes back to the Tablo before this one asks for one
@@ -1110,7 +1112,9 @@ const player = {
       video.src = url;  // Safari-style browsers play HLS themselves
       video.play().catch(() => {});
     }
-    video.onplaying = () => this.message('');
+    // Playing: the title bar fades as usual (its timer ran out while it was still starting, and
+    // left it up until a key was pressed)
+    video.onplaying = () => { this.message(''); $('#player').classList.add('started'); this.wake(); };
     video.onended = () => this.ended();
     clearInterval(this.tickTimer);
     this.tickTimer = setInterval(() => this.tick(), 500);
@@ -1242,6 +1246,7 @@ const player = {
 
   teardown() {
     clearInterval(this.tickTimer);
+    $('#player').classList.remove('started');
     if (this.hls) { this.hls.destroy(); this.hls = null; }
     const v = this.video();
     v.pause();

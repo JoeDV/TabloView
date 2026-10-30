@@ -159,6 +159,10 @@ h2 { font-size: 1.7vw; margin: 2.4vw 0 1.2vw; color: var(--dim); font-weight: 60
 /* Player: the picture fills the screen; the bar appears on any key and fades after a few seconds */
 .player { position: fixed; inset: 0; background: #000; z-index: 10; }
 .player video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+/* While it starts: the recording's picture, dimmed, behind "Starting…" */
+.player-back { position: absolute; inset: 0; background: #000 center / cover no-repeat; opacity: 0.35; }
+.player:not(.started) video { background: transparent; }
+.player.started .player-back { display: none; }
 .osd { position: absolute; left: 0; right: 0; bottom: 0; padding: 6vw 4vw 3vw; background: linear-gradient(transparent, rgba(0,0,0,0.85)); transition: opacity 0.3s; }
 .player.idle .osd { opacity: 0; }
 .osd-title { font-size: 2.2vw; font-weight: 700; }
