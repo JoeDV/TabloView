@@ -713,7 +713,7 @@ def _analyze(url: str, log_path, stop: threading.Event, progress: Optional[Dict[
 # the Tablo again. About 1-2 MB per hour; kept FEATURES_KEEP_DAYS after the last use
 FEATURES_DIR = DATA_DIR / "ad_features"
 FEATURES_KEEP_DAYS = 90
-FEATURES_VERSION = 1  # bump when the pass measures differently (corner size...): older files are read again
+FEATURES_VERSION = 2  # bump when the pass measures differently (corner size...): older files are read again (2: the eye)
 
 
 def _features_path(episode_id: str):
