@@ -178,9 +178,9 @@ def _with_commercials(episodes: List[dict]) -> List[dict]:
                                   else found[e["id"]]["status"] if e["id"] in found else "queued" if e["id"] in queued else None),
              "commercial_breaks": len(found[e["id"]]["breaks"]) if e["id"] in found else 0,
              "commercials_by_claude": bool(found.get(e["id"], {}).get("by_claude")),
-             # Done by TabloView's own finder while there's a Claude key: the menu offers Claude's go
-             "claude_can_redo": claude_key and e["id"] in found and not found[e["id"]]["by_claude"]
-                                and found[e["id"]]["status"] in ("done", "unreliable"),
+             # Done before: the menu offers to do it again (with Claude when there's a key)
+             "commercials_can_redo": e["id"] in found and found[e["id"]]["status"] in ("done", "unreliable"),
+             "claude_key": claude_key,
              # Signal dropouts found (recordings the Tablo flagged as not clean; app/dropouts.py)
              "dropouts": (drops[e["id"]] or {}).get("spans", []),
              "finding_dropouts": dropouts.status["current"] == e["id"]} for e in episodes]
@@ -201,6 +201,18 @@ def _commercials_show_id(show_id: Optional[str], title: Optional[str]) -> str:
 @router.get("/commercials")
 async def get_commercials_setting(show_id: Optional[str] = None, title: Optional[str] = None):
     return {"on": _commercials_show_id(show_id, title) in commercials.enabled_shows()}
+
+
+@router.post("/commercials/redo")
+async def redo_commercials(show_id: str):
+    """Find the commercials again in this show's unwatched recordings that have them already: after a
+    fix to the finder (updates don't redo anything by themselves), or to have Claude do them."""
+    eps = _with_commercials(get_episodes_by_show(show_id))
+    todo = [e["id"] for e in eps if e["commercials_can_redo"] and e.get("status") != "Watched"]
+    if todo:
+        commercials.queue_redo(*todo)
+    commercials._summary_cache["at"] = 0.0
+    return {"queued": len(todo)}
 
 
 @router.post("/commercials")

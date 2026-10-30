@@ -56,9 +56,10 @@ LEVEL_SECONDS = 0.05  # the sound's loudness is measured this often (speech dips
 
 # The detector, saved with each result: results from an older one are redone (1: colour only;
 # 2: the channel logo, black frames and silences; 3: up to a minute of show-like ad next to a break;
-# 4: a break ends where the show comes back, not a fixed time before the logo does; 5: without a logo,
-# a break can't hold a whole long stretch between black-and-silent moments)
-METHOD = 5
+# 4: a break ends where the show comes back, not a fixed time before the logo does). Not raised for
+# _without_long_pieces (2026-10-30): every copy would re-read every unwatched recording, logo channels
+# too; a show's recordings are redone on request instead (its page, or a recording's menu)
+METHOD = 4
 
 # The channel logo: the bottom-right corner of a 160x90 copy of each second's frame (the logo is a few
 # pixels of light text there, still clear at that size)
@@ -260,7 +261,7 @@ def _logo_breaks(scores: List[float], t: float, edges: List[float], blacks: List
 
 def find_breaks(hists: List[List[float]], blacks: List[float], corners: Optional[List[Sequence[bytes]]] = None,
                 quiet: Optional[List[Tuple[float, float]]] = None,
-                program_end: Optional[float] = None) -> Optional[List[Dict[str, float]]]:
+                program_end: Optional[float] = None, how: Optional[Dict[str, str]] = None) -> Optional[List[Dict[str, float]]]:
     """Commercial breaks as [{'start', 'end'}] in seconds, or None if this recording's show and ads
     can't be told apart reliably. corners and quiet (silences) are used when there are any: the
     channel logo, edges at black frames that are also silent. program_end: where the show is
@@ -269,7 +270,11 @@ def find_breaks(hists: List[List[float]], blacks: List[float], corners: Optional
     if corners:
         found = best_logo([(c,) if isinstance(c, bytes) else c for c in corners])
         if found:
+            if how is not None:
+                how["by"] = "logo"
             return _logo_breaks(found[0], found[1], edges, sorted(blacks))
+    if how is not None:
+        how["by"] = "colour"  # which way it went, saved with the result: a later fix can redo just these
     n = len(hists)
     if n < 120:
         return None
@@ -428,8 +433,8 @@ def redo_episodes() -> List[str]:
     return list(load_settings().get("commercial_redo") or [])
 
 
-def queue_redo(episode_id: str) -> None:
-    save_settings({"commercial_redo": [e for e in redo_episodes() if e != episode_id] + [episode_id]})
+def queue_redo(*episode_ids: str) -> None:
+    save_settings({"commercial_redo": [e for e in redo_episodes() if e not in episode_ids] + list(episode_ids)})
 
 
 def _redo_done(episode_id: str) -> None:
@@ -623,13 +628,14 @@ async def analyze(ep: Dict[str, str]) -> Optional[str]:
     finally:
         log_path.unlink(missing_ok=True)
     blacks = black_frames(log)
-    breaks = find_breaks(hists, blacks, corners, silences(log), ep.get("program_end"))
+    how: Dict[str, str] = {}
+    breaks = find_breaks(hists, blacks, corners, silences(log), ep.get("program_end"), how)
     # With the user's Anthropic key: Claude's reading of the previews, on these black frames
     by_claude = await asyncio.to_thread(claude_ads.find, ep, sorted(blacks), float(len(hists)))
     if by_claude is not None:
         breaks = by_claude
     save_commercials(ep["id"], "unreliable" if breaks is None else "done", breaks, method=METHOD,
-                     by_claude=by_claude is not None)
+                     by_claude=by_claude is not None, found_by="claude" if by_claude is not None else how.get("by"))
     print(f"[Commercials] {ep['show_title']} {ep['id']}: "
           f"{'show and ads could not be told apart' if breaks is None else f'{len(breaks)} breaks'}"
           f"{' (found by Claude)' if by_claude is not None else ''}")

@@ -1228,6 +1228,7 @@ function showRules(s, eps) {
         <input type="checkbox" class="switch" data-change="show-commercials" ${s.find_commercials ? 'checked' : ''}>
         <span>Skip commercials</span>
       </label>
+      ${s.find_commercials ? '<button class="btn btn-sm btn-ghost" data-action="show-commercials-redo" title="Find the commercials again in this show’s unwatched recordings: after a TabloView update improves the finder, or to have Claude do them">Find again</button>' : ''}
       <label class="rule-field" title="A backup: TabloView exports each new recording of this show to MP4, once it has finished recording, while TabloView is running. They go where your exports go (Downloads).">
         <input type="checkbox" class="switch" data-change="show-auto-export" ${s.auto_export ? 'checked' : ''}>
         <span>Export to MP4</span>
@@ -5486,8 +5487,8 @@ const ACTIONS = {
       ...(ep.incomplete ? [{ label: 'Record again…', icon: 'refresh', run: () => rerecordDialog(id) }] : []),
       ...(ep.recording_state === 'finished' && !['done', 'analyzing', 'queued'].includes(ep.commercials)
         ? [{ label: 'Find commercials', icon: 'next', run: () => findCommercials(id) }] : []),
-      ...(ep.claude_can_redo && !['analyzing', 'queued'].includes(ep.commercials)
-        ? [{ label: 'Find commercials with Claude', icon: 'next', run: () => findCommercials(id) }] : []),
+      ...(ep.commercials_can_redo && !['analyzing', 'queued'].includes(ep.commercials)
+        ? [{ label: ep.claude_key && !ep.commercials_by_claude ? 'Find commercials with Claude' : 'Find commercials again', icon: 'next', run: () => findCommercials(id) }] : []),
       ep.protected
         ? { label: 'Unprotect', icon: 'lock', run: () => setProtected(id, false) }
         : { label: 'Protect from deletion', icon: 'lock', run: () => setProtected(id, true) },
@@ -5709,6 +5710,16 @@ const ACTIONS = {
     </div>`),
   'set-pin': async () => { if (await setPinDialog()) route(); },
   'claude-key': async () => { if (await claudeKeyDialog()) route(); },
+  'show-commercials-redo': async () => {
+    const s = state.show;
+    try {
+      const res = await api(`/api/shows/commercials/redo?show_id=${encodeURIComponent(s.id)}`, { method: 'POST' });
+      toast(res.queued
+        ? `TabloView will find the commercials in ${plural(res.queued, 'recording')} of ${s.title} again (in the background, while nothing is playing)`
+        : `No unwatched recordings of ${s.title} to do again`, res.queued ? 'success' : undefined);
+      if (res.queued) route();
+    } catch (err) { toast(err.message, 'error'); }
+  },
   'claude-key-remove': async () => {
     try {
       await api('/api/settings/claude_key', { method: 'POST', body: JSON.stringify({ key: null }) });

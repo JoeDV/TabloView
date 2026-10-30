@@ -237,6 +237,9 @@ def init_db():
         if "by_claude" not in cm_cols:
             # The breaks came from Claude reading the previews (app/claude_ads.py), not the finder alone
             cursor.execute("ALTER TABLE commercials ADD COLUMN by_claude INTEGER DEFAULT 0")
+        if "found_by" not in cm_cols:
+            # How the breaks were found: logo, colour (no usable logo) or claude; NULL from before 1.3.3
+            cursor.execute("ALTER TABLE commercials ADD COLUMN found_by TEXT")
 
         # Indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_episodes_show_id ON episodes(show_id)")
@@ -518,15 +521,17 @@ def set_show_keep(show_id: str, keep: Dict[str, Any]) -> None:
 
 
 def save_commercials(episode_id: str, status: str, breaks: Optional[List[Dict[str, float]]] = None,
-                     error: Optional[str] = None, method: int = 1, by_claude: bool = False) -> None:
+                     error: Optional[str] = None, method: int = 1, by_claude: bool = False,
+                     found_by: Optional[str] = None) -> None:
     with get_connection() as conn:
         conn.execute("""
-            INSERT INTO commercials (episode_id, status, breaks_json, error, analyzed_at, method, by_claude) VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO commercials (episode_id, status, breaks_json, error, analyzed_at, method, by_claude, found_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(episode_id) DO UPDATE SET status = excluded.status, breaks_json = excluded.breaks_json,
                 error = excluded.error, analyzed_at = excluded.analyzed_at, method = excluded.method,
-                by_claude = excluded.by_claude
+                by_claude = excluded.by_claude, found_by = excluded.found_by
         """, (episode_id, status, json.dumps(breaks) if breaks is not None else None, error,
-              datetime.now(timezone.utc).isoformat(), method, int(by_claude)))
+              datetime.now(timezone.utc).isoformat(), method, int(by_claude), found_by))
         conn.commit()
 
 

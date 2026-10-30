@@ -73,6 +73,16 @@ class KeyTests(unittest.TestCase):
             commercials._redo_done("a3")
         self.assertNotIn("a3", self.ids())
 
+    def test_a_show_redone_queues_its_unwatched_recordings_that_were_done(self):
+        import asyncio
+        from app.routes import shows
+        for ep_id in ("a1", "a3"):
+            db.save_commercials(ep_id, "done", [], method=commercials.METHOD)
+        with mock.patch.object(commercials, "save_settings", side_effect=lambda u: self.settings.update(u)):
+            res = asyncio.run(shows.redo_commercials("showa"))
+        self.assertEqual(res["queued"], 1)  # a1; a2 was never done (it's waiting anyway), a3 is watched
+        self.assertEqual(self.settings["commercial_redo"], ["a1"])
+
     def test_the_key_is_never_sent_to_the_page(self):
         from app.routes import system
         self.assertIn("claude_api_key", system.PRIVATE_SETTINGS)
