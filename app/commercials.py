@@ -56,8 +56,9 @@ LEVEL_SECONDS = 0.05  # the sound's loudness is measured this often (speech dips
 
 # The detector, saved with each result: results from an older one are redone (1: colour only;
 # 2: the channel logo, black frames and silences; 3: up to a minute of show-like ad next to a break;
-# 4: a break ends where the show comes back, not a fixed time before the logo does)
-METHOD = 4
+# 4: a break ends where the show comes back, not a fixed time before the logo does; 5: without a logo,
+# a break can't hold a whole long stretch between black-and-silent moments)
+METHOD = 5
 
 # The channel logo: the bottom-right corner of a 160x90 copy of each second's frame (the logo is a few
 # pixels of light text there, still clear at that size)
@@ -313,7 +314,35 @@ def find_breaks(hists: List[List[float]], blacks: List[float], corners: Optional
         breaks.append({"start": round(start if s > 0 else 0.0, 1), "end": round(end if e < n else float(n), 1)})
     if quiet:
         breaks = _join(breaks + _marked_pieces(scores, t, edges, n, program_end))
+        breaks = _without_long_pieces(breaks, edges, n)
     return breaks
+
+
+def _without_long_pieces(breaks: List[Dict[str, float]], edges: List[float], n: int) -> List[Dict[str, float]]:
+    """A break never holds a whole stretch of more than MAX_AD_PIECE_SECONDS between two black-and-
+    silent moments: that stretch is show, and is cut out of it. Survivor's firelit Tribal Council
+    (597 s between two of them) scored less like the show than the ads did, and colour alone took
+    75:21-87:34 for one break, ten minutes of show (2026-10-30). Only a stretch wholly inside the
+    break: Jeopardy's breaks start without such a moment, so the stretch before each one runs into it
+    and is left alone."""
+    cuts: List[float] = []
+    for b in [0.0] + edges + [float(n)]:
+        if not cuts or b - cuts[-1] > 5:
+            cuts.append(b)
+    long_pieces = [(a, b) for a, b in zip(cuts, cuts[1:]) if b - a > MAX_AD_PIECE_SECONDS]
+    out = []
+    for br in breaks:
+        parts = [(br["start"], br["end"])]
+        for a, b in long_pieces:
+            kept = []
+            for s, e in parts:
+                if s - 1 <= a and b <= e + 1:
+                    kept += [p for p in ((s, a), (b, e)) if p[1] - p[0] >= MIN_BREAK_SECONDS]
+                else:
+                    kept.append((s, e))
+            parts = kept
+        out += [{"start": round(s, 1), "end": round(e, 1)} for s, e in parts]
+    return out
 
 
 def _marked_pieces(scores: List[float], t: float, edges: List[float], n: int,
