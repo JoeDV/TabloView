@@ -453,7 +453,8 @@ async def get_settings(request: Request):
     from .. import claude_ads
     return {**settings, "can_apply_now": hasattr(request.app.state, "request_restart"),
             # The Anthropic key itself never leaves this PC: only whether there is one, and its last failure
-            "claude_key_set": bool(all_settings.get("claude_api_key")), "claude_error": claude_ads.status["error"]}
+            "claude_key_set": bool(all_settings.get("claude_api_key")), "claude_error": claude_ads.status["error"],
+            "claude_last_cost": claude_ads.status["last_cost"]}
 
 
 class ClaudeKeyRequest(BaseModel):

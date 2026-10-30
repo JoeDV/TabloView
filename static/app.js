@@ -3408,6 +3408,7 @@ PAGES.settings = async (r, token) => {
           <span class="dim" style="font-size:13px">${settings.claude_key_set ? 'On' : 'Off'}</span>
         </div>
         <p class="dim" style="margin-top:6px;font-size:12.5px">More accurate on channels without a logo in the corner, such as CBS: with your own Anthropic API key, Claude looks at each recording’s preview pictures (one every 10 seconds) to see where the breaks are. Those pictures are sent to Anthropic, and each recording costs a few cents on your Anthropic account. Without a key, or if Claude can’t be reached, TabloView finds the breaks itself as before.</p>
+        ${settings.claude_key_set && settings.claude_last_cost != null ? `<p class="dim" style="margin-top:6px;font-size:12.5px">The last recording cost about $${settings.claude_last_cost.toFixed(2)}.</p>` : ''}
         ${settings.claude_key_set && settings.claude_error ? `<p style="margin-top:6px;font-size:12.5px;color:var(--warn)">Last try didn’t work: ${esc(settings.claude_error)}</p>` : ''}
         <div class="panel-actions" style="margin-top:8px">
           <button class="btn btn-sm" data-action="claude-key">${settings.claude_key_set ? 'Change key' : 'Add API key'}</button>

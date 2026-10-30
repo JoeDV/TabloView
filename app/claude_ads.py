@@ -21,6 +21,7 @@ from . import previews
 from .settings import load_settings
 
 MODEL = "claude-opus-5-5"
+PRICE_IN, PRICE_OUT = 4.0, 20.0  # US$ per million tokens sent and returned (Opus 5.5, 2026-10)
 SHEET_COLS, SHEET_ROWS = 12, 8  # 96 pictures a sheet: an hour of TV is four sheets
 THUMB_W, THUMB_H, LABEL_H = 160, 90, 14
 EDGE_WINDOW = 10  # look this far either side of Claude's edge for a black frame (its pictures are ~10 s apart)
@@ -126,6 +127,11 @@ def ask(key: str, images: List[bytes], what: str, seconds: float) -> List[List[f
         raise RuntimeError("Claude declined to answer")
     if response.stop_reason == "max_tokens":
         raise RuntimeError("Claude's answer was cut off")
+    u = response.usage
+    sent = u.input_tokens + (u.cache_creation_input_tokens or 0) + (u.cache_read_input_tokens or 0)
+    cost = (sent * PRICE_IN + u.output_tokens * PRICE_OUT) / 1e6
+    print(f"[Commercials] Claude: {sent} tokens sent, {u.output_tokens} returned, about ${cost:.3f}")
+    status["last_cost"] = round(cost, 3)
     text = next(b.text for b in response.content if b.type == "text")
     return [[float(b["start_seconds"]), float(b["end_seconds"])] for b in json.loads(text)["breaks"]]
 
@@ -164,7 +170,7 @@ def find(ep: Dict[str, str], blacks: List[float], n: float) -> Optional[List[Dic
     return onto_black_frames(found, blacks, n)
 
 
-status: Dict[str, Optional[str]] = {"error": None}  # the last call's failure, for Settings
+status: Dict[str, object] = {"error": None, "last_cost": None}  # the last call's failure and cost (US$), for Settings
 
 
 def check_key(key: str) -> Optional[str]:
