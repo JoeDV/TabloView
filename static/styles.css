@@ -735,7 +735,9 @@ button.tuner-pill:hover { border-color: var(--border-strong); color: var(--text)
 .pb-record.on { background: rgba(239, 76, 76, 0.22); color: #ff9b9b; cursor: default; opacity: 1; }
 .pb-record.on .rec-dot { animation: pulse 1.2s ease-in-out infinite; }
 /* Captions: readable on any picture */
-#video::cue { font-family: Inter, system-ui, sans-serif; font-size: 1em; color: #fff; background: rgba(0, 0, 0, 0.78); }
+#video::cue, #video2::cue { font-family: Inter, system-ui, sans-serif; font-size: 1em; color: #fff; background: rgba(0, 0, 0, 0.78); }
+/* Split view's small picture-in-picture pane: smaller captions to match it */
+.player.dual-pip .pane:not(.active) video::cue { font-size: 0.7em; }
 .pb-sleep span:empty { display: none; }
 .pb-volume { width: 96px; accent-color: #fff; }
 .pb-speed {
