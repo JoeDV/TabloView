@@ -1,5 +1,6 @@
 import random
 import unittest
+from unittest import mock
 
 from app import commercials as c
 
@@ -261,3 +262,33 @@ class RatingTests(unittest.TestCase):
         ])
         self.assertEqual(c._not_over_rating(breaks, [], []), breaks)
         self.assertIsNone(c._not_over_rating(None, rating, []))
+
+
+class AskedDoneTests(unittest.TestCase):
+    """Find again from saved measurements takes seconds: the status line says it happened (the user,
+    2026-10-31: "nothing started and the Tablo isn't being used")."""
+
+    def setUp(self):
+        from app import commercials as C
+        self.C = C
+        C._asked_done.update(count=0, at=0.0, title=None)
+        C.status["current"] = None
+
+    def summary(self, now):
+        with mock.patch.object(self.C, "_cached_pending", return_value=[]), \
+                mock.patch.object(self.C.time, "time", return_value=now):
+            return self.C.summary()
+
+    def test_shown_for_a_while_then_gone(self):
+        with mock.patch.object(self.C.time, "time", return_value=1000.0):
+            self.C._note_asked_done("Survivor S49E7")
+            self.C._note_asked_done("Survivor S49E8")
+        self.assertEqual(self.summary(1050.0), {"state": "finished", "count": 2, "title": "Survivor S49E8", "waiting": 0})
+        self.assertIsNone(self.summary(1000.0 + self.C.DONE_SHOWN_SECONDS + 1))
+
+    def test_a_later_one_starts_a_new_count(self):
+        with mock.patch.object(self.C.time, "time", return_value=1000.0):
+            self.C._note_asked_done("A")
+        with mock.patch.object(self.C.time, "time", return_value=5000.0):
+            self.C._note_asked_done("B")
+        self.assertEqual(self.summary(5010.0)["count"], 1)

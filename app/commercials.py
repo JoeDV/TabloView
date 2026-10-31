@@ -499,6 +499,10 @@ LOW_PRIORITY_POSIX = None if sys.platform == "win32" else (lambda: os.nice(10))
 
 # The recording being analyzed: {"current": episode id, "title", "done": seconds read, "total", "started"}
 status: Dict[str, object] = {"current": None}
+# Recordings asked for from a menu (Find again) finished lately: a redo from saved measurements takes
+# seconds, so without this the status line never showed it had happened (the user, 2026-10-31)
+DONE_SHOWN_SECONDS = 120
+_asked_done: Dict[str, object] = {"count": 0, "at": 0.0, "title": None}
 _summary_cache: Dict[str, object] = {"at": 0.0, "value": None}
 
 
@@ -596,6 +600,8 @@ def summary() -> Optional[Dict[str, object]]:
                 "waiting": max(0, len(_cached_pending()) - 1)}
     queue = _cached_pending()
     if not queue:
+        if _asked_done["count"] and time.time() - float(_asked_done["at"]) < DONE_SHOWN_SECONDS:
+            return {"state": "finished", "count": _asked_done["count"], "title": _asked_done["title"], "waiting": 0}
         return None
     reason = _busy_with()
     return {"state": "paused" if reason else "waiting", "reason": reason, "waiting": len(queue)}
@@ -993,6 +999,14 @@ async def analyze(ep: Dict[str, str]) -> Optional[str]:
     return "unreliable" if breaks is None else "done"
 
 
+def _note_asked_done(title: str) -> None:
+    """One recording asked for from a menu is done: counted for the status line, a new count once the
+    last one has been shown for DONE_SHOWN_SECONDS."""
+    if time.time() - float(_asked_done["at"]) >= DONE_SHOWN_SECONDS:
+        _asked_done["count"] = 0
+    _asked_done.update(count=int(_asked_done["count"]) + 1, at=time.time(), title=title)
+
+
 async def worker_loop() -> None:
     """Every minute: if nothing is playing, analyze the next waiting recording."""
     from .tablo_client import tablo_manager
@@ -1006,10 +1020,13 @@ async def worker_loop() -> None:
             if not queue:
                 continue
             ep = queue[0]
+            asked = ep["id"] in redo_episodes() or ep["id"] in queued_episodes()
             status.update(current=ep["id"], title=ep["title"], done=0, total=ep["duration"], started=time.time())
             try:
                 if await analyze(ep) is not None:  # not interrupted by playback
                     _redo_done(ep["id"])
+                    if asked:
+                        _note_asked_done(ep["title"])
             except Exception as e:
                 _redo_done(ep["id"])
                 print(f"[Commercials] Couldn't analyze {ep['show_title']} {ep['id']}: {e}")

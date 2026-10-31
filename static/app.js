@@ -510,7 +510,9 @@ function showCommercialProgress(c) {
   if (c) {
     const left = c.minutes_left ? ` · about ${c.minutes_left} min left` : '';
     const more = c.waiting ? ` (${c.waiting} more waiting)` : '';
-    $('#adText').innerHTML = c.state === 'running'
+    $('#adText').innerHTML = c.state === 'finished'
+      ? `<b>Found the commercials again</b><span>${c.count > 1 ? `in ${plural(c.count, 'recording')}` : esc(c.title || '')}</span>`
+      : c.state === 'running'
       ? `<b>Finding commercials${c.percent != null ? ` · ${c.percent}%` : ''}</b><span>${esc(c.title || '')}${left}${more}</span>`
       : c.state === 'paused'
         ? `<b>Finding commercials paused</b><span>${c.reason === 'exporting' ? 'while an export runs' : 'while something plays'} · ${plural(c.waiting, 'recording')} waiting</span>`
@@ -523,7 +525,9 @@ function showCommercialProgress(c) {
       : c && c.state === 'paused' ? (c.reason === 'exporting' ? 'Waiting for an export' : 'Paused while playing') : 'Waiting';
   }
   // One finished: show its result on the show page
-  if (was && was.state === 'running' && (!c || c.episode_id !== was.episode_id)) refreshCurrentPageQuietly();
+  // (a redo from saved measurements takes seconds: the status line may only ever see it finished)
+  if ((was && was.state === 'running' && (!c || c.episode_id !== was.episode_id))
+      || (c && c.state === 'finished' && !(was && was.state === 'finished' && was.count === c.count))) refreshCurrentPageQuietly();
 }
 
 // The signal-dropout check (recordings the Tablo flagged as not clean): a line under commercial finding
@@ -1621,10 +1625,13 @@ function episodeStatus(ep) {
 // What the background commercial finder has done with this recording (shows with Skip commercials on)
 function commercialTag(ep) {
   if (ep.commercials === 'done') {
+    // When: after Find again, the only sign it ran when the breaks come out the same
+    const w = fmt.when(ep.commercials_found_at).replace(/^(Today|Yesterday) /, (m, d) => `${d.toLowerCase()} at `);
+    const found = w ? `, found ${w}` : '';
     const noClaude = ep.claude_failed ? '<span class="ad-tag dim" title="Claude couldn’t be reached for this recording, so TabloView found its breaks itself. Claude is asked again later (Settings → Playback shows why)">No Claude</span>' : '';
     return noClaude + (ep.commercial_breaks
-      ? `<span class="ad-tag" title="${plural(ep.commercial_breaks, 'commercial break')} marked${ep.commercials_by_claude ? ' by Claude' : ''}; skip them in the player">${icon('next', 11)}${ep.commercial_breaks}</span>`
-      : '<span class="ad-tag dim" title="No commercial breaks found">0</span>');
+      ? `<span class="ad-tag" title="${plural(ep.commercial_breaks, 'commercial break')} marked${ep.commercials_by_claude ? ' by Claude' : ''}${found}; skip them in the player">${icon('next', 11)}${ep.commercial_breaks}</span>`
+      : '<span class="ad-tag dim" title="No commercial breaks found${found}">0</span>');
   }
   if (ep.commercials === 'queued' || ep.commercials === 'analyzing') {
     const running = ep.commercials === 'analyzing' || (state.adProgress && state.adProgress.episode_id === ep.id);

@@ -558,7 +558,7 @@ def get_commercials(episode_ids: Optional[List[str]] = None) -> Dict[str, Dict[s
                               "breaks": _without_not_breaks(json.loads(r["breaks_json"]) if r["breaks_json"] else [],
                                                             json.loads(r["not_breaks_json"]) if r["not_breaks_json"] else []),
                               "error": r["error"], "by_claude": bool(r["by_claude"]), "found_by": r["found_by"],
-                              "claude_failed": r["claude_failed"] or 0} for r in rows}
+                              "claude_failed": r["claude_failed"] or 0, "analyzed_at": r["analyzed_at"]} for r in rows}
 
 
 def _without_not_breaks(breaks: List[Dict[str, float]], not_breaks: List[List[float]]) -> List[Dict[str, float]]:
