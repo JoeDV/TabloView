@@ -20,6 +20,15 @@ class StreamEndTests(unittest.TestCase):
         self.assertIn("omit_endlist", resumed[resumed.index("-hls_flags") + 1])
         self.assertIn("-start_number", resumed)  # preview frames numbered by position in the recording
 
+    def test_recordings_in_progress_start_from_the_beginning(self):
+        # Without it FFmpeg joins a growing playlist at the live end, like live TV
+        for start in (0, 600):
+            cmd = transcode_manager._build_cmd("http://tablo/p.m3u8", start, False, self.plan(), Path("s"))
+            self.assertEqual(cmd[cmd.index("-live_start_index") + 1], "0")
+            self.assertLess(cmd.index("-live_start_index"), cmd.index("-i"))  # an input option
+        live = transcode_manager._build_cmd("http://tablo/p.m3u8", 0, True, self.plan(), Path("s"))
+        self.assertNotIn("-live_start_index", live)
+
     def test_end_marker_added_once(self):
         with tempfile.TemporaryDirectory() as d:
             playlist = Path(d) / "playlist.m3u8"

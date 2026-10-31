@@ -381,7 +381,11 @@ class TranscodeManager:
             # Stay well ahead of playback without racing through the whole file: unthrottled, a
             # recording transcodes several times faster than real time and starves a live stream
             # playing at the same time
-            read_args = ["-readrate", "2", "-readrate_initial_burst", "30"]
+            # A recording still in progress comes as a growing playlist, which FFmpeg treats as live TV
+            # and joins 3 pieces from the end, at "now" (a forum user: the Windows app, like Tablo's
+            # phone app, couldn't start one from the beginning). From the first piece, -ss seeks as usual
+            # (checked with FFmpeg 9.0.1 on a playlist without its end marker); finished ones ignore it
+            read_args = ["-live_start_index", "0", "-readrate", "2", "-readrate_initial_burst", "30"]
             # No end marker from FFmpeg: it also writes one when it crashes, and a player that sees it
             # stops for good. _supervise adds it when the recording has really been converted to the end.
             hls_args = ["-hls_list_size", "0", "-hls_playlist_type", "event", "-hls_flags", "independent_segments+omit_endlist"]
