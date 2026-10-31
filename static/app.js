@@ -3706,8 +3706,12 @@ async function loadLanAccess(token, info) {
   const shut = (d.firewall || []).filter(n => n.state !== 'allowed');
   if (shut.length) {
     const which = shut.map(n => `${esc(n.network)} (${esc(n.category)} network)`).join(' and ');
-    parts.push(`<p style="margin-top:12px;color:var(--warn);font-size:13px;font-weight:600">Windows Firewall is keeping other devices out on ${which}.</p>
-      <p class="dim" style="margin-top:4px;font-size:12.5px">To fix it: open <b>Windows Security → Firewall &amp; network protection → Allow an app through firewall</b>, click <b>Change settings</b>, and tick ${[...new Set(shut.map(n => n.category))].map(c => `<b>${esc(c)}</b>`).join(' and ')} next to every TabloView entry. Then reload this page.</p>`);
+    // A new router (a new internet provider) is a network Windows hasn't seen, and it calls it
+    // Public: at home, saying so is the fix, rather than opening TabloView to every café's network
+    const pub = shut.filter(n => n.category === 'Public');
+    const home = pub.length ? `<p class="dim" style="margin-top:4px;font-size:12.5px">If you're at home (a new router makes Windows call your network Public): open <b>Settings → Network &amp; internet</b>, click ${pub.map(n => `<b>${esc(n.network)}</b>`).join(' or ')} (it may be under <b>Ethernet</b> or <b>Wi-Fi</b>), and set <b>Network profile type</b> to <b>Private network</b>. Then reload this page.</p>` : '';
+    parts.push(`<p style="margin-top:12px;color:var(--warn);font-size:13px;font-weight:600">Windows Firewall is keeping other devices out on ${which}.</p>${home}
+      <p class="dim" style="margin-top:4px;font-size:12.5px">${home ? 'Or let TabloView through the firewall' : 'To fix it'}: open <b>Windows Security → Firewall &amp; network protection → Allow an app through firewall</b>, click <b>Change settings</b>, and tick ${[...new Set(shut.map(n => n.category))].map(c => `<b>${esc(c)}</b>`).join(' and ')} next to every TabloView entry. Then reload this page.</p>`);
   }
   const ts = d.tailscale;
   if (ts && (ts.name || ts.ip)) {
