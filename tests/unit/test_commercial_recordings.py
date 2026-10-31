@@ -37,6 +37,15 @@ FLOORS = {  # name: (share of ads skipped, most show skipped, show_end)
     "amazing_race": (0.97, 20, 5265),
     # CBS (2026-10-30, a second episode with the eye): colour 90%, the eye adds the break it missed
     "price_is_right2": (0.97, 5, 3495),
+    # ABC drama (2026-10-30): the logo finds every break; its TV-14 V box shows at the start and as the
+    # show comes back from each break (also once under the station's 20 s news teaser, laid over the
+    # show's return at 50:53 and counted here as an ad: nobody watches 9-1-1 for it)
+    "nine_one_one": (0.97, 5, 3572),
+    # NBC drama (2026-10-30): the logo is in the lower left; NBC runs its own promos after the logo is back,
+    # and its TV-14 rating (lettering, no box) shows as the show returns: the rating ends those breaks
+    # (one 26 s later, one 10 s sooner: it had run into the show). The last break still starts 37 s
+    # into the final scene, with no rating near it
+    "svu": (0.97, 40, 3578),
 }
 
 # Claude's answers from the preview sheets (app/claude_ads.py, prompt as shipped), 2026-10-30, one run
@@ -84,7 +93,7 @@ class RealRecordingTests(unittest.TestCase):
                 rec, hists, corners = load(name)
                 eye = [v / 255 for v in base64.b64decode(rec["eye"])] if rec.get("eye") else None
                 found = c.find_breaks(hists, rec["blacks"], corners, [tuple(s) for s in rec["silences"]], rec["program_end"],
-                                      eye=eye)
+                                      eye=eye, rating=rec.get("rating"))
                 share, show = score(found, rec["breaks"], show_end)
                 print(f"\n  {name} ({rec['channel']}): {share:.0%} of ad time skipped, {show} s of show skipped")
                 self.assertGreaterEqual(share, floor)

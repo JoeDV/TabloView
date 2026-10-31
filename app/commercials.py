@@ -101,6 +101,27 @@ EYE_ON = 0.3
 EYE_EDGE = 3
 EYE_GONE_EARLY = 20  # a break starts at the first black frame this long after the eye goes
 EYE_SAMPLE = 5  # which pixels are the logo: judged from every 5th second (the same answer, a fifth of the work)
+# The TV rating (TV-14 V...) in the top-left third of the same 480x270 copy: networks show it when the
+# show starts and as it comes back from breaks (ABC's 9-1-1 and NBC's SVU, 2026-10-30: after every
+# break; CBS: at the top of each hour). ABC and CBS put it in a box, NBC just writes it, so it's
+# learned rather than looked for: what stays put (lit in RATING_STEADY seconds running) in a compact
+# patch of the corner during the recording's first RATING_OPENING seconds, the most of it; then every
+# second where RATING_MATCH of those pixels are lit again. On five recordings the show's own rating
+# matched at 0.87-1.0 and nothing else above 0.56: promos carry ratings too, but others or smaller
+# (9-1-1: TV-14 LV and TV-PG DL), as do The Price Is Right's price tags and busy pictures. Trusted only
+# when seen again after the opening (else it might be an ad's still graphic). A suggestion from the user
+RATING_W, RATING_H = 160, 90
+RATING_OPENING = 180
+RATING_STEADY = 8
+RATING_MIN_PIXELS = 60
+RATING_MAX_W, RATING_MAX_H = 70, 66  # 9-1-1's box 36x43, SVU's lettering 39x40, CBS's box 35x33
+RATING_MATCH = 0.75
+RATING_MIN_SECONDS = 2  # seen in at least this many seconds of one showing
+RATING_GAP = 3  # seconds it may go unseen within one showing
+RATING_LOOKBACK = 60  # the show came back at the last black frame up to this long before its rating
+# NBC lets its own promos run after the logo is back (SVU: 13 and 15 s): a rating this soon after a
+# break's end moves the end to the last black-and-silent moment before the rating
+RATING_AFTER = 30
 
 
 def histogram(frame: bytes) -> List[float]:
@@ -286,13 +307,27 @@ def _logo_breaks(scores: List[float], t: float, edges: List[float], blacks: List
 def find_breaks(hists: List[List[float]], blacks: List[float], corners: Optional[List[Sequence[bytes]]] = None,
                 quiet: Optional[List[Tuple[float, float]]] = None,
                 program_end: Optional[float] = None, how: Optional[Dict[str, str]] = None,
-                eye: Optional[List[float]] = None) -> Optional[List[Dict[str, float]]]:
+                eye: Optional[List[float]] = None,
+                rating: Optional[List[Sequence[int]]] = None) -> Optional[List[Dict[str, float]]]:
     """Commercial breaks as [{'start', 'end'}] in seconds, or None if this recording's show and ads
     can't be told apart reliably. corners and quiet (silences) are used when there are any: the
     channel logo, edges at black frames that are also silent. program_end: where the show is
     scheduled to end in the recording. eye: per second, how much of a faint logo is showing in a
-    bigger corner (eye_scores), for channels without a clear one."""
-    edges = sorted(b for b in blacks if any(a - 1 <= b <= z + 1 for a, z in quiet)) if quiet else sorted(blacks)
+    bigger corner (eye_scores), for channels without a clear one. rating: when the show's own rating
+    box shows (rating_boxes), never inside a break."""
+    found = _find_breaks(hists, blacks, corners, quiet, program_end, how, eye)
+    return _not_over_rating(found, rating or [], sorted(blacks), _edges(blacks, quiet))
+
+
+def _edges(blacks: List[float], quiet: Optional[List[Tuple[float, float]]]) -> List[float]:
+    """Black frames that are also silent (all black frames when there's no sound measured)."""
+    return sorted(b for b in blacks if any(a - 1 <= b <= z + 1 for a, z in quiet)) if quiet else sorted(blacks)
+
+
+def _find_breaks(hists: List[List[float]], blacks: List[float], corners: Optional[List[Sequence[bytes]]],
+                 quiet: Optional[List[Tuple[float, float]]], program_end: Optional[float],
+                 how: Optional[Dict[str, str]], eye: Optional[List[float]]) -> Optional[List[Dict[str, float]]]:
+    edges = _edges(blacks, quiet)
     if corners:
         found = best_logo([(c,) if isinstance(c, bytes) else c for c in corners])
         if found:
@@ -612,10 +647,12 @@ def analysis_graph() -> str:
             f"ametadata=mode=print:key=lavfi.astats.Overall.RMS_level[lv];"
             # [big]: which pixels of each bigger corner are lighter than the 5x5 around them, 1 bit each
             f"[0:v]fps=1,scale={EYE_SCALE_W}:{EYE_SCALE_H},format=gray,split=2[e1][e2];[e2]boxblur=2:1[e3];"
-            f"[e1][e3]blend=all_expr='if(gt(A\\,B+{EYE_LIGHTER})\\,255\\,0)',split=4" + "".join(f"[g{i}]" for i in range(4)) + ";"
+            f"[e1][e3]blend=all_expr='if(gt(A\\,B+{EYE_LIGHTER})\\,255\\,0)',split=5" + "".join(f"[g{i}]" for i in range(5)) + ";"
             + "".join(f"[g{i}]crop={EYE_W}:{EYE_H}:{cx}:{cy}[h{i}];" for i, (cx, cy) in
                       enumerate([(0, 0), (EYE_SCALE_W - EYE_W, 0), (0, EYE_SCALE_H - EYE_H), (EYE_SCALE_W - EYE_W, EYE_SCALE_H - EYE_H)]))
-            + "".join(f"[h{i}]" for i in range(4)) + "vstack=inputs=4,format=monob[big]")
+            + "".join(f"[h{i}]" for i in range(4)) + "vstack=inputs=4,format=monob[big];"
+            # [rt]: the same, for the top-left third, where the rating box is
+            f"[g4]crop={RATING_W}:{RATING_H}:0:0,format=monob[rt]")
 
 
 def _split_frame(frame: bytes) -> Tuple[bytes, Tuple[bytes, ...]]:
@@ -674,6 +711,113 @@ def eye_scores(path) -> Optional[List[float]]:
     return [sum(1 for j, mask in logo if bits(sec, k)[j] & mask) / len(logo) for sec in range(n)]
 
 
+def rating_path(log_path) -> Path:
+    return Path(str(log_path) + ".rating")
+
+
+_REVERSED = bytes(int(f"{b:08b}"[::-1], 2) for b in range(256))
+
+
+def rating_rows(frame: bytes) -> List[int]:
+    """One second of the pass's rating file (monob, RATING_W x RATING_H) as rows, bit x = pixel x;
+    the picture's own edge (EYE_EDGE) left out, as for the eye."""
+    row = (RATING_W + 7) // 8
+    keep = ((1 << (RATING_W - EYE_EDGE)) - 1) ^ ((1 << EYE_EDGE) - 1)
+    return [int.from_bytes(frame[y * row:(y + 1) * row].translate(_REVERSED), "little") & keep
+            if EYE_EDGE <= y < RATING_H - EYE_EDGE else 0 for y in range(RATING_H)]
+
+
+def _rating_pattern(seconds: List[List[int]]) -> Optional[Tuple[List[int], int, int]]:
+    """(rows, first row, last row) of what stays put longest in a compact patch in the opening."""
+    best = None
+    for s in range(0, min(RATING_OPENING, len(seconds) - RATING_STEADY + 1)):
+        rows = list(seconds[s])
+        for k in range(1, RATING_STEADY):
+            rows = [a & b for a, b in zip(rows, seconds[s + k])]
+        n = sum(r.bit_count() for r in rows)
+        if n < RATING_MIN_PIXELS or (best and n <= best[0]):
+            continue
+        ys = [y for y, r in enumerate(rows) if r]
+        x0 = min((r & -r).bit_length() - 1 for r in rows if r)
+        x1 = max(r.bit_length() - 1 for r in rows if r)
+        if x1 - x0 <= RATING_MAX_W and ys[-1] - ys[0] <= RATING_MAX_H:
+            best = (n, rows, ys[0], ys[-1])
+    return best[1:] if best else None
+
+
+def _rating_match(rows: List[int], pattern: Tuple[List[int], int, int]) -> float:
+    """The share of the pattern's pixels lit in this second (shifted a pixel either way at most)."""
+    want, top, bottom = pattern
+    total = sum(r.bit_count() for r in want)
+    best = 0
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            hit = 0
+            for y in range(top, bottom + 1):
+                if 0 <= y + dy < len(rows):
+                    r = rows[y + dy]
+                    hit += (want[y] & (r >> dx if dx >= 0 else r << -dx)).bit_count()
+            best = max(best, hit)
+    return best / total
+
+
+def show_rating(seconds: List[List[int]]) -> List[Tuple[int, int]]:
+    """[start, end) of each time the show's own rating shows, from each second's rows (rating_rows):
+    learned in the opening, then matched; nothing unless it's seen again after the opening."""
+    pattern = _rating_pattern(seconds)
+    if pattern is None:
+        return []  # the recording missed the show's start, or no rating: nothing to go by
+    shows: List[List[int]] = []
+    for sec, rows in enumerate(seconds):
+        if _rating_match(rows, pattern) >= RATING_MATCH:
+            if shows and sec - shows[-1][1] <= RATING_GAP:
+                shows[-1][1] = sec + 1
+                shows[-1][2] += 1
+            else:
+                shows.append([sec, sec + 1, 1])
+    shows = [s for s in shows if s[2] >= RATING_MIN_SECONDS]
+    if not any(s[0] >= RATING_OPENING for s in shows):
+        return []
+    return [(s[0], s[1]) for s in shows]
+
+
+def rating_boxes(path) -> List[Tuple[int, int]]:
+    """From the pass's rating file: when the show's own rating shows (show_rating). Deletes the file."""
+    per = (RATING_W + 7) // 8 * RATING_H
+    try:
+        data = Path(path).read_bytes()
+    except OSError:
+        return []
+    finally:
+        Path(path).unlink(missing_ok=True)
+    return show_rating([rating_rows(data[s * per:(s + 1) * per]) for s in range(len(data) // per)])
+
+
+def _not_over_rating(breaks: Optional[List[Dict[str, float]]], rating: List[Sequence[int]],
+                     blacks: List[float], edges: Sequence[float] = ()) -> Optional[List[Dict[str, float]]]:
+    """Whatever shows the show's own rating is the show: a break that runs into it ends at the last
+    black frame before it (the show came back there), one that starts while it shows starts after it,
+    and what's left shorter than a break isn't one. A break ending up to RATING_AFTER seconds before
+    the rating shows ends at the last black-and-silent moment (edges) before the rating instead."""
+    if not breaks or not rating:
+        return breaks
+    out = []
+    for b in breaks:
+        start, end = b["start"], b["end"]
+        for s, e in sorted(rating):
+            if s <= start < e:
+                start = float(e)
+            elif start < s < end:
+                back = [x for x in blacks if max(start, s - RATING_LOOKBACK) < x <= s]
+                end = max(back) if back else s - 2.0
+            elif end <= s <= end + RATING_AFTER:
+                later = [x for x in edges if end < x <= s]
+                end = max(later) if later else end
+        if end - start >= MIN_BREAK_SECONDS:
+            out.append({"start": round(start, 1), "end": round(end, 1)})
+    return out
+
+
 def _analyze(url: str, log_path, stop: threading.Event, progress: Optional[Dict[str, object]] = None,
              rate: Optional[float] = None) -> Optional[Tuple[List[List[float]], List[Tuple[bytes, ...]]]]:
     """One FFmpeg pass: black frames, silences and loudness to the log, and per second a colour
@@ -685,6 +829,7 @@ def _analyze(url: str, log_path, stop: threading.Event, progress: Optional[Dict[
            "-map", "[sd]", "-f", "null", "-",
            "-map", "[lv]", "-f", "null", "-",
            "-map", "[big]", "-f", "rawvideo", "-y", str(eye_path(log_path)),
+           "-map", "[rt]", "-f", "rawvideo", "-y", str(rating_path(log_path)),
            "-map", "[o]", "-f", "rawvideo", "-"]
     size = OUT_W * OUT_H * 3
     hists: List[List[float]] = []
@@ -726,7 +871,8 @@ def _features_path(episode_id: str):
 
 
 def save_features(episode_id: str, hists: List[List[float]], corners: List[Tuple[bytes, ...]], blacks: List[float],
-                  quiet: List[Tuple[float, float]], loud: List[float], eye: Optional[List[float]] = None) -> None:
+                  quiet: List[Tuple[float, float]], loud: List[float], eye: Optional[List[float]] = None,
+                  rating: Optional[List[Sequence[int]]] = None) -> None:
     import base64
     import gzip
     import json
@@ -741,7 +887,8 @@ def save_features(episode_id: str, hists: List[List[float]], corners: List[Tuple
             "lit": base64.b64encode(bytes(bits)).decode(),
             "blacks": [round(x, 2) for x in blacks], "silences": [[round(a, 2), round(b, 2)] for a, b in quiet],
             "loudness": base64.b64encode(bytes(max(0, min(255, round(-v * 2))) for v in loud)).decode(),  # -dB x 2
-            "eye": base64.b64encode(bytes(round(v * 255) for v in eye)).decode() if eye else None}
+            "eye": base64.b64encode(bytes(round(v * 255) for v in eye)).decode() if eye else None,
+            "rating": [list(r) for r in rating] if rating is not None else None}  # None: not looked for
     try:
         FEATURES_DIR.mkdir(parents=True, exist_ok=True)
         with gzip.open(_features_path(episode_id), "wt", encoding="utf-8") as f:
@@ -778,7 +925,8 @@ def load_features(episode_id: str) -> Optional[Dict[str, object]]:
                      for j in range(len(CORNERS))) for i in range(n)]
     return {"hists": hists, "corners": corners, "blacks": data["blacks"],
             "quiet": [tuple(s) for s in data["silences"]],
-            "eye": [v / 255 for v in base64.b64decode(data["eye"])] if data.get("eye") else None}
+            "eye": [v / 255 for v in base64.b64decode(data["eye"])] if data.get("eye") else None,
+            "rating": data.get("rating")}  # None in files from before the rating box was looked for
 
 
 async def analyze(ep: Dict[str, str]) -> Optional[str]:
@@ -807,10 +955,12 @@ async def analyze(ep: Dict[str, str]) -> Optional[str]:
                 stop.set()
                 await job
                 eye_path(log_path).unlink(missing_ok=True)
+                rating_path(log_path).unlink(missing_ok=True)
                 return None
         result = await job
         if result is None:
             eye_path(log_path).unlink(missing_ok=True)
+            rating_path(log_path).unlink(missing_ok=True)
             return None
         hists, corners = result
         try:
@@ -818,16 +968,22 @@ async def analyze(ep: Dict[str, str]) -> Optional[str]:
         finally:
             log_path.unlink(missing_ok=True)
         eye = await asyncio.to_thread(eye_scores, eye_path(log_path))
-        feats = {"hists": hists, "corners": corners, "blacks": black_frames(log), "quiet": silences(log), "eye": eye}
-        await asyncio.to_thread(save_features, ep["id"], hists, corners, feats["blacks"], feats["quiet"], loudness(log), eye)
+        rating = await asyncio.to_thread(rating_boxes, rating_path(log_path))
+        feats = {"hists": hists, "corners": corners, "blacks": black_frames(log), "quiet": silences(log), "eye": eye,
+                 "rating": rating}
+        await asyncio.to_thread(save_features, ep["id"], hists, corners, feats["blacks"], feats["quiet"], loudness(log), eye,
+                                rating)
     hists, blacks = feats["hists"], feats["blacks"]
     how: Dict[str, str] = {}
-    breaks = find_breaks(hists, blacks, feats["corners"], feats["quiet"], ep.get("program_end"), how, feats.get("eye"))
-    # With the user's Anthropic key: Claude's reading of the previews, on these black frames
+    rating = feats.get("rating") or []
+    breaks = find_breaks(hists, blacks, feats["corners"], feats["quiet"], ep.get("program_end"), how, feats.get("eye"), rating)
+    # With the user's Anthropic key: Claude's reading of the previews, on these black frames (and, as
+    # for the finder's own, never over the show's rating box: Claude sees a picture every 10 s, the box
+    # can show for 3)
     failed: Dict[str, bool] = {}
     by_claude = await asyncio.to_thread(claude_ads.find, ep, sorted(blacks), float(len(hists)), failed)
     if by_claude is not None:
-        breaks = by_claude
+        breaks = by_claude = _not_over_rating(by_claude, rating, sorted(blacks), _edges(blacks, feats["quiet"]))
     save_commercials(ep["id"], "unreliable" if breaks is None else "done", breaks, method=METHOD,
                      by_claude=by_claude is not None, found_by="claude" if by_claude is not None else how.get("by"),
                      claude_failed=bool(failed.get("yes")))
