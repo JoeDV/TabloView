@@ -13,6 +13,14 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.3.4": [
+        "A recording that's still in progress now plays from the beginning (or where you left off), instead of joining at the live end.",
+        "Commercial skip uses the show's own TV rating (the TV-14 box in the corner that ABC, NBC and CBS show as the show comes back): a skip never runs over it, and promos left playing just before it are skipped too. On an SVU episode it skipped 26 seconds less of NBC promos left playing and stopped cutting 10 seconds into the show. It applies to recordings scanned from now on.",
+        "Away from home: under Settings → Playback you can choose a smaller picture (720p or 480p) for watching over Tailscale on a slow connection. It stays at the full picture unless you change it, and nothing changes at home.",
+        "Find again now shows that it ran: the status line says \"Found the commercials again\", and hovering over a recording's commercials tag shows when its breaks were found.",
+        "After a new router or internet provider, when Windows calls your home network Public and keeps other devices out, TabloView now suggests switching it to Private first.",
+        "Fixed: in split view, the second channel's captions were a different size from the first's.",
+    ],
     "1.3.3": [
         "Commercial skip is much better on CBS without a Claude key: TabloView now spots CBS's see-through eye in the corner. On Survivor it skips 96% of the ads (60% before) and on The Price Is Right 99% (90% before), with none of the show skipped.",
         "A stretch of show is no longer taken for a long commercial break: Survivor's Tribal Council used to be skipped as a 10-minute break.",
