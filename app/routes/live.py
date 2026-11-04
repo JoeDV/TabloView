@@ -9,11 +9,12 @@ from datetime import date, datetime, timezone, timedelta
 
 import httpx
 import requests
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from ..tablo_client import tablo_manager
 from ..transcode import transcode_manager
+from ..netcheck import away_from_home
 from ..database import airing_on_now, get_live_airings_for_channels, get_epg_schedule, get_upcoming_recordings
 from ..schedule_check import live_tv_check
 from ..settings import load_settings
@@ -688,7 +689,7 @@ async def get_live_epg(
 
 
 @router.post("/tune")
-async def tune_live_channel(req: TuneRequest):
+async def tune_live_channel(req: TuneRequest, request: Request):
     """Tune a live OTA or FAST channel on the Tablo DVR and return streaming URL."""
     if not tablo_manager.is_authenticated:
         raise HTTPException(status_code=400, detail="Tablo device not connected")
@@ -713,8 +714,9 @@ async def tune_live_channel(req: TuneRequest):
             sess = transcode_manager.create_session(stream.playlist_url)
             sess.tablo_token = stream.token
             sess.channel_id = channel_id
-            stream_url = await transcode_manager.start_browser_transcode(sess.session_id, stream.playlist_url,
-                                                                         passthrough=passthrough)
+            stream_url = await transcode_manager.start_browser_transcode(
+                sess.session_id, stream.playlist_url, passthrough=passthrough,
+                away=away_from_home(request.client.host if request.client else None))
             if req.kind != "fast":
                 transcode_manager.start_reception(sess)  # streaming channels have no antenna signal
             return {

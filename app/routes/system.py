@@ -36,6 +36,7 @@ class SettingsUpdate(BaseModel):
     notifications: Optional[bool] = None
     video_quality: Optional[Literal["auto", "best", "fastest"]] = None
     smooth_motion: Optional[bool] = None
+    away_picture: Optional[Literal["full", "720", "480"]] = None
     logo_style: Optional[Literal["color", "white"]] = None
     export_format: Optional[Literal["smaller", "original"]] = None
     export_show_folders: Optional[bool] = None

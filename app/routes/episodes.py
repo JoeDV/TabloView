@@ -20,6 +20,7 @@ from ..database import (
 from ..tablo_client import tablo_manager
 from ..transcode import transcode_manager
 from .. import previews
+from ..netcheck import away_from_home
 
 router = APIRouter(prefix="/api/episodes", tags=["episodes"])
 
@@ -231,7 +232,9 @@ async def watch_episode(
 
     if transcode:
         try:
-            stream_url = await transcode_manager.start_browser_transcode(sess.session_id, playlist_url, start=start, live=False)
+            stream_url = await transcode_manager.start_browser_transcode(
+                sess.session_id, playlist_url, start=start, live=False,
+                away=away_from_home(request.client.host if request.client else None))
         except Exception as e:
             print(f"Transcode failed, falling back to direct proxy: {e}")
             stream_url = f"/api/hls/{sess.session_id}/playlist.m3u8"

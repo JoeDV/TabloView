@@ -358,17 +358,20 @@ class TranscodeManager:
         m = re.search(r"Video: (\w+)", await asyncio.to_thread(run))
         return m.group(1) if m else None
 
-    def _video_plan(self, passthrough: bool) -> Dict[str, Any]:
-        """Encoder and filters from the Playback settings (see app/encoders.py)."""
+    def _video_plan(self, passthrough: bool, away: bool = False) -> Dict[str, Any]:
+        """Encoder and filters from the Playback settings (see app/encoders.py). away: the device is
+        watching over Tailscale, where Settings → Playback can ask for a smaller picture."""
         settings = load_settings()
         quality = settings.get("video_quality") or "auto"
-        if passthrough:
-            return {"encoder": None, "smooth": False, "quality": quality}
+        size = encoders.AWAY_PICTURES.get(str(settings.get("away_picture") or "full")) if away else None
+        if passthrough and not size:
+            return {"encoder": None, "smooth": False, "quality": quality, "size": None}
         enc = encoders.choose(quality)
         # Smooth motion (60 fps) is opt-in: it works the graphics chip twice as hard. (Its Quick Sync
         # failures, 4 of 6 one-minute runs, were fixed by encoders.QSV_STABLE: 2 of 2 two-minute runs clean)
         smooth = bool(settings.get("smooth_motion"))
-        return {"encoder": enc, "smooth": smooth and quality != "fastest", "quality": quality}
+        # (no 60 fps in a smaller picture: it's for a slow connection)
+        return {"encoder": enc, "smooth": smooth and quality != "fastest" and not size, "quality": quality, "size": size}
 
     def _build_cmd(self, input_url: str, start: int, live: bool, plan: Dict[str, Any], session_dir: Path,
                    resume: bool = False) -> List[str]:
@@ -407,6 +410,11 @@ class TranscodeManager:
             # the Google TV app skip and lag (2026-10-29, Shark Tank on ABC through AMD AMF)
             deint = ("bwdif=mode=send_field:deint=interlaced,fps=60000/1001" if plan["smooth"]
                      else "bwdif=mode=send_frame:deint=interlaced,fps=30000/1001")
+            if plan.get("size"):
+                # Away from home, smaller: never larger than the broadcast, at a capped bitrate
+                height, kbps = plan["size"]
+                deint += f",scale=-2:'min({height},ih)'"
+                enc = encoders.capped(enc, kbps)
             video = ["-vf", deint, *enc["args"], "-pix_fmt", enc["pix_fmt"],
                      # A keyframe every segment: segments start cleanly and playback starts sooner
                      "-force_key_frames", f"expr:gte(t,n_forced*{HLS_SEGMENT_SECONDS})"]
@@ -443,7 +451,7 @@ class TranscodeManager:
                 str(session_dir / "p%05d.jpg")]
 
     async def start_browser_transcode(self, session_id: str, input_url: str, start: int = 0, live: bool = True,
-                                      passthrough: bool = False) -> str:
+                                      passthrough: bool = False, away: bool = False) -> str:
         """Convert a Tablo stream into H.264/AAC HLS for the browser player.
 
         live=True keeps a rolling ~90 s window (live TV). For recordings (live=False) every segment is
@@ -465,7 +473,7 @@ class TranscodeManager:
             sess.relay = export_pace.open_relay(input_url, paced=False)
             if sess.relay:
                 input_url = sess.relay.url
-        plan = await asyncio.to_thread(self._video_plan, passthrough)
+        plan = await asyncio.to_thread(self._video_plan, passthrough, away)
         if live and plan["smooth"] and self.smooth_live_too_slow:
             plan = {**plan, "smooth": False}  # this PC couldn't keep up with it earlier (see _supervise)
         for attempt in range(2):
@@ -510,7 +518,8 @@ class TranscodeManager:
                 old.unlink(missing_ok=True)
             playlist_output.unlink(missing_ok=True)
 
-        print(f"[Transcode] Session {session_id[:8]}: {sess.encoder}{', 60 fps' if plan['smooth'] else ''}")
+        away_note = f", away from home at {plan['size'][0]}p" if plan.get("size") else ""
+        print(f"[Transcode] Session {session_id[:8]}: {sess.encoder}{', 60 fps' if plan['smooth'] else ''}{away_note}")
         if ready:
             sess.supervisor = asyncio.create_task(self._supervise(sess, input_url, start, live, plan, session_dir))
         return f"/api/transcoded/{session_id}/playlist.m3u8"

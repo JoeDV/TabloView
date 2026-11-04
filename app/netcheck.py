@@ -298,3 +298,21 @@ async def speed_test() -> Dict[str, Any]:
                        "hd_streams": int(mb // HD_MB_PER_S), "tested_with": row["show_title"]})
         print(f"[Network] Test: {result}")
         return result
+
+
+_TAILSCALE = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
+
+
+def away_from_home(client_host: Optional[str]) -> bool:
+    """A device watching from outside the home network: over Tailscale (its 100.x or fd7a:115c:a1e0::
+    address, even from inside the house) or from the internet. This PC and the home network
+    (192.168.x, 10.x, 172.16-31.x) aren't."""
+    try:
+        ip = ipaddress.ip_address((client_host or "").split("%")[0])
+    except ValueError:
+        return False  # not an address (a test client): treat as home
+    if getattr(ip, "ipv4_mapped", None):
+        ip = ip.ipv4_mapped
+    if any(ip in net for net in _TAILSCALE if net.version == ip.version):
+        return True
+    return not (ip.is_loopback or ip.is_link_local or ip.is_private)

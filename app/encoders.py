@@ -121,6 +121,28 @@ def cpu_fallback(quality: str = "auto") -> Dict[str, Any]:
             "args": high if quality == "best" else normal, "pix_fmt": pix}
 
 
+# Away from home (Settings → Playback): a smaller picture at a capped bitrate, for watching over
+# Tailscale on a slow connection (a forum request for Tablo Connect's 480p). setting -> (height, kb/s)
+AWAY_PICTURES = {"720": (720, 3000), "480": (480, 1200)}
+
+
+def capped(enc: Dict[str, Any], kbps: int) -> Dict[str, Any]:
+    """The same encoder held to about kbps (peaks to 1.5x): the quality-based settings above have no
+    ceiling, which is what a slow connection needs."""
+    rate = ["-b:v", f"{kbps}k", "-maxrate", f"{kbps * 3 // 2}k", "-bufsize", f"{kbps * 2}k"]
+    args = {
+        "qsv": ["-c:v", "h264_qsv", *QSV_STABLE, "-preset", "veryfast", *rate, "-forced_idr", "1"],
+        "nvenc": ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", *rate, "-forced-idr", "1"],
+        "amf": ["-c:v", "h264_amf", "-quality", "balanced", "-rc", "vbr_peak", *rate],
+        "videotoolbox": ["-c:v", "h264_videotoolbox", *rate],
+    }.get(enc["name"])
+    if args is None:
+        # x264: its quality setting, with a ceiling (-b:v would switch it to bitrate mode)
+        args = ["-c:v", "libx264", "-preset", "ultrafast" if enc["name"] == "fastest" else "veryfast",
+                "-crf", "23", *rate[2:]]
+    return {**enc, "args": args}
+
+
 def for_export(enc: Dict[str, Any]) -> Dict[str, Any]:
     """The same encoder with the smaller-file export settings."""
     return {**enc, "args": EXPORT_ARGS.get(enc["name"], EXPORT_ARGS["cpu"])}

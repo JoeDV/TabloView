@@ -3454,6 +3454,14 @@ PAGES.settings = async (r, token) => {
         </label>
         <p class="dim" style="margin-top:6px;font-size:12.5px">Shows antenna TV at its full 60 motion steps a second, like on the TV. Best for sports. It works your PC much harder: if you see glitches or stutters, or live TV falls behind, turn it off. (If live TV can't keep up, TabloView switches that channel back to standard motion by itself.)</p>
         <label class="switch-row" style="font-weight:400;cursor:default;margin-top:14px">
+          <span>Away from home (Tailscale)</span>
+          <select class="select" data-change="away-picture" style="height:32px">
+            ${[['full', 'Full picture, as at home'], ['720', 'Smaller: 720p'], ['480', 'Smallest: 480p']]
+              .map(([v, label]) => `<option value="${v}" ${(settings.away_picture || 'full') === v ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </label>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">For watching over Tailscale on a slow connection (phone data, hotel Wi-Fi): 720p uses about a third of the data of the full picture, 480p about a seventh. At home nothing changes.</p>
+        <label class="switch-row" style="font-weight:400;cursor:default;margin-top:14px">
           <span>Buffer before playing</span>
           <select class="select" data-change="buffer" style="height:32px">
             ${[4, 8, 15, 30].map(v => `<option value="${v}" ${state.bufferTarget === v ? 'selected' : ''}>${v} seconds</option>`).join('')}
@@ -6015,6 +6023,12 @@ const CHANGES = {
       await api('/api/settings', { method: 'POST', body: JSON.stringify({ video_quality: el.value }) });
       toast('Video quality saved. It applies to the next thing you play.');
       route();
+    } catch (err) { toast(err.message, 'error'); }
+  },
+  'away-picture': async el => {
+    try {
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ away_picture: el.value }) });
+      toast('Saved. It applies to the next thing you play away from home.');
     } catch (err) { toast(err.message, 'error'); }
   },
   'rerecord-failed': async el => {
