@@ -212,7 +212,7 @@ A 401 or 403 means the cloud sign-in has expired: sign in again.
 Things the Tablo app does that we haven't seen the request for:
 
 - **Channel scan**, and Tablo settings (recording quality, padding, and so on).
-- **Manual (time-based) recordings.**
+- **Manual (time-based) recordings.** Seen on a QUAD (firmware 2.2.58, 2026-11-03): `/server/capabilities` lists `manual_programs_edit`, and `GET /guide/programs` and `GET /recordings/programs` answer `[]`. `POST /guide/programs` answers 400 `invalid_post_data` with details `title,duration,channel,kind` for an empty body and for every body we tried, so the format it wants is still unknown. Tablo's own 4th Gen app doesn't offer manual recordings.
 - **Every `skip_reason` value**, and every recording `error` value.
 
 Found one of these? Open an issue or pull request with the method, path and body (never your `Authorization` header or tokens).
