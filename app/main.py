@@ -64,8 +64,12 @@ async def lifespan(app: FastAPI):
     dropout_finder = asyncio.create_task(dropouts.worker_loop())
     streaming_guide = asyncio.create_task(streaming.worker_loop())
     unused_streams = asyncio.create_task(transcode_manager.abandoned_loop())
+    from . import reminders
+    reminder_check = asyncio.create_task(reminders.worker_loop())
 
     yield
+
+    reminder_check.cancel()
 
     auto_sync.cancel()
     ad_finder.cancel()

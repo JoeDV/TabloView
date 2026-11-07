@@ -35,6 +35,8 @@ DEFAULTS: Dict[str, Any] = {
     "away_picture": "full",  # watching over Tailscale: "full" (as at home), "720" or "480" (smaller, for slow connections)
     "extra_playlist_url": "",  # channels from outside the Tablo: an M3U playlist's address (app/extra_channels.py)
     "extra_guide_url": "",  # and its XMLTV guide, optional
+    "extra_favorites": [],  # playlist channels marked as favorites (by guide id or name), kept by TabloView
+    "extra_hidden": [],  # and hidden ones
     "tailscale_no_pin": False,  # devices connecting straight from a Tailscale address skip the PIN (lanauth)
     "logo_style": "color",  # channel logos: "color" (the station's own) or "white"
     "export_format": "smaller",  # MP4 exports: "smaller" (H.264, graphics chip if available) or "original" (exact copy)

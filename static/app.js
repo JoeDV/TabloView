@@ -235,6 +235,7 @@ const state = {
   series: null,
   epg: null,
   epgCategory: 'ota',
+  reminders: new Map(),  // Remind me (More channels): id -> reminder
   epgOffset: 0,
   epgQuery: '',
   epgItems: {},
@@ -962,7 +963,7 @@ PAGES.home = async (r, token) => {
   if (onNow && shown('onnow')) {
     blocks.onnow = (section({
       title: 'On now',
-      sub: hasFavorites() ? 'Your favorite channels' : 'Antenna channels',
+      sub: hasTabloFavorites() ? 'Your favorite channels' : 'Antenna channels',
       link: '#/live',
       rowId: 'rowOnNow',
       body: `<div class="card-row onnow-row" id="rowOnNow">${onNow}</div>`,
@@ -2617,9 +2618,8 @@ PAGES.live = async (r, token) => {
 // Home: what's airing now on your favorite channels (or antenna channels), one click to watch
 function onNowCards() {
   if (!state.epg) return '';
-  const fav = hasFavorites();
   const now = Date.now();
-  const list = state.epg.channels.filter(c => (fav ? c.favorite : c.kind === 'ota') && nowNext(c, now).now).slice(0, 16);
+  const list = onNowChannels(state.epg.channels, now);
   return list.map(c => {
     const { num, name } = channelName(c);
     const on = nowNext(c, now).now;
@@ -2636,7 +2636,22 @@ function onNowCards() {
 }
 
 function hasFavorites() {
-  return !!(state.epg && state.epg.channels.some(c => c.favorite));
+  return !!(state.epg && state.epg.channels.some(c => c.favorite && !c.hidden));
+}
+
+// The Tablo's own favorites (set in Tablo's apps), not More channels starred in TabloView
+function hasTabloFavorites() {
+  return !!(state.epg && state.epg.channels.some(c => c.favorite && c.kind !== 'extra'));
+}
+
+// Home's On now (16 at most): the Tablo's favorite channels if there are any, else the antenna ones,
+// and More channels starred in TabloView, with room kept for them (they come last in the list)
+function onNowChannels(channels, now) {
+  const fav = channels.some(c => c.favorite && c.kind !== 'extra');
+  const onNow = c => nowNext(c, now).now;
+  const extras = channels.filter(c => c.kind === 'extra' && c.favorite && !c.hidden && onNow(c)).slice(0, 8);
+  const base = channels.filter(c => c.kind !== 'extra' && (fav ? c.favorite : c.kind === 'ota') && onNow(c));
+  return [...base.slice(0, 16 - extras.length), ...extras];
 }
 
 // iptv-org's community list of free US channels: offered in Settings, never set on its own
@@ -2646,6 +2661,44 @@ const EXTRA_PRESETS = {
          'https://raw.githubusercontent.com/BuddyChewChew/tubi-scraper/refs/heads/main/tubi_epg.xml'],
   'iptv-org': ['https://iptv-org.github.io/iptv/countries/us.m3u', ''],
 };
+
+// Remind me (More channels): asked every half minute; a show that just started is shown once per
+// page with a Watch button (the desktop app also shows a Windows notification)
+const remindedHere = new Set();
+async function checkReminders() {
+  if (document.hidden && remindedHere.size) return;
+  let res;
+  try { res = await api('/api/live/reminders'); } catch { return; }
+  state.reminders = new Map(res.reminders.map(r => [r.id, r]));
+  for (const r of res.due) {
+    if (remindedHere.has(r.id)) continue;
+    remindedHere.add(r.id);
+    actionToast(`Starting now on ${r.channel_name}: ${r.title}`, 'Watch',
+      () => watchLiveChecked(r.channel_id, r.channel_name, 'extra'), 120000);
+  }
+}
+
+// Star or hide a More channel (kept by TabloView), and redraw the guide where it was
+async function markExtra(key, what) {
+  const c = ((state.epg && state.epg.channels) || []).find(x => x.extra_key === key);
+  if (!c) return;
+  try {
+    const res = await api('/api/live/extra/mark', { method: 'POST', body: JSON.stringify({ key, [what]: !c[what] }) });
+    for (const x of state.epg.channels) if (x.extra_key === key) Object.assign(x, res);
+    toast(what === 'favorite' ? (res.favorite ? `${c.name} added to your favorites` : `${c.name} removed from your favorites`)
+      : (res.hidden ? `${c.name} hidden` : `${c.name} shown again`));
+    const cats = $('#epgCats');
+    if (cats) cats.innerHTML = epgCatButtons();
+    renderEpgKeepingPlace();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+function renderEpgKeepingPlace() {
+  const el = $('#epgScroll');
+  const top = el ? el.scrollTop : 0, left = el ? el.scrollLeft : 0;
+  renderEpg();
+  if (el) { el.scrollTop = top; el.scrollLeft = left; }
+}
 
 // Settings → Playback → More channels: what the playlist and guide gave
 async function showExtraStatus() {
@@ -2701,6 +2754,7 @@ async function loadEpg(token, scrollToNow = false) {
 
 function epgFilter(c) {
   const cat = state.epgCategory;
+  if (c.hidden && !(cat === 'extra' && state.epgShowHidden)) return false;
   if (cat === 'favorites' && !c.favorite) return false;
   if (cat === 'ota' && c.kind !== 'ota') return false;
   if (cat === 'fast' && c.kind !== 'fast') return false;
@@ -2761,6 +2815,7 @@ function renderEpg(scrollToNow = false) {
       if (e <= s) return '';
       const key = `${ci}_${ai}`;
       state.epgItems[key] = { airing: a, channel: c };
+      const reminded = c.kind === 'extra' && state.reminders.has(`${c.extra_key}@${a.air_datetime}`);
       const left = Math.round(((s - ws) / 60000) * EPG.PPM);
       const width = Math.max(44, Math.round(((e - s) / 60000) * EPG.PPM) - 4);
       const onAir = start <= now && now < end;
@@ -2769,7 +2824,7 @@ function renderEpg(scrollToNow = false) {
       return `<div class="epg-cell ${onAir ? 'on-air' : ''} ${rec.cls}" style="left:${left + 2}px;width:${width}px" data-left="${left}" data-width="${width}" data-action="epg-cell" data-key="${key}" title="${esc(a.title)}${rec.title}">
         <div class="epg-cell-inner">
           <div class="epg-cell-title">${esc(a.title)}</div>
-          <div class="epg-cell-sub">${rec.html}${a.is_new ? '<span class="tag tag-new">NEW</span>' : ''}${a.is_premiere ? '<span class="tag tag-premiere">PREMIERE</span>' : ''}<span>${esc(fmt.time(a.air_datetime))}${se ? ` · ${se}` : ''}${a.episode_title ? ` · ${esc(a.episode_title)}` : ''}</span></div>
+          <div class="epg-cell-sub">${rec.html}${reminded ? '<span class="tag" title="TabloView will remind you when it starts">Reminder</span>' : ''}${a.is_new ? '<span class="tag tag-new">NEW</span>' : ''}${a.is_premiere ? '<span class="tag tag-premiere">PREMIERE</span>' : ''}<span>${esc(fmt.time(a.air_datetime))}${se ? ` · ${se}` : ''}${a.episode_title ? ` · ${esc(a.episode_title)}` : ''}</span></div>
         </div>
       </div>`;
     }).join('');
@@ -2780,6 +2835,8 @@ function renderEpg(scrollToNow = false) {
       <div class="epg-ch" style="width:${EPG.CH_W}px" data-action="watch-live" data-id="${esc(c.channel_id)}" data-name="${esc(name)}" data-kind="${esc(c.kind)}" title="Watch ${esc(name)} live">
         ${c.logo_url ? `<img class="epg-ch-logo" src="${esc(c.logo_url)}" alt="" loading="lazy">` : `<div class="epg-ch-logo-fallback">${esc((c.call_sign || 'TV').slice(0, 6))}</div>`}
         <div class="epg-ch-info"><div class="epg-ch-num">${num ? `<b>${esc(num)}</b>` : ''}${esc(name)}${c.favorite ? `<span class="epg-fav" title="Favorite">${icon('star', 11)}</span>` : ''}</div>${sub ? `<div class="epg-ch-sub">${esc(sub)}</div>` : ''}</div>
+        ${c.kind === 'extra' ? `<span class="icon-btn ch-mark ${c.favorite ? 'on' : ''}" data-action="extra-fav" data-key="${esc(c.extra_key)}" title="${c.favorite ? 'Remove from favorites' : 'Add to favorites (they show under Favorites and in On now)'}">${icon('star', 12)}</span>
+          <span class="icon-btn ch-mark" data-action="extra-hide" data-key="${esc(c.extra_key)}" title="${c.hidden ? 'Show this channel again' : 'Hide this channel'}">${icon(c.hidden ? 'plus' : 'x', 12)}</span>` : ''}
         <span class="icon-btn play">${icon('play', 12)}</span>
       </div>
       <div class="epg-track" style="width:${trackW}px">${cells}</div>
@@ -2787,8 +2844,10 @@ function renderEpg(scrollToNow = false) {
   }).join('');
 
   const head = `<div class="epg-head"><div class="epg-head-ch" style="width:${EPG.CH_W}px"></div>${slots.map(s => `<div class="epg-slot" style="width:${slotW}px">${esc(fmt.time(s.iso))}</div>`).join('')}</div>`;
+  const hiddenN = channels.filter(c => c.kind === 'extra' && c.hidden).length;
   const extraNote = state.epgCategory === 'extra'
-    ? '<div class="dim" style="padding:8px 12px;font-size:13px">Channels from your playlist (Settings → Playback → More channels). They <b>don’t use a Tablo tuner</b>, and they’re <b>watch only</b>: they can’t be recorded.</div>' : '';
+    ? `<div class="dim" style="padding:8px 12px;font-size:13px">Channels from your playlist (Settings → Playback → More channels). They <b>don’t use a Tablo tuner</b>, and they’re <b>watch only</b>: they can’t be recorded.
+        Point at a channel to star it (Favorites and On now) or hide it.${hiddenN ? ` <a href="#" data-action="extra-show-hidden">${state.epgShowHidden ? 'Leave out' : 'Show'} the ${plural(hiddenN, 'hidden channel')}</a>` : ''}</div>` : '';
   scroll.innerHTML = `${extraNote}<div class="epg-board" id="epgBoard">${head}${rows}<div class="epg-now hidden" id="epgNow"></div></div>`;
   hydrateIcons(scroll);
   positionNowLine();
@@ -2925,6 +2984,11 @@ function openAiringModal(key) {
     </div>
     <div class="dialog-foot">
       ${a.series_path ? `<button class="btn" data-action="modal-series" data-path="${esc(a.series_path)}">Series &amp; recording</button>` : ''}
+      ${c.kind === 'extra' && Date.now() < new Date(a.air_datetime).getTime() && a.episode_title !== 'Live'
+        ? (state.reminders.has(`${c.extra_key}@${a.air_datetime}`)
+          ? `<button class="btn rec-set" data-action="extra-remind" data-key="${esc(key)}" data-on="0" title="TabloView will remind you when it starts. Click to cancel.">${icon('check', 14)}Reminder set</button>`
+          : `<button class="btn" data-action="extra-remind" data-key="${esc(key)}" data-on="1" title="This channel can't be recorded: TabloView tells you when it starts">Remind me</button>`)
+        : ''}
       ${a.airing_id && c.can_record && Date.now() < new Date(end).getTime()
         ? (a.schedule_state === 'scheduled' || a.recording_now
           ? `<button class="btn rec-set" data-action="fast-record" data-id="${esc(a.airing_id)}" data-key="${esc(key)}" data-on="0" title="Your Tablo will record this. Click to cancel.">${icon('check', 14)}Recording</button>`
@@ -3595,7 +3659,7 @@ PAGES.settings = async (r, token) => {
             <button class="btn btn-sm" data-action="extra-preset" data-preset="iptv-org" title="Fill in and save iptv-org's list of free US channels">Use iptv-org's list (no guide)</button>`}
           <span class="dim" id="extraStatus" style="font-size:12.5px"></span>
         </div>
-        <p class="dim" style="margin-top:8px;font-size:12.5px">Don't have one? <b>Tubi:</b> about 280 of Tubi's free channels (news, crime, movies, sports replays) with a full guide, streamed from Tubi itself. The list is kept up by a volunteer on GitHub (BuddyChewChew/tubi-scraper). <b>iptv-org:</b> a community list of about 1,500 free US channels with no guide; some may be off the air, and some may not come from the channel's owner. TabloView doesn't run or check either list, so channels can change or stop working. Or use a playlist you know, from Channels DVR, an HDHomeRun or ErsatzTV for example.</p>
+        <p class="dim" style="margin-top:8px;font-size:12.5px">Don't have one? <b>Tubi:</b> Tubi's free channels (news, crime, movies, sports replays) with a full guide, streamed from Tubi itself. The list is kept up by a volunteer on GitHub (BuddyChewChew/tubi-scraper). <b>iptv-org:</b> a community list of about 1,500 free US channels with no guide; some may be off the air, and some may not come from the channel's owner. TabloView doesn't run or check either list, so channels can change or stop working. Or use a playlist you know, from Channels DVR, an HDHomeRun or ErsatzTV for example.</p>
       </div>
 `;
   const appearancePanel = `
@@ -5854,6 +5918,34 @@ const ACTIONS = {
   'pb-shape': el => pictureShape.menu(el),
   'export-folder': el => chooseExportFolder(el),
   'export-folder-type': el => chooseExportFolder(el, true),
+  'extra-remind': async el => {
+    const item = state.epgItems[el.dataset.key];
+    if (!item) return;
+    const { airing: a, channel: c } = item;
+    const id = `${c.extra_key}@${a.air_datetime}`;
+    try {
+      if (el.dataset.on === '1') {
+        await api('/api/live/reminders', { method: 'POST', body: JSON.stringify({
+          channel_key: c.extra_key, channel_id: c.channel_id, channel_name: c.name, title: a.title || c.name,
+          episode_title: a.episode_title || null, start: a.air_datetime, duration: a.duration || 0 }) });
+        state.reminders.set(id, { id });
+        toast(`TabloView will remind you at ${fmt.time(a.air_datetime)} on any TabloView page that's open, and with a notification from the tray icon`, 'success');
+      } else {
+        await api('/api/live/reminders/remove', { method: 'POST', body: JSON.stringify({ id }) });
+        state.reminders.delete(id);
+        toast('Reminder cancelled');
+      }
+      renderEpgKeepingPlace();
+      openAiringModal(el.dataset.key);
+    } catch (err) { toast(err.message, 'error'); }
+  },
+  'extra-fav': el => markExtra(el.dataset.key, 'favorite'),
+  'extra-hide': el => markExtra(el.dataset.key, 'hidden'),
+  'extra-show-hidden': (el, e) => {
+    if (e) e.preventDefault();
+    state.epgShowHidden = !state.epgShowHidden;
+    renderEpgKeepingPlace();
+  },
   'extra-preset': el => {
     [$('#extraPlaylist').value, $('#extraGuide').value] = EXTRA_PRESETS[el.dataset.preset];
     ACTIONS['extra-save']();
@@ -6443,6 +6535,8 @@ async function init() {
   api('/api/exports').then(({ jobs }) => setActiveExports(jobs.filter(j => j.status === 'downloading' || j.status === 'pending').length)).catch(() => {});
   setInterval(pollStatus, 5000);
   setInterval(() => setSyncState(state.isSyncing), 60000);
+  checkReminders();
+  setInterval(checkReminders, 30000);
   checkForUpdate();
   setInterval(() => checkForUpdate(), 6 * 3600 * 1000);
 }

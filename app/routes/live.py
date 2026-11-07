@@ -522,6 +522,65 @@ async def extra_status():
     return extra_channels.status()
 
 
+class ExtraMark(BaseModel):
+    key: str = Field(max_length=300)
+    favorite: Optional[bool] = None
+    hidden: Optional[bool] = None
+
+
+@router.post("/extra/mark")
+async def extra_mark(req: ExtraMark):
+    """Favorite or hide one of the playlist's channels (Live TV's More tab)."""
+    from .. import extra_channels
+    return extra_channels.mark(req.key, favorite=req.favorite, hidden=req.hidden)
+
+
+class ReminderRequest(BaseModel):
+    channel_key: str = Field(max_length=300)
+    channel_id: str = Field(max_length=100)
+    channel_name: str = Field(max_length=200)
+    title: str = Field(max_length=300)
+    episode_title: Optional[str] = Field(default=None, max_length=300)
+    start: str = Field(max_length=40)
+    duration: int = Field(ge=0, le=86400)
+
+
+class ReminderRemove(BaseModel):
+    id: str = Field(max_length=400)
+
+
+@router.get("/reminders")
+async def get_reminders():
+    """Remind me (More channels): every reminder, and those whose show has just started."""
+    from .. import extra_channels, reminders
+    # The channel as the playlist has it now (its address, and so its id, may have changed since)
+    now_ids = {extra_channels.key(c): c["id"] for c in await extra_channels.channels()}
+    fix = lambda rs: [{**r, "channel_id": now_ids.get(r["channel_key"], r["channel_id"])} for r in rs]
+    return {"reminders": fix(reminders.listing()), "due": fix(reminders.due())}
+
+
+@router.post("/reminders")
+async def add_reminder(req: ReminderRequest):
+    from .. import reminders
+    try:
+        start = datetime.fromisoformat(req.start.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="That isn't a time.")
+    if start + timedelta(seconds=req.duration) <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="That show has ended.")
+    try:
+        return reminders.add(req.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/reminders/remove")
+async def remove_reminder(req: ReminderRemove):
+    from .. import reminders
+    reminders.remove(req.id)
+    return {"success": True}
+
+
 @router.get("/tune_check")
 async def tune_check():
     """Before tuning an antenna channel: would it leave too few tuners for recordings starting soon?"""
@@ -691,7 +750,10 @@ async def get_live_epg(
     if kind in ("all", "extra"):
         # Channels from the user's own playlist (Settings → Live TV), after the Tablo's, in its order
         from .. import extra_channels
-        channel_rows += await extra_channels.epg_rows(window_start_dt, window_end_dt, epg_data["window_start"], hours)
+        extra_rows = await extra_channels.epg_rows(window_start_dt, window_end_dt, epg_data["window_start"], hours)
+        for row in extra_rows:
+            row["categories"] = channel_categories(row)  # News, Sports... from their guide, as for the Tablo's
+        channel_rows += extra_rows
 
     return {
         "window_start": epg_data["window_start"],

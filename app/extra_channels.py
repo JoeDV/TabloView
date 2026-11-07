@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from .settings import load_settings
+from .settings import load_settings, save_settings
 
 PLAYLIST_SECONDS = 3600  # lists change rarely; read again after an hour
 GUIDE_SECONDS = 12 * 3600  # guide files are rebuilt about once a day (Tubi's list: a daily GitHub job)
@@ -210,19 +210,50 @@ def _live_placeholder(c: Dict[str, Any], start_iso: str, hours: int) -> Dict[str
             "duration": hours * 3600, "is_new": False, "is_primetime": False, "is_premiere": False, "qualifiers": []}
 
 
-def channel_dict(c: Dict[str, Any]) -> Dict[str, Any]:
+def key(c: Dict[str, Any]) -> str:
+    """What favorites and hidden channels are kept by: the guide id, else the name (the address, and
+    so the channel id, can change when the playlist is rebuilt)."""
+    return c["tvg_id"] or f"name:{c['name']}"
+
+
+def marks() -> Dict[str, set]:
+    s = load_settings()
+    return {"favorite": set(s.get("extra_favorites") or []), "hidden": set(s.get("extra_hidden") or [])}
+
+
+def mark(channel_key: str, favorite: Optional[bool] = None, hidden: Optional[bool] = None) -> Dict[str, bool]:
+    """Favorite or hide a channel (kept by TabloView: the Tablo doesn't know these channels). Hiding
+    one takes it out of the favorites too."""
+    m = marks()
+    if favorite is not None:
+        (m["favorite"].add if favorite else m["favorite"].discard)(channel_key)
+        if favorite:
+            m["hidden"].discard(channel_key)
+    if hidden is not None:
+        (m["hidden"].add if hidden else m["hidden"].discard)(channel_key)
+        if hidden:
+            m["favorite"].discard(channel_key)
+    save_settings({"extra_favorites": sorted(m["favorite"]), "extra_hidden": sorted(m["hidden"])})
+    return {"favorite": channel_key in m["favorite"], "hidden": channel_key in m["hidden"]}
+
+
+def channel_dict(c: Dict[str, Any], m: Optional[Dict[str, set]] = None) -> Dict[str, Any]:
+    m = m if m is not None else marks()
+    k = key(c)
     return {"channel_id": c["id"], "identifier": c["id"], "call_sign": c["name"], "major": 0, "minor": 0,
             "number": c["number"], "network": c["group"], "kind": "extra", "name": c["name"],
-            "logo_url": c["logo"], "resolution": "HD", "favorite": False, "can_record": False}
+            "logo_url": c["logo"], "resolution": "HD", "can_record": False,
+            "extra_key": k, "favorite": k in m["favorite"], "hidden": k in m["hidden"]}
 
 
 async def epg_rows(window_start: datetime, window_end: datetime, start_iso: str, hours: int) -> List[Dict[str, Any]]:
     """Live TV guide rows for the playlist's channels, in its order."""
     chans = await channels()
     guide = guide_for(chans)
+    m = marks()
     rows = []
     for c in chans:
-        d = channel_dict(c)
+        d = channel_dict(c, m)
         airings = []
         for a in guide.get(c["tvg_id"], []):
             s = datetime.fromisoformat(a["air_datetime"].replace("Z", "+00:00"))

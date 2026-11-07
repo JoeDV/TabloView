@@ -209,11 +209,14 @@ async function showHome() {
         <div class="meta">${esc([epLine(e), timeLeft(e)].filter(Boolean).join(' · '))}</div></div>
     </button>`));
 
-  // On now: the favorite channels if there are any (chosen on the PC), else the antenna ones
+  // On now: the Tablo's favorite channels if there are any, else the antenna ones, and More channels
+  // starred on the PC, with room kept for them (16 at most, as on the PC's Home)
   const channels = (state.live && state.live.channels) || [];
-  const fav = channels.some(c => c.favorite);
+  const fav = channels.some(c => c.favorite && c.kind !== 'extra');
   const now = Date.now();
-  shelf('onnow', fav ? 'On now · Your favorite channels' : 'On now', channels.filter(c => (fav ? c.favorite : c.kind === 'ota') && nowNext(c, now).now).slice(0, 16).map(c => {
+  const extras = channels.filter(c => c.kind === 'extra' && c.favorite && !c.hidden && nowNext(c, now).now).slice(0, 8);
+  const base = channels.filter(c => c.kind !== 'extra' && (fav ? c.favorite : c.kind === 'ota') && nowNext(c, now).now);
+  shelf('onnow', fav ? 'On now · Your favorite channels' : 'On now', [...base.slice(0, 16 - extras.length), ...extras].map(c => {
     const on = nowNext(c, now).now;
     const start = new Date(on.air_datetime).getTime();
     const pct = on.duration ? Math.min(100, ((now - start) / (on.duration * 1000)) * 100) : 0;
@@ -469,7 +472,7 @@ async function loadLive() {
 }
 
 function liveChannels() {
-  return ((state.live && state.live.channels) || []).filter(c => c.kind === (state.liveTab === 'fast' ? 'fast' : state.liveTab === 'extra' ? 'extra' : 'ota'));
+  return ((state.live && state.live.channels) || []).filter(c => !c.hidden && c.kind === (state.liveTab === 'fast' ? 'fast' : state.liveTab === 'extra' ? 'extra' : 'ota'));
 }
 
 // Live TV as a list (what's on now, and next) or as the Guide (the next GUIDE_HOURS, a row per channel)
@@ -563,6 +566,7 @@ async function guideAiring(chId, i) {
   if (!a) return;
   const aStart = new Date(a.air_datetime).getTime(), aEnd = aStart + (a.duration || 0) * 1000;
   if (aStart <= Date.now() && Date.now() < aEnd) { player.tune(chId); return; }
+  if (c.kind === 'extra') return remindAiring(c, a, aStart, aEnd);
   const recordable = a.airing_id ? c.can_record : a.path && !a.path.startsWith('/channel/') && !a.path.startsWith('/cloud/');
   const on = isRecording(a);
   const what = [fmt.se(a.season_number, a.episode_number), a.episode_title && a.episode_title !== a.title ? a.episode_title : ''].filter(Boolean).join(' · ');
@@ -581,6 +585,54 @@ async function guideAiring(chId, i) {
     await choose("Couldn't do that", err.message, [{ label: 'OK', value: 1 }]);
   }
 }
+
+// A More channel's show (from the playlist in TabloView's Settings): it can't be recorded, so Remind
+// me instead (kept by TabloView, shown here and on the PC when it starts)
+async function remindAiring(c, a, aStart, aEnd) {
+  const id = `${c.extra_key}@${a.air_datetime}`;
+  const set = reminders.ids.has(id);
+  const what = [fmt.se(a.season_number, a.episode_number), a.episode_title && a.episode_title !== a.title ? a.episode_title : ''].filter(Boolean).join(' · ');
+  const text = `${fmt.dayLabel(a.air_datetime)}, ${fmt.time(aStart)} – ${fmt.time(aEnd)} · ${c.name}` + (what ? ` · ${what}` : '')
+    + ". This channel can't be recorded" + (set ? ': TabloView will remind you when it starts.' : '.');
+  const pick = await choose(a.title, text, [{ label: set ? 'Cancel the reminder' : 'Remind me', value: set ? 'off' : 'on' }, { label: 'Close', value: null }]);
+  if (!pick) return;
+  try {
+    if (pick === 'on') {
+      await api('/api/live/reminders', { method: 'POST', body: JSON.stringify({
+        channel_key: c.extra_key, channel_id: c.channel_id, channel_name: c.name, title: a.title || c.name,
+        episode_title: a.episode_title || null, start: a.air_datetime, duration: a.duration || 0 }) });
+      reminders.ids.add(id);
+    } else {
+      await api('/api/live/reminders/remove', { method: 'POST', body: JSON.stringify({ id }) });
+      reminders.ids.delete(id);
+    }
+  } catch (err) {
+    await choose("Couldn't do that", err.message, [{ label: 'OK', value: 1 }]);
+  }
+}
+
+// Remind me: asked every half minute; a show that just started is offered once (a banner while
+// something plays)
+const reminders = {
+  ids: new Set(),
+  shown: new Set(),
+  async check() {
+    if (document.hidden) return;
+    let res;
+    try { res = await api('/api/live/reminders'); } catch { return; }
+    this.ids = new Set(res.reminders.map(r => r.id));
+    for (const r of res.due) {
+      if (this.shown.has(r.id)) continue;
+      this.shown.add(r.id);
+      if (player.open) { player.banner(`Starting now on ${r.channel_name}: ${r.title}`, 10000); continue; }
+      if (await choose(`Starting now on ${r.channel_name}`, r.title + (r.episode_title ? ` · ${r.episode_title}` : ''),
+        [{ label: 'Watch', value: 1 }, { label: 'Not now', value: 0 }])) {
+        await loadLive().catch(() => {});
+        player.tune(r.channel_id);
+      }
+    }
+  },
+};
 
 // Coming up: what the Tablo will record, by day. OK on one skips it (or records one the Tablo
 // skipped as not new); changing what a series records stays on the PC's Guide.
@@ -1568,6 +1620,8 @@ function init() {
   document.addEventListener('visibilitychange', checkVersion);
   tickClock();
   setInterval(tickClock, 15000);
+  reminders.check();
+  setInterval(() => reminders.check(), 30000);
   api('/api/settings').then(s => { state.shapes = s.picture_shapes || {}; }).catch(() => {});
   if (location.hash === '#/play') location.replace('#/');
   route();
