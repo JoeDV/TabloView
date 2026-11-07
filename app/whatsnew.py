@@ -13,6 +13,15 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.3.5": [
+        "More channels: add channels from outside your Tablo under Settings → Playback → More channels, and they appear in Live TV under More, on the PC and in the TV view. They don't use a Tablo tuner, and they're watch only: they can't be recorded.",
+        "One click sets up Tubi's free channels with a full guide. The list is kept up by a volunteer, so Tubi's channels can come and go from day to day. You can also use iptv-org's larger list (no guide), or a playlist of your own.",
+        "Star a More channel to put it under Favorites and in On now, or hide the ones you don't want.",
+        "Remind me: since More channels can't be recorded, a show's details offer Remind me. When it starts, TabloView tells you, with a Watch button.",
+        "Tailscale: a new switch under Settings → Desktop & network lets your own phones and laptops on Tailscale skip the PIN. It's off unless you turn it on.",
+        "Fixed: captions didn't show on PCs with AMD graphics. With captions on, that stream is now converted by the processor, which keeps them; with captions off nothing changes.",
+        "Fixed: some streams loaded but never played, and visitors through Tailscale Funnel shared one wrong-PIN lockout.",
+    ],
     "1.3.4": [
         "A recording that's still in progress now plays from the beginning (or where you left off), instead of joining at the live end.",
         "Commercial skip uses the show's own TV rating (the TV-14 box in the corner that ABC, NBC and CBS show as the show comes back): a skip never runs over it, and promos left playing just before it are skipped too. On an SVU episode it skipped 26 seconds less of NBC promos left playing and stopped cutting 10 seconds into the show. It applies to recordings scanned from now on.",
