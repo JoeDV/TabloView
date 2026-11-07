@@ -2639,8 +2639,30 @@ function hasFavorites() {
   return !!(state.epg && state.epg.channels.some(c => c.favorite));
 }
 
+// Settings → Playback → More channels: what the playlist and guide gave
+async function showExtraStatus() {
+  const el = $('#extraStatus');
+  if (!el || !$('#extraPlaylist').value.trim()) { if (el) el.textContent = ''; return; }
+  el.innerHTML = '<span class="spinner"></span> Reading the playlist…';
+  try {
+    const s = await api('/api/live/extra');
+    if (!$('#extraStatus')) return;
+    const parts = [s.playlist_error ? `Playlist: ${s.playlist_error}` : `${plural(s.channels, 'channel')}`];
+    if ($('#extraGuide').value.trim()) {
+      parts.push(s.guide_loading ? 'reading the guide…' : s.guide_error ? `guide: ${s.guide_error}` : `listings for ${s.guide_channels}`);
+      if (s.guide_loading) setTimeout(showExtraStatus, 4000);
+    }
+    el.textContent = parts.join(', ');
+  } catch (err) { el.textContent = err.message; }
+}
+
 function epgCatButtons() {
-  const cats = hasFavorites() ? [['favorites', 'Favorites'], ...EPG_CATS] : EPG_CATS;
+  let cats = hasFavorites() ? [['favorites', 'Favorites'], ...EPG_CATS] : EPG_CATS;
+  // Channels from the playlist in Settings → Playback → More channels
+  if (((state.epg && state.epg.channels) || []).some(c => c.kind === 'extra')) {
+    const i = cats.findIndex(([k]) => k === 'all');
+    cats = [...cats.slice(0, i), ['extra', 'More'], ...cats.slice(i)];
+  }
   return cats.map(([k, label]) => `<button data-action="epg-cat" data-value="${k}" class="${state.epgCategory === k ? 'active' : ''}">${label}</button>`).join('');
 }
 
@@ -2672,7 +2694,8 @@ function epgFilter(c) {
   const cat = state.epgCategory;
   if (cat === 'favorites' && !c.favorite) return false;
   if (cat === 'ota' && c.kind !== 'ota') return false;
-  if (cat === 'fast' && c.kind === 'ota') return false;
+  if (cat === 'fast' && c.kind !== 'fast') return false;
+  if (cat === 'extra' && c.kind !== 'extra') return false;
   const text = `${c.name} ${c.call_sign} ${c.network}`.toLowerCase();
   // Categories come from the server, based on the genres each channel actually airs
   if (['news', 'sports', 'entertainment'].includes(cat) && !(c.categories || []).includes(cat)) return false;
@@ -3535,6 +3558,23 @@ PAGES.settings = async (r, token) => {
         <p class="dim" style="margin-top:6px;font-size:12.5px">A small file beside the video with its details, which Jellyfin, Emby and Kodi use as is (Plex doesn’t read them).</p>
       </div>
 `;
+  // Channels from outside the Tablo (app/extra_channels.py): Live TV's "More" tab
+  const extraPanel = `
+      <div class="panel">
+        <h3>More channels</h3><div class="panel-sub">Add channels from outside your Tablo: free streaming channels, or your own sources, from a playlist (an M3U file's web address). They appear in Live TV under <b>More</b>, play like any channel, and don't use a Tablo tuner. They can't be recorded.</div>
+        <label style="display:block;font-size:13px;margin-top:4px">Playlist address (M3U)
+          <input class="input" id="extraPlaylist" style="width:100%;margin-top:4px" placeholder="https://…/playlist.m3u" value="${esc(settings.extra_playlist_url || '')}">
+        </label>
+        <label style="display:block;font-size:13px;margin-top:12px">Guide address (XMLTV, optional)
+          <input class="input" id="extraGuide" style="width:100%;margin-top:4px" placeholder="https://…/epg.xml.gz" value="${esc(settings.extra_guide_url || '')}">
+        </label>
+        <div class="panel-actions" style="margin-top:10px">
+          <button class="btn btn-sm btn-primary" data-action="extra-save">Save</button>
+          <span class="dim" id="extraStatus" style="font-size:12.5px"></span>
+        </div>
+        <p class="dim" style="margin-top:8px;font-size:12.5px">TabloView plays only what the playlist lists, from wherever it points. Many free services' channels are listed in playlists kept up by others; they can change or stop working.</p>
+      </div>
+`;
   const appearancePanel = `
       <div class="panel">
         <h3>Appearance</h3><div class="panel-sub">How TabloView looks.</div>
@@ -3572,7 +3612,7 @@ PAGES.settings = async (r, token) => {
       </div>`;
   const TABS = [
     ['general', 'General', connection + libraryPanel + appearancePanel],
-    ['playback', 'Playback', playbackPanel],
+    ['playback', 'Playback', playbackPanel + extraPanel],
     ['storage', 'Storage', storagePanel + exportsPanel + spaceByShowPanel(space, storage.connected ? storage.used_gb : 0)],
     ['plex', 'Plex', '<div class="panel" id="plexPanel"><h3>Plex</h3><div class="panel-sub"><span class="spinner"></span></div></div>'],
     ['signal', 'Signal health', signalHtml],
@@ -3591,6 +3631,7 @@ ${current[2]}
   </div>`);
   if (current[0] === 'plex') loadPlex(token);
   if (current[0] === 'desktop') { loadNetwork(token); loadLanActivity(token); if (info.listening_on_network) loadLanAccess(token, info); }
+  if (current[0] === 'playback') showExtraStatus();
 };
 
 // Settings → Plex: sign in, choose the server, and have Plex scan each new export (app/plex.py)
@@ -4591,7 +4632,7 @@ const player = {
       state.stream.captionsInVideo = res.captions !== false;
       checkTuners();
       this.start(res.stream_url, 'Live');
-      if (kind !== 'fast') reception.start(res.session_id);
+      if (kind === 'ota') reception.start(res.session_id);  // (only antenna channels have a signal)
       dual.render();
     } catch (err) {
       if (err.status === 409) {
@@ -5790,6 +5831,14 @@ const ACTIONS = {
   'pb-shape': el => pictureShape.menu(el),
   'export-folder': el => chooseExportFolder(el),
   'export-folder-type': el => chooseExportFolder(el, true),
+  'extra-save': async () => {
+    try {
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ extra_playlist_url: $('#extraPlaylist').value, extra_guide_url: $('#extraGuide').value }) });
+      state.epg = null;  // Live TV loads its channels again
+      toast('Saved', 'success');
+      showExtraStatus();
+    } catch (err) { toast(err.message, 'error'); }
+  },
   'export-folder-reset': async () => {
     try { await api('/api/system/export_folder', { method: 'POST', body: JSON.stringify({ path: null }) }); toast('Exports will be saved to Downloads\\TabloView again'); route(); }
     catch (err) { toast(err.message, 'error'); }

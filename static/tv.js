@@ -213,7 +213,7 @@ async function showHome() {
   const channels = (state.live && state.live.channels) || [];
   const fav = channels.some(c => c.favorite);
   const now = Date.now();
-  shelf('onnow', fav ? 'On now · Your favorite channels' : 'On now', channels.filter(c => (fav ? c.favorite : c.kind !== 'fast') && nowNext(c, now).now).slice(0, 16).map(c => {
+  shelf('onnow', fav ? 'On now · Your favorite channels' : 'On now', channels.filter(c => (fav ? c.favorite : c.kind === 'ota') && nowNext(c, now).now).slice(0, 16).map(c => {
     const on = nowNext(c, now).now;
     const start = new Date(on.air_datetime).getTime();
     const pct = on.duration ? Math.min(100, ((now - start) / (on.duration * 1000)) * 100) : 0;
@@ -469,7 +469,7 @@ async function loadLive() {
 }
 
 function liveChannels() {
-  return ((state.live && state.live.channels) || []).filter(c => (state.liveTab === 'fast' ? c.kind === 'fast' : c.kind !== 'fast'));
+  return ((state.live && state.live.channels) || []).filter(c => c.kind === (state.liveTab === 'fast' ? 'fast' : state.liveTab === 'extra' ? 'extra' : 'ota'));
 }
 
 // Live TV as a list (what's on now, and next) or as the Guide (the next GUIDE_HOURS, a row per channel)
@@ -483,7 +483,7 @@ async function showLive() {
   const view = liveView();
   const tab = (act, key, value, label, on) => `<button class="btn f ${on ? 'primary' : ''}" data-act="${act}" data-${key}="${value}" data-key="${act}-${value}">${label}</button>`;
   setScreen(`<div class="subtabs">
-      ${tab('live-tab', 'tab', 'ota', 'Antenna', state.liveTab === 'ota')}${tab('live-tab', 'tab', 'fast', 'Streaming', state.liveTab === 'fast')}<span class="gap"></span>
+      ${tab('live-tab', 'tab', 'ota', 'Antenna', state.liveTab === 'ota')}${tab('live-tab', 'tab', 'fast', 'Streaming', state.liveTab === 'fast')}${((state.live && state.live.channels) || []).some(c => c.kind === 'extra') ? tab('live-tab', 'tab', 'extra', 'More', state.liveTab === 'extra') : ''}<span class="gap"></span>
       ${tab('live-view', 'view', 'list', 'On now', view === 'list')}${tab('live-view', 'view', 'guide', 'Guide', view === 'guide')}
     </div>
     ${!liveChannels().length ? '<div class="empty">No channels here.</div>' : view === 'guide' ? guideGrid() : liveList()}`, '#/live');
@@ -1058,7 +1058,7 @@ const player = {
   async tune(channelId) {
     const c = ((state.live && state.live.channels) || []).find(x => x.channel_id === channelId);
     if (!c) return;
-    if (c.kind !== 'fast' && !this.open) {
+    if (c.kind === 'ota' && !this.open) {  // (only antenna channels use the Tablo's tuners)
       let check = null;
       try { check = await api('/api/live/tune_check'); } catch { /* don't block watching on a failed check */ }
       if (check && check.no_free_tuner) {

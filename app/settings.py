@@ -31,8 +31,10 @@ DEFAULTS: Dict[str, Any] = {
     "auto_sync_minutes": 15,  # recordings sync interval; 0 = off (guide refreshes every GUIDE_SYNC_HOURS)
     "notifications": True,  # tray notifications for failed/short recordings and recording conflicts
     "video_quality": "auto",  # browser playback: auto (graphics chip if available), best, fastest
-    "smooth_motion": False,
-    "away_picture": "full",  # watching over Tailscale: "full" (as at home), "720" or "480" (smaller, for slow connections)  # 60 fps from 1080i (opt-in: harder on graphics-chip encoders)
+    "smooth_motion": False,  # 60 fps from 1080i (opt-in: harder on graphics-chip encoders)
+    "away_picture": "full",  # watching over Tailscale: "full" (as at home), "720" or "480" (smaller, for slow connections)
+    "extra_playlist_url": "",  # channels from outside the Tablo: an M3U playlist's address (app/extra_channels.py)
+    "extra_guide_url": "",  # and its XMLTV guide, optional
     "logo_style": "color",  # channel logos: "color" (the station's own) or "white"
     "export_format": "smaller",  # MP4 exports: "smaller" (H.264, graphics chip if available) or "original" (exact copy)
     "export_folder": None,  # where MP4 exports go; None = DOWNLOADS_DIR (Downloads\TabloView)

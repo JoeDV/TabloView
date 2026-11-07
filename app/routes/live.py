@@ -512,6 +512,15 @@ async def get_live_channels(kind: str = Query("all", description="all, ota, fast
     }
 
 
+@router.get("/extra")
+async def extra_status():
+    """Settings → Live TV: how the playlist and guide read (reads the playlist if it's due)."""
+    from .. import extra_channels
+    chans = await extra_channels.channels()
+    extra_channels.guide_for(chans)
+    return extra_channels.status()
+
+
 @router.get("/tune_check")
 async def tune_check():
     """Before tuning an antenna channel: would it leave too few tuners for recordings starting soon?"""
@@ -678,6 +687,10 @@ async def get_live_epg(
         return (1, 0, c["call_sign"])
 
     channel_rows.sort(key=sort_key)
+    if kind in ("all", "extra"):
+        # Channels from the user's own playlist (Settings → Live TV), after the Tablo's, in its order
+        from .. import extra_channels
+        channel_rows += await extra_channels.epg_rows(window_start_dt, window_end_dt, epg_data["window_start"], hours)
 
     return {
         "window_start": epg_data["window_start"],
@@ -699,6 +712,9 @@ async def tune_live_channel(req: TuneRequest, request: Request):
     client = TabloClient(dev)
 
     channel_id = req.channel_id
+    from .. import extra_channels
+    if extra_channels.is_extra(channel_id):
+        return await _tune_extra(req, request)
     # Changing channels: let the Tablo hear that the old one ended before asking for a tuner,
     # otherwise a 2-tuner Tablo can briefly count both and refuse the new one
     await transcode_manager.wait_for_ended_sessions()
@@ -751,6 +767,28 @@ async def tune_live_channel(req: TuneRequest, request: Request):
         if req.kind != "fast" and _refused(e):
             raise HTTPException(status_code=502, detail=NO_PICKUP_MESSAGE)
         raise HTTPException(status_code=500, detail=f"Failed to tune live channel: {e}")
+
+
+async def _tune_extra(req: TuneRequest, request: Request) -> Dict[str, Any]:
+    """A channel from the user's playlist: straight from its own address, no Tablo tuner. Already
+    H.264 (nearly all are) is passed through; the sound is converted as for every channel."""
+    from .. import extra_channels
+    c = extra_channels.find(req.channel_id)
+    if not c:
+        await extra_channels.channels()  # (TabloView restarted since the list was shown)
+        c = extra_channels.find(req.channel_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="That channel is no longer in your playlist.")
+    codec = await transcode_manager.probe_video_codec(c["url"])
+    if codec is None:
+        raise HTTPException(status_code=502, detail=f"{c['name']} isn't answering. The channel may be off the air, or its address in the playlist may have changed.")
+    sess = transcode_manager.create_session(c["url"])
+    stream_url = await transcode_manager.start_browser_transcode(
+        sess.session_id, c["url"], passthrough=codec == "h264", captions=req.captions,
+        away=away_from_home(request.client.host if request.client else None))
+    print(f"[Extra] Playing {c['name']} ({codec})")
+    return {"session_id": sess.session_id, "stream_url": stream_url, "channel_id": req.channel_id,
+            "captions": sess.captions, "token": None}
 
 
 # The Tablo answers 503 to a watch request both when it has no tuner free and when it can't pick up

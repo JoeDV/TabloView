@@ -4,6 +4,7 @@ import asyncio
 import collections
 import httpx
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -37,6 +38,8 @@ class SettingsUpdate(BaseModel):
     video_quality: Optional[Literal["auto", "best", "fastest"]] = None
     smooth_motion: Optional[bool] = None
     away_picture: Optional[Literal["full", "720", "480"]] = None
+    extra_playlist_url: Optional[str] = Field(default=None, max_length=2000)
+    extra_guide_url: Optional[str] = Field(default=None, max_length=2000)
     logo_style: Optional[Literal["color", "white"]] = None
     export_format: Optional[Literal["smaller", "original"]] = None
     export_show_folders: Optional[bool] = None
@@ -489,6 +492,13 @@ async def update_settings(update: SettingsUpdate, request: Request):
     # Turning network access off from another device would lock every device out
     if "allow_lan" in changes and changes["allow_lan"] != load_settings().get("allow_lan"):
         _only_this_pc(request)
+    for key in ("extra_playlist_url", "extra_guide_url"):
+        if key in changes:
+            # TabloView fetches these addresses itself: set on this PC only, and only web addresses
+            _only_this_pc(request)
+            changes[key] = changes[key].strip()
+            if changes[key] and not re.match(r"https?://", changes[key], re.I):
+                raise HTTPException(status_code=400, detail="That isn't a web address (it should start with http:// or https://).")
     needs_restart = "allow_lan" in changes and changes["allow_lan"] != load_settings().get("allow_lan")
     saved = save_settings(changes)
     if "logo_style" in changes:
