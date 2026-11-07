@@ -2639,6 +2639,9 @@ function hasFavorites() {
   return !!(state.epg && state.epg.channels.some(c => c.favorite));
 }
 
+// iptv-org's community list of free US channels: offered in Settings, never set on its own
+const IPTV_ORG_US = 'https://iptv-org.github.io/iptv/countries/us.m3u';
+
 // Settings → Playback → More channels: what the playlist and guide gave
 async function showExtraStatus() {
   const el = $('#extraStatus');
@@ -3570,9 +3573,10 @@ PAGES.settings = async (r, token) => {
         </label>
         <div class="panel-actions" style="margin-top:10px">
           <button class="btn btn-sm btn-primary" data-action="extra-save">Save</button>
+          ${settings.extra_playlist_url ? '' : '<button class="btn btn-sm" data-action="extra-iptv-org" title="Fill in and save iptv-org’s list of free US channels">Use iptv-org’s free list</button>'}
           <span class="dim" id="extraStatus" style="font-size:12.5px"></span>
         </div>
-        <p class="dim" style="margin-top:8px;font-size:12.5px">TabloView plays only what the playlist lists, from wherever it points. Many free services' channels are listed in playlists kept up by others; they can change or stop working.</p>
+        <p class="dim" style="margin-top:8px;font-size:12.5px">Don't have one? <b>iptv-org</b> keeps a community list of about 1,500 free US channels (news, movies, Pluto TV and more), without a guide. TabloView doesn't run or check it: some channels may be off the air, and some may not come from the channel's owner. Or use a playlist you know, from Channels DVR, an HDHomeRun or ErsatzTV for example. TabloView plays only what the playlist lists.</p>
       </div>
 `;
   const appearancePanel = `
@@ -5831,11 +5835,16 @@ const ACTIONS = {
   'pb-shape': el => pictureShape.menu(el),
   'export-folder': el => chooseExportFolder(el),
   'export-folder-type': el => chooseExportFolder(el, true),
+  'extra-iptv-org': () => {
+    $('#extraPlaylist').value = IPTV_ORG_US;
+    ACTIONS['extra-save']();
+  },
   'extra-save': async () => {
     try {
       await api('/api/settings', { method: 'POST', body: JSON.stringify({ extra_playlist_url: $('#extraPlaylist').value, extra_guide_url: $('#extraGuide').value }) });
       state.epg = null;  // Live TV loads its channels again
-      toast('Saved', 'success');
+      toast($('#extraPlaylist').value.trim() ? 'Saved. The channels are in Live TV under More.' : 'Saved', 'success');
+      if ($('#extraPlaylist').value.trim()) { const b = $('[data-action="extra-iptv-org"]'); if (b) b.remove(); }
       showExtraStatus();
     } catch (err) { toast(err.message, 'error'); }
   },
