@@ -436,6 +436,10 @@ class TranscodeManager:
             *read_args,
             "-i", input_url,
             *video,
+            # Video and sound only: a stream's own subtitle track (WebVTT, in some playlists' channels)
+            # and ad markers (SCTE-35) left the browser with a picture size and nothing to play.
+            # Broadcast captions travel inside the video and aren't affected
+            "-sn", "-dn",
             # Stretch/pad audio to its timestamps so input gaps cause a short blip, not garbled sound.
             # 5.1 is mixed to stereo with the centre (dialogue) channel at full level and the
             # surrounds lowered, so speech isn't drowned out
