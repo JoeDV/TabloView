@@ -130,6 +130,7 @@ class StreamSession:
         self.reception_task: Optional[asyncio.Task] = None
         self.relay = None  # a recording's playback reads through TabloView (export_pace, unpaced)
         self.last_used = time.time()  # video fetched or a check-in from its page (see ABANDONED_SECONDS)
+        self.captions = True  # the video carries the broadcast's captions (not with AMD's or Apple's encoder)
 
 
 class TranscodeManager:
@@ -358,15 +359,21 @@ class TranscodeManager:
         m = re.search(r"Video: (\w+)", await asyncio.to_thread(run))
         return m.group(1) if m else None
 
-    def _video_plan(self, passthrough: bool, away: bool = False) -> Dict[str, Any]:
+    def _video_plan(self, passthrough: bool, away: bool = False, captions: bool = False) -> Dict[str, Any]:
         """Encoder and filters from the Playback settings (see app/encoders.py). away: the device is
-        watching over Tailscale, where Settings → Playback can ask for a smaller picture."""
+        watching over Tailscale, where Settings → Playback can ask for a smaller picture. captions: the
+        player has captions on, so an encoder that drops them (AMD's, Apple's) gives way to the CPU for
+        this stream only; the next one without captions goes back to the graphics chip."""
         settings = load_settings()
         quality = settings.get("video_quality") or "auto"
         size = encoders.AWAY_PICTURES.get(str(settings.get("away_picture") or "full")) if away else None
         if passthrough and not size:
             return {"encoder": None, "smooth": False, "quality": quality, "size": None}
         enc = encoders.choose(quality)
+        if captions and not encoders.keeps_captions(enc):
+            # (standard motion: 60 fps would work the CPU twice as hard)
+            return {"encoder": encoders.cpu_fallback(quality), "smooth": False, "quality": quality, "size": size,
+                    "for_captions": True}
         # Smooth motion (60 fps) is opt-in: it works the graphics chip twice as hard. (Its Quick Sync
         # failures, 4 of 6 one-minute runs, were fixed by encoders.QSV_STABLE: 2 of 2 two-minute runs clean)
         smooth = bool(settings.get("smooth_motion"))
@@ -451,7 +458,7 @@ class TranscodeManager:
                 str(session_dir / "p%05d.jpg")]
 
     async def start_browser_transcode(self, session_id: str, input_url: str, start: int = 0, live: bool = True,
-                                      passthrough: bool = False, away: bool = False) -> str:
+                                      passthrough: bool = False, away: bool = False, captions: bool = False) -> str:
         """Convert a Tablo stream into H.264/AAC HLS for the browser player.
 
         live=True keeps a rolling ~90 s window (live TV). For recordings (live=False) every segment is
@@ -473,7 +480,7 @@ class TranscodeManager:
             sess.relay = export_pace.open_relay(input_url, paced=False)
             if sess.relay:
                 input_url = sess.relay.url
-        plan = await asyncio.to_thread(self._video_plan, passthrough, away)
+        plan = await asyncio.to_thread(self._video_plan, passthrough, away, captions)
         if live and plan["smooth"] and self.smooth_live_too_slow:
             plan = {**plan, "smooth": False}  # this PC couldn't keep up with it earlier (see _supervise)
         for attempt in range(2):
@@ -518,8 +525,10 @@ class TranscodeManager:
                 old.unlink(missing_ok=True)
             playlist_output.unlink(missing_ok=True)
 
+        sess.captions = encoders.keeps_captions(plan["encoder"])
         away_note = f", away from home at {plan['size'][0]}p" if plan.get("size") else ""
-        print(f"[Transcode] Session {session_id[:8]}: {sess.encoder}{', 60 fps' if plan['smooth'] else ''}{away_note}")
+        cc_note = ", for captions" if plan.get("for_captions") else ""
+        print(f"[Transcode] Session {session_id[:8]}: {sess.encoder}{', 60 fps' if plan['smooth'] else ''}{away_note}{cc_note}")
         if ready:
             sess.supervisor = asyncio.create_task(self._supervise(sess, input_url, start, live, plan, session_dir))
         return f"/api/transcoded/{session_id}/playlist.m3u8"

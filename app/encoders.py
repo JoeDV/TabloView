@@ -115,6 +115,17 @@ def choose(quality: str = "auto") -> Dict[str, Any]:
     return {"name": "cpu", "label": label, "hardware": False, "args": high if best else normal, "pix_fmt": pix}
 
 
+# Encoders that keep the broadcast's closed captions (FFmpeg's a53cc, on by default). AMD's and Apple's
+# have no such option and drop them: checked 2026-11-06 on the user's AMD mini PC, The Amazing Race
+# (CBS) converted with AMF had no captions where Quick Sync's copy had them
+CAPTIONS_KEPT = {"qsv", "nvenc", "cpu", "fastest"}
+
+
+def keeps_captions(enc: Optional[Dict[str, Any]]) -> bool:
+    """True if video from this encoder carries the captions (None: the video is copied, captions and all)."""
+    return enc is None or enc["name"] in CAPTIONS_KEPT
+
+
 def cpu_fallback(quality: str = "auto") -> Dict[str, Any]:
     label, normal, high, pix = CPU
     return {"name": "cpu", "label": label, "hardware": False,

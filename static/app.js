@@ -4072,13 +4072,14 @@ const player = {
     this.setStatus(`<span class="wait">${resuming ? `Resuming at ${fmtClock(start)}…` : 'Starting stream…'}</span>`);
     try {
       const gen = ++this.startGen;
-      const res = await api(`/api/episodes/${encodeURIComponent(id)}/watch?transcode=true&start=${start}`, { method: 'POST' });
+      const res = await api(`/api/episodes/${encodeURIComponent(id)}/watch?transcode=true&start=${start}&captions=${state.captions ? 1 : 0}`, { method: 'POST' });
       // Overtaken by a newer start (quick jumps) or closed meanwhile: stop this one, or it runs on unused
       if (gen !== this.startGen || state.stream.episodeId !== id) {
         fetch('/api/live/stop', { method: 'POST', headers: API_HEADERS, body: JSON.stringify({ session_id: res.session_id }) }).catch(() => {});
         return;
       }
       state.stream.sessionId = res.session_id;
+      state.stream.captionsInVideo = res.captions !== false;
       if (!sameEpisode || !(state.stream.previewTimes || []).length) this.loadPreviews(id);
       this.start(res.stream_url, start && (resuming || typeof mode === 'number') ? `Resumed at ${fmtClock(start)}` : 'Recording');
       state.stream.progressTimer = setInterval(() => this.saveProgress(), 30000);
@@ -4585,8 +4586,9 @@ const player = {
     this.setStatus(`<span class="wait">Tuning ${esc(name)}…</span>`);
     try {
       await stopping;  // the old channel's tuner goes back to the Tablo before this one asks for one
-      const res = await api('/api/live/tune', { method: 'POST', body: JSON.stringify({ channel_id: channelId, transcode: true, kind }) });
+      const res = await api('/api/live/tune', { method: 'POST', body: JSON.stringify({ channel_id: channelId, transcode: true, kind, captions: state.captions }) });
       state.stream.sessionId = res.session_id;
+      state.stream.captionsInVideo = res.captions !== false;
       checkTuners();
       this.start(res.stream_url, 'Live');
       if (kind !== 'fast') reception.start(res.session_id);
@@ -4750,6 +4752,17 @@ const player = {
     state.captions = !state.captions;
     save('tablo_cc', state.captions ? '1' : '0');
     this.applyCaptions();
+    const s = state.stream;
+    if (state.captions && s.sessionId && s.captionsInVideo === false) {
+      // This PC's graphics chip (AMD, Apple) drops captions: start again from here, converted on the
+      // CPU with them (only this stream: the next one without captions is back on the chip).
+      // Turning them off just hides them
+      toast('Turning on captions…');
+      this.video().pause();  // (it picks up from here, not from wherever it got to while restarting)
+      if (s.episodeId) this.playEpisode(s.episodeId, this.position());
+      else if (s.channelId) this.watchLive(s.channelId, s.channelName, s.channelKind);
+      return;
+    }
     toast(state.captions
       ? (this.video().textTracks.length ? 'Captions on' : 'Captions on: they appear as soon as the broadcast sends them')
       : 'Captions off');
@@ -5300,7 +5313,8 @@ const dual = {
     const v = $('#video2');
     this.teardown();
     try {
-      const res = await api('/api/live/tune', { method: 'POST', body: JSON.stringify({ channel_id: channelId, transcode: true, kind }) });
+      // (with captions: they show whenever this is the channel you aren't hearing)
+      const res = await api('/api/live/tune', { method: 'POST', body: JSON.stringify({ channel_id: channelId, transcode: true, kind, captions: true }) });
       this.s = { channelId, name, kind, sessionId: res.session_id, url: res.stream_url };
       pictureShape.apply(v, channelId);
     } catch (err) {

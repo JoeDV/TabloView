@@ -847,6 +847,15 @@ const player = {
     state.captions = !state.captions;
     try { localStorage.setItem('tablo_cc', state.captions ? '1' : '0'); } catch { /* this visit only */ }
     this.applyCaptions();
+    const s = this.s;
+    if (state.captions && this.open && s.sessionId && s.captionsInVideo === false) {
+      // This PC's graphics chip (AMD, Apple) drops captions: start again from here, converted on
+      // the CPU with them. Turning them off just hides them
+      this.banner('Turning on captions…');
+      if (s.kind === 'rec') this.startRecording(this.position());
+      else this.tune(s.id);
+      return;
+    }
     if (state.captions && !this.video().textTracks.length) this.banner('Captions appear as soon as the broadcast sends them');
   },
 
@@ -1034,9 +1043,10 @@ const player = {
     s.lastSaved = start;
     this.message('Starting…');
     try {
-      const res = await api(`/api/episodes/${encodeURIComponent(s.id)}/watch?transcode=true&start=${Math.floor(start)}`, { method: 'POST' });
+      const res = await api(`/api/episodes/${encodeURIComponent(s.id)}/watch?transcode=true&start=${Math.floor(start)}&captions=${state.captions ? 1 : 0}`, { method: 'POST' });
       if (this.s !== s || s.gen !== gen) return this.stopById(res.session_id);  // closed, or overtaken
       s.sessionId = res.session_id;
+      s.captionsInVideo = res.captions !== false;
       this.attach(res.stream_url);
       clearInterval(this.progressTimer);
       this.progressTimer = setInterval(() => this.saveProgress(), 30000);
@@ -1069,9 +1079,10 @@ const player = {
     await this.stopById(previous);  // its tuner goes back to the Tablo before this one asks for one
     this.message(`Tuning ${c.name}…`);
     try {
-      const res = await api('/api/live/tune', { method: 'POST', body: JSON.stringify({ channel_id: channelId, transcode: true, kind: c.kind }) });
+      const res = await api('/api/live/tune', { method: 'POST', body: JSON.stringify({ channel_id: channelId, transcode: true, kind: c.kind, captions: state.captions }) });
       if (this.s !== s) return this.stopById(res.session_id);  // changed channel again meanwhile
       s.sessionId = res.session_id;
+      s.captionsInVideo = res.captions !== false;
       this.attach(res.stream_url);
     } catch (err) {
       this.message(err.status === 409 || err.status === 503 ? `${err.message} Press Back to choose something else.` : `Couldn't tune ${c.name}: ${err.message}`);

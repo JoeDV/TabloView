@@ -283,6 +283,7 @@ class TuneRequest(BaseModel):
     channel_id: str
     transcode: bool = True
     kind: Optional[str] = None  # 'ota' or 'fast', from the channel list
+    captions: bool = False  # the player has captions on (see TranscodeManager._video_plan)
 
 
 class StopRequest(BaseModel):
@@ -715,7 +716,7 @@ async def tune_live_channel(req: TuneRequest, request: Request):
             sess.tablo_token = stream.token
             sess.channel_id = channel_id
             stream_url = await transcode_manager.start_browser_transcode(
-                sess.session_id, stream.playlist_url, passthrough=passthrough,
+                sess.session_id, stream.playlist_url, passthrough=passthrough, captions=req.captions,
                 away=away_from_home(request.client.host if request.client else None))
             if req.kind != "fast":
                 transcode_manager.start_reception(sess)  # streaming channels have no antenna signal
@@ -723,6 +724,7 @@ async def tune_live_channel(req: TuneRequest, request: Request):
                 "session_id": sess.session_id,
                 "stream_url": stream_url,
                 "channel_id": channel_id,
+                "captions": sess.captions,
                 "token": stream.token,
                 "expires": stream.expires,
                 "keepalive": stream.keepalive

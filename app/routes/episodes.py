@@ -201,6 +201,7 @@ async def watch_episode(
     request: Request,
     transcode: bool = Query(default=True, description="Transcode for browser video player"),
     start: int = Query(default=0, ge=0, description="Resume point in seconds"),
+    captions: bool = Query(default=False, description="The player has captions on"),
 ):
     """Obtain stream URL from Tablo and initialize proxy/transcoder session."""
     ep = get_episode_by_id(episode_id)
@@ -233,7 +234,7 @@ async def watch_episode(
     if transcode:
         try:
             stream_url = await transcode_manager.start_browser_transcode(
-                sess.session_id, playlist_url, start=start, live=False,
+                sess.session_id, playlist_url, start=start, live=False, captions=captions,
                 away=away_from_home(request.client.host if request.client else None))
         except Exception as e:
             print(f"Transcode failed, falling back to direct proxy: {e}")
@@ -246,6 +247,9 @@ async def watch_episode(
         "proxy_url": f"/api/hls/{sess.session_id}/playlist.m3u8",
         "stream_url": stream_url,
         "transcoded": transcode,
+        # False: converted by an encoder that drops captions, so turning them on means asking again
+        # with captions=true (which converts on the CPU)
+        "captions": sess.captions,
         "raw_playlist_url": playlist_url
     }
 
