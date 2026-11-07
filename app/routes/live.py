@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from ..tablo_client import tablo_manager
 from ..transcode import transcode_manager
 from ..netcheck import away_from_home
+from .. import lanauth
 from ..database import airing_on_now, get_live_airings_for_channels, get_epg_schedule, get_upcoming_recordings
 from ..schedule_check import live_tv_check
 from ..settings import load_settings
@@ -733,7 +734,7 @@ async def tune_live_channel(req: TuneRequest, request: Request):
             sess.channel_id = channel_id
             stream_url = await transcode_manager.start_browser_transcode(
                 sess.session_id, stream.playlist_url, passthrough=passthrough, captions=req.captions,
-                away=away_from_home(request.client.host if request.client else None))
+                away=away_from_home(lanauth.client_address(request)))
             if req.kind != "fast":
                 transcode_manager.start_reception(sess)  # streaming channels have no antenna signal
             return {
@@ -793,7 +794,7 @@ async def _tune_extra(req: TuneRequest, request: Request) -> Dict[str, Any]:
     sess = transcode_manager.create_session(c["url"])
     stream_url = await transcode_manager.start_browser_transcode(
         sess.session_id, c["url"], passthrough=codec == "h264", captions=req.captions,
-        away=away_from_home(request.client.host if request.client else None))
+        away=away_from_home(lanauth.client_address(request)))
     print(f"[Extra] Playing {c['name']} ({codec})")
     return {"session_id": sess.session_id, "stream_url": stream_url, "channel_id": req.channel_id,
             "captions": sess.captions, "token": None}

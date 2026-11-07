@@ -40,6 +40,7 @@ class SettingsUpdate(BaseModel):
     away_picture: Optional[Literal["full", "720", "480"]] = None
     extra_playlist_url: Optional[str] = Field(default=None, max_length=2000)
     extra_guide_url: Optional[str] = Field(default=None, max_length=2000)
+    tailscale_no_pin: Optional[bool] = None
     logo_style: Optional[Literal["color", "white"]] = None
     export_format: Optional[Literal["smaller", "original"]] = None
     export_show_folders: Optional[bool] = None
@@ -152,7 +153,8 @@ async def lan_status(request: Request):
     """Whether this device is the PC itself, whether a PIN is set, and whether this device is signed in."""
     local = lanauth.from_this_pc(request)
     return {"local": local, "pin_set": lanauth.pin_set(),
-            "signed_in": local or lanauth.token_ok(request.cookies.get(lanauth.COOKIE)),
+            "signed_in": local or lanauth.token_ok(request.cookies.get(lanauth.COOKIE))
+                         or lanauth.tailscale_skips_pin(request.client.host if request.client else None, request.headers),
             # The computer's name (already visible on the home network), so the TV app can say which
             # computer it found before using it
             "pc": socket.gethostname()}
@@ -492,6 +494,8 @@ async def update_settings(update: SettingsUpdate, request: Request):
     # Turning network access off from another device would lock every device out
     if "allow_lan" in changes and changes["allow_lan"] != load_settings().get("allow_lan"):
         _only_this_pc(request)
+    if "tailscale_no_pin" in changes:
+        _only_this_pc(request)  # who needs the PIN is decided on this PC only
     for key in ("extra_playlist_url", "extra_guide_url"):
         if key in changes:
             # TabloView fetches these addresses itself: set on this PC only, and only web addresses

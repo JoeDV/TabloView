@@ -3373,6 +3373,11 @@ PAGES.settings = async (r, token) => {
           <button class="btn btn-sm" data-action="set-pin">${info.lan_pin_set ? 'Change PIN' : 'Set PIN'}</button>
           ${info.lan_pin_set ? '<button class="btn btn-sm btn-ghost" data-action="pin-signout">Sign out other devices</button>' : ''}
         </div>
+        <label class="switch-row" style="margin-top:14px">
+          <input type="checkbox" class="switch" data-change="tailscale-no-pin" ${settings.tailscale_no_pin ? 'checked' : ''}>
+          <span>No PIN for devices on my Tailscale</span>
+        </label>
+        <p class="dim" style="margin-top:6px;font-size:12.5px">Phones and laptops signed in to your Tailscale open TabloView without the PIN, at home or away. Anyone you've shared this PC with in Tailscale gets in too, so leave it off if you share it. Devices on your home network still need the PIN, and so does Tailscale Funnel (the open internet).</p>
         ${!info.packaged && !!settings.allow_lan !== !!info.listening_on_network ? `<p style="margin-top:10px;color:var(--warn);font-size:13px;font-weight:600">To apply this, stop TabloView (above) and run its start script again.</p>` : ''}
         <div id="lanActivity"></div>`}
       ${info.listening_on_network && info.network_url ? `<p style="margin-top:12px">On other devices, open <b>${esc(info.network_url)}</b></p>
@@ -6170,6 +6175,12 @@ const CHANGES = {
     try {
       await api('/api/settings', { method: 'POST', body: JSON.stringify({ export_show_folders: el.checked }) });
       toast(el.checked ? 'New exports will go in show and season folders' : 'New exports will all go in one folder');
+    } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
+  },
+  'tailscale-no-pin': async el => {
+    try {
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ tailscale_no_pin: el.checked }) });
+      toast(el.checked ? 'Devices on your Tailscale won’t be asked for the PIN' : 'Devices on your Tailscale need the PIN again');
     } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
   },
   'export-nfo': async el => {

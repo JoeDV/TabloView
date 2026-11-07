@@ -86,7 +86,20 @@ def is_local(client_host: Optional[str], headers: Optional[Mapping[str, str]] = 
 
 
 def client_address(request) -> Optional[str]:
-    return request.client.host if request.client else None
+    """Who the request is from. Passed on by something on this PC (Tailscale Funnel or Serve, a proxy),
+    that's the device it came from, as the last X-Forwarded-For entry (the one this PC's proxy added;
+    earlier ones are whatever the sender claimed), so wrong-PIN lockouts are kept per device rather than
+    one for everyone coming through it, and a Funnel visitor counts as away from home. From anywhere
+    else the header is ignored: another device can't pass itself off with it."""
+    peer = request.client.host if request.client else None
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded and is_local(peer):
+        last = forwarded.split(",")[-1].strip()
+        try:
+            return str(ipaddress.ip_address(last.split("%")[0]))
+        except ValueError:
+            pass
+    return peer
 
 
 def from_this_pc(request) -> bool:
@@ -182,9 +195,23 @@ def blocked(path: str, client_host: Optional[str], cookie: Optional[str],
         return None
     if not (path.startswith("/api/") or path.startswith("/downloads/")):
         return None
+    if tailscale_skips_pin(client_host, headers):
+        return None
     if not pin_set():
         return "pin_not_set"
     return None if token_ok(cookie) else "pin_required"
+
+
+def tailscale_skips_pin(client_host: Optional[str], headers: Optional[Mapping[str, str]] = None) -> bool:
+    """Settings → Desktop & network → "No PIN for devices on my Tailscale" (off unless turned on): a
+    device connecting straight from a Tailscale address. Not Funnel (the open internet) or anything else
+    passed on through this PC, which arrive from this PC's own address."""
+    if not load_settings().get("tailscale_no_pin"):
+        return False
+    if headers is not None and any(h in headers for h in PROXY_HEADERS):
+        return False
+    from .netcheck import is_tailscale
+    return is_tailscale(client_host)
 
 
 # ---------------------------------------------------------------------------

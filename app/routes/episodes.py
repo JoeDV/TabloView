@@ -21,6 +21,7 @@ from ..tablo_client import tablo_manager
 from ..transcode import transcode_manager
 from .. import previews
 from ..netcheck import away_from_home
+from .. import lanauth
 
 router = APIRouter(prefix="/api/episodes", tags=["episodes"])
 
@@ -235,7 +236,7 @@ async def watch_episode(
         try:
             stream_url = await transcode_manager.start_browser_transcode(
                 sess.session_id, playlist_url, start=start, live=False, captions=captions,
-                away=away_from_home(request.client.host if request.client else None))
+                away=away_from_home(lanauth.client_address(request)))
         except Exception as e:
             print(f"Transcode failed, falling back to direct proxy: {e}")
             stream_url = f"/api/hls/{sess.session_id}/playlist.m3u8"

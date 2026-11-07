@@ -193,6 +193,41 @@ class LanPinTests(unittest.TestCase):
         # Changing the PIN: stopped at the PIN (or, signed in, as not this PC)
         self.assertIn(pc.post("/api/lan/pin", json={"pin": "1111"}, headers={**HDR, "X-Forwarded-For": "1.2.3.4"}).status_code, (401, 403))
 
+    def test_funnel_visitors_are_told_apart(self):
+        """Tailscale Funnel: every visitor arrives from 127.0.0.1. Their own address (the last
+        X-Forwarded-For entry, added by Tailscale on this PC) keeps lockouts per visitor and counts
+        them as away from home; from another device the header is ignored."""
+        from types import SimpleNamespace
+        from app.netcheck import away_from_home
+
+        def req(peer, xff=None):
+            return SimpleNamespace(client=SimpleNamespace(host=peer), headers={"x-forwarded-for": xff} if xff else {})
+        funnel = req("127.0.0.1", "10.0.0.1, 8.8.4.4")  # the first entry is whatever the sender claimed
+        self.assertEqual(lanauth.client_address(funnel), "8.8.4.4")
+        self.assertTrue(away_from_home(lanauth.client_address(funnel)))
+        self.assertEqual(lanauth.client_address(req("192.168.1.20", "127.0.0.1")), "192.168.1.20")
+        self.assertEqual(lanauth.client_address(req("127.0.0.1", "garbage")), "127.0.0.1")
+        # Wrong PINs from one Funnel visitor don't lock out another
+        lanauth.set_pin("2468")
+        for _ in range(lanauth.MAX_TRIES):
+            lanauth.check_pin("0000", lanauth.client_address(funnel))
+        self.assertGreater(lanauth.check_pin("2468", "8.8.4.4")[1], 0)
+        self.assertTrue(lanauth.check_pin("2468", lanauth.client_address(req("127.0.0.1", "1.1.1.1")))[0])
+
+    def test_no_pin_on_tailscale_only_when_turned_on(self):
+        lanauth.set_pin("2468")
+        self.assertEqual(lanauth.blocked("/api/shows", "100.101.1.2", None), "pin_required")
+        self.settings["tailscale_no_pin"] = True
+        self.assertIsNone(lanauth.blocked("/api/shows", "100.101.1.2", None))
+        self.assertIsNone(lanauth.blocked("/api/shows", "fd7a:115c:a1e0::5", None))
+        self.assertEqual(lanauth.blocked("/api/shows", "192.168.1.20", None), "pin_required")  # home network: as before
+        # Funnel and Serve come through this PC: still the PIN
+        for header in ({"tailscale-funnel-request": "?1", "x-forwarded-for": "100.101.1.2"},
+                       {"tailscale-user-login": "a@b.c", "x-forwarded-for": "100.101.1.2"}):
+            self.assertEqual(lanauth.blocked("/api/shows", "100.101.1.2", None, header), "pin_required")
+        self.settings["allow_lan"] = False
+        self.assertEqual(lanauth.blocked("/api/shows", "100.101.1.2", None), "lan_off")
+
     def test_account_and_network_access_changes_only_on_this_pc(self):
         lanauth.set_pin("2468")
         phone = TestClient(app, base_url="http://192.168.1.5:7070", client=("192.168.1.20", 50000))
