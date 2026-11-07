@@ -2657,7 +2657,8 @@ async function showExtraStatus() {
     if (!$('#extraStatus')) return;
     const parts = [s.playlist_error ? `Playlist: ${s.playlist_error}` : `${plural(s.channels, 'channel')}`];
     if ($('#extraGuide').value.trim()) {
-      parts.push(s.guide_loading ? 'reading the guide…' : s.guide_error ? `guide: ${s.guide_error}` : `listings for ${s.guide_channels}`);
+      parts.push(s.channels && !s.with_guide_ids ? 'no guide: this playlist’s channels have no guide IDs (tvg-id), so a guide can’t be matched to them'
+        : s.guide_loading ? 'reading the guide…' : s.guide_error ? `guide: ${s.guide_error}` : `listings for ${s.guide_channels}`);
       if (s.guide_loading) setTimeout(showExtraStatus, 4000);
     }
     el.textContent = parts.join(', ');
@@ -3585,7 +3586,7 @@ PAGES.settings = async (r, token) => {
         </label>
         <div class="panel-actions" style="margin-top:10px">
           <button class="btn btn-sm btn-primary" data-action="extra-save">Save</button>
-          ${settings.extra_playlist_url ? '' : `<button class="btn btn-sm" data-action="extra-preset" data-preset="tubi" title="Fill in and save Tubi's channel list and its guide">Use Tubi's free channels (with guide)</button>
+          ${`<button class="btn btn-sm" data-action="extra-preset" data-preset="tubi" title="Fill in and save Tubi's channel list and its guide">Use Tubi's free channels (with guide)</button>
             <button class="btn btn-sm" data-action="extra-preset" data-preset="iptv-org" title="Fill in and save iptv-org's list of free US channels">Use iptv-org's list (no guide)</button>`}
           <span class="dim" id="extraStatus" style="font-size:12.5px"></span>
         </div>
@@ -5857,7 +5858,6 @@ const ACTIONS = {
       await api('/api/settings', { method: 'POST', body: JSON.stringify({ extra_playlist_url: $('#extraPlaylist').value, extra_guide_url: $('#extraGuide').value }) });
       state.epg = null;  // Live TV loads its channels again
       toast($('#extraPlaylist').value.trim() ? 'Saved. The channels are in Live TV under More: no tuner needed, watch only.' : 'Saved', 'success');
-      if ($('#extraPlaylist').value.trim()) $$('[data-action="extra-preset"]').forEach(b => b.remove());
       showExtraStatus();
     } catch (err) { toast(err.message, 'error'); }
   },

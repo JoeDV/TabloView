@@ -236,5 +236,7 @@ async def epg_rows(window_start: datetime, window_end: datetime, start_iso: str,
 def status() -> Dict[str, Any]:
     """For Settings: how many channels, and what went wrong if anything."""
     return {"channels": len(_playlist["channels"]), "playlist_error": _playlist["error"],
+            # A guide is matched by each channel's tvg-id: a playlist without them can't use one
+            "with_guide_ids": sum(1 for c in _playlist["channels"] if c["tvg_id"]),
             "guide_channels": len(_guide["by_channel"]), "guide_error": _guide["error"],
             "guide_loading": bool(_guide.get("task") and not _guide["task"].done())}
