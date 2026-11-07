@@ -20,7 +20,7 @@ import httpx
 from .settings import load_settings
 
 PLAYLIST_SECONDS = 3600  # lists change rarely; read again after an hour
-GUIDE_SECONDS = 3 * 3600
+GUIDE_SECONDS = 12 * 3600  # guide files are rebuilt about once a day (Tubi's list: a daily GitHub job)
 GUIDE_HOURS_BEFORE, GUIDE_HOURS_AFTER = 3, 30  # listings kept around now (guide files cover days)
 MAX_DOWNLOAD = 200 * 1024 * 1024
 PREFIX = "x-"  # channel ids: x-<10 hex>, from the stream's address
@@ -142,13 +142,13 @@ async def _download(url: str) -> bytes:
             return bytes(buf)
 
 
-async def channels() -> List[Dict[str, Any]]:
-    """The playlist's channels (read again after PLAYLIST_SECONDS); [] when none is set."""
+async def channels(force: bool = False) -> List[Dict[str, Any]]:
+    """The playlist's channels (read again after PLAYLIST_SECONDS, or now with force); [] when none is set."""
     url = (load_settings().get("extra_playlist_url") or "").strip()
     if not url:
         return []
     async with _lock:
-        if _playlist["url"] != url or time.time() - _playlist["at"] > PLAYLIST_SECONDS:
+        if force or _playlist["url"] != url or time.time() - _playlist["at"] > PLAYLIST_SECONDS:
             try:
                 data = await _download(url)
                 if data[:2] == b"\x1f\x8b":
@@ -193,6 +193,15 @@ def guide_for(chans: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
 
 def find(channel_id: str) -> Optional[Dict[str, Any]]:
     return next((c for c in _playlist["channels"] if c["id"] == channel_id), None)
+
+
+def find_same(old: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The same channel in a playlist read again, by its guide id or name (its address, and so its
+    id, may have changed: lists like Tubi's are regenerated daily)."""
+    for c in _playlist["channels"]:
+        if (old["tvg_id"] and c["tvg_id"] == old["tvg_id"]) or (not old["tvg_id"] and c["name"] == old["name"]):
+            return c
+    return None
 
 
 def _live_placeholder(c: Dict[str, Any], start_iso: str, hours: int) -> Dict[str, Any]:

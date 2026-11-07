@@ -486,6 +486,7 @@ async function showLive() {
       ${tab('live-tab', 'tab', 'ota', 'Antenna', state.liveTab === 'ota')}${tab('live-tab', 'tab', 'fast', 'Streaming', state.liveTab === 'fast')}${((state.live && state.live.channels) || []).some(c => c.kind === 'extra') ? tab('live-tab', 'tab', 'extra', 'More', state.liveTab === 'extra') : ''}<span class="gap"></span>
       ${tab('live-view', 'view', 'list', 'On now', view === 'list')}${tab('live-view', 'view', 'guide', 'Guide', view === 'guide')}
     </div>
+    ${state.liveTab === 'extra' ? '<div class="dim" style="margin:0 0 1vw">Channels from your playlist. They don’t use a Tablo tuner, and they’re watch only: they can’t be recorded.</div>' : ''}
     ${!liveChannels().length ? '<div class="empty">No channels here.</div>' : view === 'guide' ? guideGrid() : liveList()}`, '#/live');
 }
 

@@ -781,6 +781,14 @@ async def _tune_extra(req: TuneRequest, request: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="That channel is no longer in your playlist.")
     codec = await transcode_manager.probe_video_codec(c["url"])
     if codec is None:
+        # Not answering: the playlist may have moved it since it was read (up to an hour ago)
+        await extra_channels.channels(force=True)
+        moved = extra_channels.find_same(c)
+        if moved and moved["url"] != c["url"]:
+            print(f"[Extra] {c['name']} has a new address in the playlist; trying that")
+            c = moved
+            codec = await transcode_manager.probe_video_codec(c["url"])
+    if codec is None:
         raise HTTPException(status_code=502, detail=f"{c['name']} isn't answering. The channel may be off the air, or its address in the playlist may have changed.")
     sess = transcode_manager.create_session(c["url"])
     stream_url = await transcode_manager.start_browser_transcode(
@@ -826,6 +834,18 @@ async def all_tuners_busy_message() -> Optional[str]:
 @router.get("/vlc/{channel_id}")
 async def get_live_vlc_playlist(channel_id: str):
     """Generate instant .m3u playlist file to stream live channel natively in VLC."""
+    from .. import extra_channels
+    if extra_channels.is_extra(channel_id):
+        # A channel from the user's playlist: VLC plays its own address
+        if not extra_channels.find(channel_id):
+            await extra_channels.channels()
+        c = extra_channels.find(channel_id)
+        if not c:
+            raise HTTPException(status_code=404, detail="That channel is no longer in your playlist.")
+        name = re.sub(r'[^a-zA-Z0-9_\-]', '_', c["name"])[:60]
+        return Response(content=f"#EXTM3U\n#EXTINF:-1,{c['name']}\n{c['url']}\n", media_type="application/x-mpegurl",
+                        headers={"Content-Disposition": f'attachment; filename="{name}.m3u"',
+                                 "Cache-Control": "no-cache, no-store, must-revalidate"})
     if not tablo_manager.is_authenticated:
         raise HTTPException(status_code=400, detail="Tablo device not connected")
 

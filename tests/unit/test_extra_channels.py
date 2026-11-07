@@ -5,6 +5,7 @@ except ImportError:
 
 import gzip
 import unittest
+from unittest import mock
 from datetime import datetime, timezone
 
 from app import extra_channels as xc
@@ -60,6 +61,14 @@ class ExtraChannelTests(unittest.TestCase):
             self.assertTrue(first["is_new"])
             self.assertTrue(first["path"].startswith("/channel/"))  # never offered for recording
             self.assertEqual(later["air_datetime"], "2026-11-06T18:00:00Z")  # -0500 read as UTC
+
+    def test_same_channel_at_a_new_address(self):
+        old = xc.parse_m3u(M3U)[0]
+        moved = xc.parse_m3u(M3U.replace("https://example.com/news/master.m3u8", "https://example.com/news/v2.m3u8"))
+        with mock.patch.dict(xc._playlist, {"channels": moved}):
+            found = xc.find_same(old)
+        self.assertEqual(found["url"], "https://example.com/news/v2.m3u8")
+        self.assertNotEqual(found["id"], old["id"])
 
 
 if __name__ == "__main__":

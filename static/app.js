@@ -2640,7 +2640,12 @@ function hasFavorites() {
 }
 
 // iptv-org's community list of free US channels: offered in Settings, never set on its own
-const IPTV_ORG_US = 'https://iptv-org.github.io/iptv/countries/us.m3u';
+// Lists offered in Settings → Playback → More channels, never set on their own: [playlist, guide]
+const EXTRA_PRESETS = {
+  tubi: ['https://raw.githubusercontent.com/BuddyChewChew/tubi-scraper/refs/heads/main/tubi_playlist.m3u',
+         'https://raw.githubusercontent.com/BuddyChewChew/tubi-scraper/refs/heads/main/tubi_epg.xml'],
+  'iptv-org': ['https://iptv-org.github.io/iptv/countries/us.m3u', ''],
+};
 
 // Settings → Playback → More channels: what the playlist and guide gave
 async function showExtraStatus() {
@@ -2781,7 +2786,9 @@ function renderEpg(scrollToNow = false) {
   }).join('');
 
   const head = `<div class="epg-head"><div class="epg-head-ch" style="width:${EPG.CH_W}px"></div>${slots.map(s => `<div class="epg-slot" style="width:${slotW}px">${esc(fmt.time(s.iso))}</div>`).join('')}</div>`;
-  scroll.innerHTML = `<div class="epg-board" id="epgBoard">${head}${rows}<div class="epg-now hidden" id="epgNow"></div></div>`;
+  const extraNote = state.epgCategory === 'extra'
+    ? '<div class="dim" style="padding:8px 12px;font-size:13px">Channels from your playlist (Settings → Playback → More channels). They <b>don’t use a Tablo tuner</b>, and they’re <b>watch only</b>: they can’t be recorded.</div>' : '';
+  scroll.innerHTML = `${extraNote}<div class="epg-board" id="epgBoard">${head}${rows}<div class="epg-now hidden" id="epgNow"></div></div>`;
   hydrateIcons(scroll);
   positionNowLine();
 
@@ -2911,6 +2918,7 @@ function openAiringModal(key) {
         <span class="tag">${esc(fmt.dayLabel(a.air_datetime))} ${esc(fmt.time(a.air_datetime))}–${esc(fmt.time(end))}</span>
         <span class="tag">${esc(fmt.dur(a.duration))}</span>
         ${a.is_new ? '<span class="tag tag-new">NEW</span>' : ''}${a.is_premiere ? '<span class="tag tag-premiere">PREMIERE</span>' : ''}
+        ${c.kind === 'extra' ? '<span class="tag" title="A channel from your playlist (Settings → Playback → More channels)">No tuner needed · watch only, can’t be recorded</span>' : ''}
       </div>
       ${a.description ? `<p class="dialog-text">${esc(a.description)}</p>` : ''}
     </div>
@@ -2921,7 +2929,7 @@ function openAiringModal(key) {
           ? `<button class="btn rec-set" data-action="fast-record" data-id="${esc(a.airing_id)}" data-key="${esc(key)}" data-on="0" title="Your Tablo will record this. Click to cancel.">${icon('check', 14)}Recording</button>`
           : `<button class="btn" data-action="fast-record" data-id="${esc(a.airing_id)}" data-key="${esc(key)}" data-on="1" title="Record this on your Tablo">${onAir ? 'Record from now' : 'Record'}</button>`)
         : ''}
-      <button class="btn" data-action="modal-live-vlc" data-id="${esc(c.channel_id)}">${icon('external', 15)}VLC</button>
+      ${c.kind === 'extra' ? '' : `<button class="btn" data-action="modal-live-vlc" data-id="${esc(c.channel_id)}">${icon('external', 15)}VLC</button>`}
       <button class="btn btn-primary" data-action="modal-watch-live" data-id="${esc(c.channel_id)}" data-name="${esc(c.name)}" data-kind="${esc(c.kind)}" data-autofocus>${icon('play', 14)}Watch ${esc(c.name)}</button>
     </div>`);
 }
@@ -3564,7 +3572,11 @@ PAGES.settings = async (r, token) => {
   // Channels from outside the Tablo (app/extra_channels.py): Live TV's "More" tab
   const extraPanel = `
       <div class="panel">
-        <h3>More channels</h3><div class="panel-sub">Add channels from outside your Tablo: free streaming channels, or your own sources, from a playlist (an M3U file's web address). They appear in Live TV under <b>More</b>, play like any channel, and don't use a Tablo tuner. They can't be recorded.</div>
+        <h3>More channels</h3><div class="panel-sub">Add channels from outside your Tablo: free streaming channels, or your own sources, from a playlist (an M3U file's web address). They appear in Live TV under <b>More</b> and play like any channel.</div>
+        <ul style="margin:6px 0 10px 18px;font-size:13px;line-height:1.6">
+          <li><b>They don't use a Tablo tuner:</b> watch them while your Tablo records, or with every tuner busy. They come straight from the internet to this PC.</li>
+          <li style="color:var(--warn)"><b>They're watch only:</b> your Tablo can't record them, and TabloView can't either.</li>
+        </ul>
         <label style="display:block;font-size:13px;margin-top:4px">Playlist address (M3U)
           <input class="input" id="extraPlaylist" style="width:100%;margin-top:4px" placeholder="https://…/playlist.m3u" value="${esc(settings.extra_playlist_url || '')}">
         </label>
@@ -3573,10 +3585,11 @@ PAGES.settings = async (r, token) => {
         </label>
         <div class="panel-actions" style="margin-top:10px">
           <button class="btn btn-sm btn-primary" data-action="extra-save">Save</button>
-          ${settings.extra_playlist_url ? '' : '<button class="btn btn-sm" data-action="extra-iptv-org" title="Fill in and save iptv-org’s list of free US channels">Use iptv-org’s free list</button>'}
+          ${settings.extra_playlist_url ? '' : `<button class="btn btn-sm" data-action="extra-preset" data-preset="tubi" title="Fill in and save Tubi's channel list and its guide">Use Tubi's free channels (with guide)</button>
+            <button class="btn btn-sm" data-action="extra-preset" data-preset="iptv-org" title="Fill in and save iptv-org's list of free US channels">Use iptv-org's list (no guide)</button>`}
           <span class="dim" id="extraStatus" style="font-size:12.5px"></span>
         </div>
-        <p class="dim" style="margin-top:8px;font-size:12.5px">Don't have one? <b>iptv-org</b> keeps a community list of about 1,500 free US channels (news, movies, Pluto TV and more), without a guide. TabloView doesn't run or check it: some channels may be off the air, and some may not come from the channel's owner. Or use a playlist you know, from Channels DVR, an HDHomeRun or ErsatzTV for example. TabloView plays only what the playlist lists.</p>
+        <p class="dim" style="margin-top:8px;font-size:12.5px">Don't have one? <b>Tubi:</b> about 280 of Tubi's free channels (news, crime, movies, sports replays) with a full guide, streamed from Tubi itself. The list is kept up by a volunteer on GitHub (BuddyChewChew/tubi-scraper). <b>iptv-org:</b> a community list of about 1,500 free US channels with no guide; some may be off the air, and some may not come from the channel's owner. TabloView doesn't run or check either list, so channels can change or stop working. Or use a playlist you know, from Channels DVR, an HDHomeRun or ErsatzTV for example.</p>
       </div>
 `;
   const appearancePanel = `
@@ -5835,16 +5848,16 @@ const ACTIONS = {
   'pb-shape': el => pictureShape.menu(el),
   'export-folder': el => chooseExportFolder(el),
   'export-folder-type': el => chooseExportFolder(el, true),
-  'extra-iptv-org': () => {
-    $('#extraPlaylist').value = IPTV_ORG_US;
+  'extra-preset': el => {
+    [$('#extraPlaylist').value, $('#extraGuide').value] = EXTRA_PRESETS[el.dataset.preset];
     ACTIONS['extra-save']();
   },
   'extra-save': async () => {
     try {
       await api('/api/settings', { method: 'POST', body: JSON.stringify({ extra_playlist_url: $('#extraPlaylist').value, extra_guide_url: $('#extraGuide').value }) });
       state.epg = null;  // Live TV loads its channels again
-      toast($('#extraPlaylist').value.trim() ? 'Saved. The channels are in Live TV under More.' : 'Saved', 'success');
-      if ($('#extraPlaylist').value.trim()) { const b = $('[data-action="extra-iptv-org"]'); if (b) b.remove(); }
+      toast($('#extraPlaylist').value.trim() ? 'Saved. The channels are in Live TV under More: no tuner needed, watch only.' : 'Saved', 'success');
+      if ($('#extraPlaylist').value.trim()) $$('[data-action="extra-preset"]').forEach(b => b.remove());
       showExtraStatus();
     } catch (err) { toast(err.message, 'error'); }
   },
