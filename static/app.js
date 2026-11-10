@@ -4118,6 +4118,14 @@ const pictureShape = {
 // have two or three rows up at once, each its own cue (hls.js numbers them by row): they're kept a row
 // apart in their order. Moved all to one spot, the line scrolling away showed through the new one
 // (a forum report from the Google TV app, 2026-10-28)
+// A broadcast can carry captions in two languages (CC1, and CC3: usually Spanish), and hls.js makes a
+// track of each. Only one is shown: CC1, the main one (hls.js calls it 'en' whatever its language).
+// Both shown were drawn over each other (a forum report, 2026-11-09: English and Spanish ghosting)
+function captionTrack(video) {
+  const ts = [...video.textTracks];
+  return ts.find(t => t.language === 'en') || ts[0] || null;
+}
+
 const CAPTION_ROW = 5.5;
 function stackCues(track, bottom) {
   const cues = [...(track.activeCues || [])];
@@ -4862,9 +4870,10 @@ const player = {
   // them), and hls.js turns them into a text track; this only shows or hides it
   applyCaptions() {
     const tracks = [...[...this.video().textTracks].map(t => [t, 'main']), ...[...$('#video2').textTracks].map(t => [t, 'second'])];
+    const shown = [captionTrack(this.video()), captionTrack($('#video2'))];
     for (const [t, pane] of tracks) {
       // With two channels, the one you aren't hearing shows captions so you can still follow it
-      t.mode = state.captions || (dual.on && dual.active !== pane) ? 'showing' : 'hidden';
+      t.mode = shown.includes(t) && (state.captions || (dual.on && dual.active !== pane)) ? 'showing' : 'hidden';
       if (!t.__raised) {
         // Broadcast captions sit on the bottom rows, under the player bar: lift them above it
         t.__raised = true;
