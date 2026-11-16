@@ -206,3 +206,7 @@ h2 { font-size: 1.7vw; margin: 2.4vw 0 1.2vw; color: var(--dim); font-weight: 60
   color: var(--text); background: var(--surface-2); border: 0.2vw solid transparent; border-radius: var(--radius); }
 .pin-input:focus { border-color: var(--focus); outline: none; }
 .error { color: #ff9b9b; margin-top: 1vw; min-height: 1.5em; }
+
+/* Captions: the same look as the PC player's (Inter on a dark box). Without it the TV view had the
+   browser's own, larger and plainer (a forum user preferred the PC's in split view, 2026-10-31) */
+#video::cue { font-family: Inter, system-ui, sans-serif; font-size: 1em; color: #fff; background: rgba(0, 0, 0, 0.78); }
