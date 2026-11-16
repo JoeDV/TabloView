@@ -243,6 +243,7 @@ const state = {
   activeExports: 0,
   bufferTarget: parseInt(store('tablo_buffer_target', '8'), 10) || 8,
   captions: store('tablo_cc', '0') === '1',
+  captions2: store('tablo_cc_second', '1') === '1',  // split view's second channel: on unless turned off
   autoplay: store('tablo_autoplay', '1') !== '0',
   stream: { sessionId: null, hls: null, handler: null, timer: null, episodeId: null, channelId: null },
 };
@@ -4872,20 +4873,37 @@ const player = {
     const tracks = [...[...this.video().textTracks].map(t => [t, 'main']), ...[...$('#video2').textTracks].map(t => [t, 'second'])];
     const shown = [captionTrack(this.video()), captionTrack($('#video2'))];
     for (const [t, pane] of tracks) {
-      // With two channels, the one you aren't hearing shows captions so you can still follow it
-      t.mode = shown.includes(t) && (state.captions || (dual.on && dual.active !== pane)) ? 'showing' : 'hidden';
+      // Each channel in split view has its own captions setting (the CC on its picture); the second
+      // is on unless turned off, so a muted game can be followed. A forum user wanted them off: they
+      // covered an NFL game's score
+      t.mode = shown.includes(t) && (pane === 'main' ? state.captions : dual.on && state.captions2) ? 'showing' : 'hidden';
       if (!t.__raised) {
         // Broadcast captions sit on the bottom rows, under the player bar: lift them above it
         t.__raised = true;
         t.addEventListener('cuechange', () => stackCues(t, 78));
       }
     }
+    // The player's CC (and T) is for the channel you're hearing
+    const on = dual.on && dual.active === 'second' ? state.captions2 : state.captions;
     const b = $('#pbCC');
-    b.classList.toggle('on', state.captions);
-    b.title = state.captions ? 'Turn captions off (T)' : 'Captions (T)';
+    b.classList.toggle('on', on);
+    b.title = on ? 'Turn captions off (T)' : 'Captions (T)';
+    for (const [id, paneOn] of [['#paneMain', state.captions], ['#paneSecond', state.captions2]]) {
+      const pb = $(`${id} .pane-cc`);
+      pb.classList.toggle('on', paneOn);
+      pb.title = paneOn ? 'Turn captions off for this channel' : 'Captions for this channel';
+    }
   },
 
-  toggleCaptions() {
+  // pane: 'main' or 'second' (a picture's own CC in split view); none: the channel you're hearing
+  toggleCaptions(pane) {
+    if ((pane || (dual.on ? dual.active : 'main')) === 'second') {
+      state.captions2 = !state.captions2;
+      save('tablo_cc_second', state.captions2 ? '1' : '0');
+      this.applyCaptions();
+      toast(`Captions ${state.captions2 ? 'on' : 'off'} for ${dual.s.name || 'the second channel'}`);
+      return;
+    }
     state.captions = !state.captions;
     save('tablo_cc', state.captions ? '1' : '0');
     this.applyCaptions();
@@ -5450,7 +5468,7 @@ const dual = {
     const v = $('#video2');
     this.teardown();
     try {
-      // (with captions: they show whenever this is the channel you aren't hearing)
+      // (always with captions, so its CC can turn them on and off without starting it again)
       const res = await api('/api/live/tune', { method: 'POST', body: JSON.stringify({ channel_id: channelId, transcode: true, kind, captions: true }) });
       this.s = { channelId, name, kind, sessionId: res.session_id, url: res.stream_url };
       pictureShape.apply(v, channelId);
@@ -5974,6 +5992,7 @@ const ACTIONS = {
   'dual-add': () => dual.add(),
   'dual-layout': () => dual.cycleLayout(),
   'dual-close': el => dual.close(el.dataset.pane),
+  'dual-cc': el => player.toggleCaptions(el.dataset.pane),
   'calendar-help': () => openModal(`
     <div class="dialog-body">
       <div class="dialog-title">Add your recordings to a calendar</div>

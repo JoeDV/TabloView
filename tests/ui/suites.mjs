@@ -378,8 +378,20 @@ export const SUITES = {
     t.check('A live channel plays alongside the recording', await b.waitFor(`dual.on && $('#video2').currentTime > 3 && !$('#video').paused`, 60000));
     await b.ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }))`); await sleep(500);
     t.check('Tab moves the sound to the other channel', await b.ev(`dual.active === 'second' && $('#video').__audio.gain.gain.value === 0 && $('#video2').__audio.gain.gain.value === 1`));
-    await b.ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'l' }))`); await sleep(300);
-    t.check('L changes the layout', await b.ev(`player.el().classList.contains('dual-pip')`));
+    await b.ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'v' }))`); await sleep(300);
+    t.check('V changes the layout', await b.ev(`player.el().classList.contains('dual-pip')`));
+    // Each picture's CC is its own; the player's CC is for the channel you're hearing (the second, now)
+    const cc2 = await b.ev(`state.captions2`), cc1 = await b.ev(`state.captions`);
+    const shownSecond = `(() => { const t = captionTrack($('#video2')); return t ? t.mode === 'showing' : null; })()`;
+    await b.ev(`document.querySelector('#paneSecond .pane-cc').click()`); await sleep(300);
+    t.check("The second picture's CC turns its captions over", await b.ev(`state.captions2 === ${!cc2} && state.captions === ${cc1}`)
+      && [null, !cc2].includes(await b.ev(shownSecond)) && (await b.ev(`$('#paneSecond .pane-cc').classList.contains('on')`)) === !cc2);
+    t.check("The player's CC shows the heard channel's setting", (await b.ev(`$('#pbCC').classList.contains('on')`)) === !cc2);
+    await b.ev(`$('#pbCC').click()`); await sleep(300);
+    t.check("The player's CC changes the channel you're hearing", await b.ev(`state.captions2 === ${cc2} && state.captions === ${cc1}`));
+    await b.ev(`document.querySelector('#paneMain .pane-cc').click()`); await sleep(300);
+    t.check("The first picture's CC leaves the second alone", await b.ev(`state.captions === ${!cc1} && state.captions2 === ${cc2}`));
+    await b.ev(`player.toggleCaptions('main')`); await sleep(300);
     await b.ev(`dual.close('second')`); await sleep(1000);
     t.check('Closing the live channel leaves the recording playing with its sound', await b.ev(`!dual.on && !$('#video').paused && $('#video').__audio.gain.gain.value === 1`));
   },
