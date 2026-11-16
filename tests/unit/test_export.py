@@ -18,6 +18,17 @@ class ExportTests(unittest.TestCase):
         self.assertIn("bwdif", cmd[cmd.index("-vf") + 1])
         self.assertEqual(cmd[-1], "out.mp4")
 
+    def test_stereo_unless_the_recording_has_surround(self):
+        cmd = TranscodeManager.export_cmd("http://tablo/p.m3u8", Path("o.part.ts"), None)
+        self.assertEqual(cmd[cmd.index("-ac") + 1], "2")
+        self.assertIn("clev=1.0", cmd[cmd.index("-af") + 1])  # dialogue kept up in the mix-down
+
+    def test_surround_kept_as_51_throughout(self):
+        cmd = TranscodeManager.export_cmd("http://tablo/p.m3u8", Path("o.part.ts"), None, surround=True)
+        self.assertEqual(cmd[cmd.index("-ac") + 1], "6")
+        self.assertIn("ochl=5.1", cmd[cmd.index("-af") + 1])  # a stereo stretch stays a 5.1 file
+        self.assertEqual(cmd[cmd.index("-c:a") + 1], "aac")
+
     def test_written_as_ts_then_made_into_the_mp4(self):
         # An MP4 isn't playable until FFmpeg closes it; a .ts is good up to wherever it stopped
         cmd = TranscodeManager.export_cmd("http://tablo/p.m3u8", Path("out.part.ts"), None)

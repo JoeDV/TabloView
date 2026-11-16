@@ -825,10 +825,51 @@ class TranscodeManager:
                                               episode=episode)
 
     @staticmethod
+    def _audio_layout(url: str) -> str:
+        """The sound's channel layout at the start of this address ('5.1(side)', 'stereo'...), or ''."""
+        try:
+            err = subprocess.run([FFMPEG_PATH, "-hide_banner", "-i", url], capture_output=True, text=True,
+                                 timeout=20, creationflags=NO_WINDOW).stderr
+        except Exception:
+            return ""
+        m = re.search(r"Audio: \w+[^,]*, \d+ Hz, ([^,\n]+)", err)
+        return m.group(1).strip() if m else ""
+
+    async def export_surround(self, playlist_url: str) -> bool:
+        """Whether the recording has 5.1 sound: looked at in three places (start, a third and two
+        thirds in), since a station can send stereo for some of a show. Exports used to mix it all to
+        stereo, as playback does (a forum user: the Tablo Desktop Player's download had 5.1, ours
+        stereo); a file for Plex or a TV should keep the broadcast's 5.1"""
+        relay = export_pace.open_relay(playlist_url, paced=False)
+        if not relay:
+            return (await asyncio.to_thread(self._audio_layout, playlist_url)).startswith("5.1")
+        try:
+            base = relay.url.rsplit("/", 1)[0]
+            async with httpx.AsyncClient(timeout=20) as client:
+                text = (await client.get(relay.url)).text
+                variants = [l for l in text.splitlines() if l and not l.startswith("#")]
+                if "#EXT-X-STREAM-INF" in text and variants:
+                    text = (await client.get(f"{base}/{variants[0]}")).text
+            pieces = [l for l in text.splitlines() if l and not l.startswith("#")]
+            for i in sorted({0, len(pieces) // 3, len(pieces) * 2 // 3}):
+                if i < len(pieces) and (await asyncio.to_thread(self._audio_layout, f"{base}/{pieces[i]}")).startswith("5.1"):
+                    return True
+            return False
+        except Exception as e:
+            print(f"[ExportWorker] Couldn't check the recording's sound ({e}); exporting in stereo")
+            return False
+        finally:
+            export_pace.close_relay(relay)
+
+    @staticmethod
     def export_cmd(playlist_url: str, part_path: Path, enc: Optional[Dict[str, Any]],
-                   readrate: Optional[float] = EXPORT_READRATE) -> List[str]:
+                   readrate: Optional[float] = EXPORT_READRATE, surround: bool = False) -> List[str]:
         """enc None: copy the broadcast video as is (largest, exact). Otherwise convert to H.264
         (deinterlaced, like playback), which is usually much smaller.
+
+        surround: the recording has 5.1 sound (export_surround), kept as AAC 5.1 for the whole file; any
+        stereo part (a station can switch) goes to the front left and right. Otherwise stereo, mixed as
+        for playback.
 
         Written as MPEG-TS first (part_path), then re-packaged as the MP4 (remux_cmd): an MP4 is only
         playable once FFmpeg closes it, and FFmpeg can't when the Tablo stops sending partway (an
@@ -844,8 +885,9 @@ class TranscodeManager:
             *(["-readrate", f"{readrate:g}"] if readrate else []),
             "-i", playlist_url,
             *video,
-            "-af", "aresample=async=1:ochl=stereo:clev=1.0:slev=0.6",
-            "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000",
+            *(["-af", "aresample=async=1:ochl=5.1(side)", "-c:a", "aac", "-b:a", "384k", "-ac", "6"] if surround else
+              ["-af", "aresample=async=1:ochl=stereo:clev=1.0:slev=0.6", "-c:a", "aac", "-b:a", "192k", "-ac", "2"]),
+            "-ar", "48000",
             "-f", "mpegts",
             str(part_path)
         ]
@@ -916,10 +958,12 @@ class TranscodeManager:
                                  episode: Optional[Dict[str, Any]] = None) -> bool:
         part_path = self.export_part_path(job_id, output_path)  # becomes the MP4 when done
         from . import export_pace
+        surround = await self.export_surround(playlist_url)
         relay = export_pace.open_relay(playlist_url)  # TabloView paces it; or directly at EXPORT_READRATE
-        cmd = self.export_cmd(relay.url if relay else playlist_url, part_path, enc, None if relay else EXPORT_READRATE)
+        cmd = self.export_cmd(relay.url if relay else playlist_url, part_path, enc, None if relay else EXPORT_READRATE,
+                              surround=surround)
         print(f"[ExportWorker] Starting export {job_id} -> {output_path.name} "
-              f"({enc['label'] if enc else 'original video'})")
+              f"({enc['label'] if enc else 'original video'}, {'5.1' if surround else 'stereo'} sound)")
         save_export_job({"job_id": job_id, "status": "downloading", "progress": 0.0, "error": None})
         # Send FFmpeg's chatty stderr to a log file instead of an unread pipe,
         # which would fill up and stall long exports
