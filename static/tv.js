@@ -767,6 +767,10 @@ function captionTrack(video) {
   return ts.find(t => t.language === 'en') || ts[0] || null;
 }
 
+// A "break" this long is more likely the show taken for one (a forum user: almost 10 minutes of
+// Survivor): it's marked, but not skipped on its own. Real breaks rarely run past 5 minutes
+const LONG_BREAK = 7 * 60;
+
 const CAPTION_ROW = 5.5;
 function stackCues(track, bottom) {
   const cues = [...(track.activeCues || [])];
@@ -802,13 +806,14 @@ const player = {
   // OK: Pause, skip, Back to live, Captions, Shape, Close
   showControls(index = 0) {
     const live = this.s.kind === 'live';
+    const skipBreak = !live && this.inBreak ? [['skipbreak', `Skip ${this.inBreak.kind} ▶▶`]] : [];
     const shape = this.s.shapeKey ? [['shape', `Shape: ${SHAPE_NAMES[shapeOf(this.s.shapeKey)]}`]] : [];
     const cc = ['cc', state.captions ? 'CC: On' : 'CC: Off'];
     const hit = live && this.liveAiring();
     const record = hit ? [['record', isRecording(hit.a) ? '● Recording' : '● Record']] : [];
     this.controlList = live
       ? [['pause', this.video().paused ? '▶ Play' : '❚❚ Pause'], ['live', 'Back to live'], ...record, cc, ...shape, ['close', '✕ Close']]
-      : [['pause', this.video().paused ? '▶ Play' : '❚❚ Pause'], ['back', '◀◀ 10 s'], ['fwd', '30 s ▶▶'], cc, ...shape, ['close', '✕ Close']];
+      : [...skipBreak, ['pause', this.video().paused ? '▶ Play' : '❚❚ Pause'], ['back', '◀◀ 10 s'], ['fwd', '30 s ▶▶'], cc, ...shape, ['close', '✕ Close']];
     this.controlIndex = Math.min(index, this.controlList.length - 1);
     this.controls = true;
     this.shapeMenu = false;
@@ -860,6 +865,7 @@ const player = {
     if (what === 'shape') { this.showShapes(); return; }
     if (what === 'close') { this.hideControls(); this.exit(); return; }
     if (what === 'record') { this.recordLive(); return; }
+    if (what === 'skipbreak') { this.hideControls(); this.skipBreak(); return; }
     if (what === 'cc') {
       this.toggleCaptions();
       this.controlList[this.controlIndex][1] = state.captions ? 'CC: On' : 'CC: Off';
@@ -867,7 +873,8 @@ const player = {
     else if (what === 'back') this.skip(-10);
     else if (what === 'fwd') this.skip(30);
     else if (what === 'live') { const w = this.liveWindow(); if (w) this.video().currentTime = Math.max(w.start, w.end - 6); this.video().play().catch(() => {}); }
-    this.controlList[0][1] = this.video().paused ? '▶ Play' : '❚❚ Pause';
+    const play = this.controlList.find(([v]) => v === 'pause');
+    if (play) play[1] = this.video().paused ? '▶ Play' : '❚❚ Pause';
     this.renderControls();
   },
 
@@ -961,6 +968,7 @@ const player = {
     }
     const previous = this.open ? this.s.sessionId : null;  // the Watch list's recording before this one
     this.s = { kind: 'rec', id, ep, duration: ep.actual_duration || ep.duration || 0, shapeKey: ep.channel_identifier || ep.channel_name };
+    this.held = false;
     if (previous) { this.teardown(); await this.stopById(previous); }
     this.loadBreaks(this.s);
     this.loadPreviews(this.s);
@@ -1047,7 +1055,8 @@ const player = {
     if (i < 0) { i = find(s.dropouts, 0.5); kind = 'dropout'; }
     if (i < 0) { this.showSkip(null); return; }
     const b = (kind === 'break' ? s.breaks : s.dropouts)[i];
-    const auto = kind === 'break' ? s.autoSkip : s.autoSkipDropouts;
+    const long = kind === 'break' && b.end - b.start > LONG_BREAK;
+    const auto = (kind === 'break' ? s.autoSkip && !long : s.autoSkipDropouts) && !this.video().paused;  // (not while stopped on a spot)
     const done = kind === 'break' ? s.skippedBreaks : s.skippedDropouts;
     if (auto && !done.has(i)) {
       done.add(i);
@@ -1063,7 +1072,8 @@ const player = {
       return;
     }
     // Watching it anyway (or went back into one already skipped): OK skips it
-    this.showSkip({ end: b.end, text: `${kind === 'break' ? 'Commercial break' : 'Signal dropout'} · ${fmt.clock(b.end - pos)} · OK to skip · ▼ for controls` });
+    const what = kind === 'break' ? (long ? 'Long break? (not skipped on its own)' : 'Commercial break') : 'Signal dropout';
+    this.showSkip({ end: b.end, kind: kind === 'break' ? 'break' : 'dropout', text: `${what} · ${fmt.clock(b.end - pos)} left · OK, then OK again to skip` });
   },
 
   notABreak(b, from) {
@@ -1212,7 +1222,7 @@ const player = {
       const hls = new Hls({ enableWorker: true, backBufferLength: 90, maxBufferLength: 60, maxBufferSize: 80 * 1000 * 1000 });
       hls.loadSource(url);
       hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+      hls.on(Hls.Events.MANIFEST_PARSED, () => { if (!this.held) video.play().catch(() => {}); });
       hls.on(Hls.Events.ERROR, (evt, data) => {
         if (!data.fatal) return;
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
@@ -1222,8 +1232,11 @@ const player = {
       this.hls = hls;
     } else {
       video.src = url;  // Safari-style browsers play HLS themselves
-      video.play().catch(() => {});
+      if (!this.held) video.play().catch(() => {});
     }
+    // Stopped on a spot while searching: its picture, waiting for OK
+    video.onloadeddata = () => { if (this.held) { this.message(''); $('#player').classList.add('started'); this.wake(); } };
+    video.onplay = () => { this.held = false; };
     // Playing: the title bar fades as usual (its timer ran out while it was still starting, and
     // left it up until a key was pressed)
     video.onplaying = () => { this.message(''); $('#player').classList.add('started'); this.wake(); };
@@ -1249,7 +1262,7 @@ const player = {
       $('#osdNow').textContent = fmt.clock(pos);
       $('#osdEnd').textContent = s.duration ? fmt.clock(s.duration) : '';
       $('#osdPlayed').style.width = s.duration ? `${Math.min(100, (pos / s.duration) * 100)}%` : '0';
-      $('#osdHint').textContent = v.paused ? 'Paused' : '';
+      $('#osdHint').textContent = this.held ? 'Paused here · OK to play' : v.paused ? 'Paused' : '';
       if (s.breaks) this.checkBreak(pos);
     } else {
       const w = this.liveWindow();
@@ -1259,6 +1272,13 @@ const player = {
       $('#osdPlayed').style.width = w && w.end > w.start ? `${Math.min(100, ((v.currentTime - w.start) / (w.end - w.start)) * 100)}%` : '100%';
       $('#osdHint').textContent = v.paused ? 'Paused' : '';
     }
+  },
+
+  // Searching a recording: the picture stays stopped where you land (it used to play on as soon as
+  // the presses stopped), until OK or Play
+  hold() {
+    this.held = true;
+    this.video().pause();
   },
 
   togglePlay() {
@@ -1275,6 +1295,7 @@ const player = {
       if (w) v.currentTime = Math.max(w.start, Math.min(w.end - 2, v.currentTime + seconds));
       return;
     }
+    this.hold();
     this.seekTo(this.position() + seconds);
     this.showPreview(this.position());
   },
@@ -1462,7 +1483,7 @@ function onKey(e) {
 
   if (player.open && $('#dialog').classList.contains('hidden')) {
     if (player.upNext && (k === 'Enter' || k === ' ')) { e.preventDefault(); player.playNext(); return; }
-    if (player.inBreak && !player.controls && k === 'Enter') { e.preventDefault(); player.skipBreak(); return; }
+    if (player.held && !player.controls && k === 'Enter') { e.preventDefault(); player.togglePlay(); return; }
     // The button row: arrows move along it, OK presses, Back/up/down put it away
     if (player.controls) {
       e.preventDefault();

@@ -4127,6 +4127,10 @@ function captionTrack(video) {
   return ts.find(t => t.language === 'en') || ts[0] || null;
 }
 
+// A "break" this long is more likely the show taken for one (a forum user: almost 10 minutes of
+// Survivor): it's marked, but not skipped on its own. Real breaks rarely run past 5 minutes
+const LONG_BREAK = 7 * 60;
+
 const CAPTION_ROW = 5.5;
 function stackCues(track, bottom) {
   const cues = [...(track.activeCues || [])];
@@ -4191,6 +4195,7 @@ const player = {
       shapeKey: ep ? ep.channel_identifier || ep.channel_name || null : null, shapeName: ep ? ep.channel_name : '',
       duration: ep ? ep.actual_duration || ep.duration || 0 : 0,
       lastSaved: start, markedWatched: false,
+      held: sameEpisode && typeof mode === 'number' ? !!state.stream.held : false,  // (a jump past what's converted)
       // The show itself ends here; the recording runs on a little past it
       programEnd: ep && ep.duration ? (ep.program_start || 0) + ep.duration : 0,
       nextEp: null, upNextOffered: false,
@@ -4337,9 +4342,17 @@ const player = {
       const w = this.liveWindow();
       if (w) v.currentTime = Math.max(w.start, Math.min(w.end - 2, v.currentTime + seconds));
     } else if (s.episodeId) {
+      this.hold();
       this.seekTo(this.position() + seconds);
     }
     this.wake();
+  },
+
+  // Searching a recording (◀◀ ▶▶, arrow keys, a click on the timeline): the picture stays stopped
+  // where you land, until Play (or Space). It used to play on at once
+  hold() {
+    state.stream.held = true;
+    this.video().pause();
   },
 
   goLive() {
@@ -4524,7 +4537,8 @@ const player = {
     const btn = $('#skipBreak');
     if (i < 0) { this.checkDropout(pos); return; }
     const b = s.breaks[i];
-    if (s.autoSkip && !s.skippedBreaks.has(i)) {
+    const long = b.end - b.start > LONG_BREAK;
+    if (s.autoSkip && !long && !this.video().paused && !s.skippedBreaks.has(i)) {
       s.skippedBreaks.add(i);
       btn.classList.add('hidden');
       // Undo (or U): it was the show. Back to where the skip started, and never skipped again
@@ -4536,6 +4550,7 @@ const player = {
     }
     btn.dataset.end = b.end;
     btn.innerHTML = `Skip break ${icon('next', 16)}<span>${fmtClock(b.end - pos)}</span>`;
+    btn.title = long ? `Found as a ${fmt.dur(b.end - b.start)} break: that's long for one, so it isn't skipped on its own` : '';
     btn.classList.remove('hidden');
   },
 
@@ -4545,7 +4560,7 @@ const player = {
     const btn = $('#skipBreak');
     if (i < 0) { btn.classList.add('hidden'); return; }
     const d = s.dropouts[i];
-    if (s.autoSkipDropouts && !s.skippedDropouts.has(i)) {
+    if (s.autoSkipDropouts && !this.video().paused && !s.skippedDropouts.has(i)) {
       s.skippedDropouts.add(i);
       btn.classList.add('hidden');
       toast(`Skipped ${fmt.dur(d.end - d.start) || 'a few seconds'} of signal dropout`);
@@ -5015,7 +5030,8 @@ const player = {
           if (ahead >= target) { started = true; this.begin(); }
         } else {
           const cls = ahead >= 4 ? 'good' : 'wait';
-          this.setStatus(`${label} · <span class="${cls}">${ahead}s buffered</span>`);
+          this.setStatus(state.stream.held ? `Paused at ${fmtClock(this.position())} · press Play to carry on`
+            : `${label} · <span class="${cls}">${ahead}s buffered</span>`);
         }
       };
       hls.loadSource(url);
@@ -5056,6 +5072,7 @@ const player = {
     const rate = state.stream.channelId ? 1 : (state.playbackRate || 1);
     video.defaultPlaybackRate = rate;
     video.playbackRate = rate;
+    if (state.stream.held) { this.setStatus(`Paused at ${fmtClock(this.position())} · press Play to carry on`); return; }
     video.play().catch(() => {});
   },
 
@@ -6465,6 +6482,7 @@ function wireEvents() {
       const w = player.liveWindow();
       if (w) $('#video').currentTime = Math.min(w.end - 2, w.start + fractionAt(e) * (w.end - w.start));
     } else {
+      player.hold();
       player.seekTo(timeAt(e));
     }
   });
@@ -6498,6 +6516,7 @@ function wireEvents() {
   const video = $('#video');
   // A caption track appears once the stream's first captions arrive: show it if captions are on
   video.textTracks.addEventListener('addtrack', () => player.applyCaptions());
+  video.addEventListener('play', () => { if (state.stream.held) { state.stream.held = false; player.setStatus(''); } });
   try { video.volume = Math.max(0, Math.min(1, parseFloat(store('tablo_volume', '1')))); } catch { /* default */ }
   ['play', 'pause', 'volumechange'].forEach(ev => video.addEventListener(ev, () => player.syncButtons()));
   video.addEventListener('click', () => (dual.on ? dual.paneClick('main') : player.togglePlay()));

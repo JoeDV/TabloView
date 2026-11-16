@@ -3,7 +3,7 @@
 // by the fetch shim in lib.mjs; the only real requests are page loads and recording playback.
 import fs from 'node:fs';
 import path from 'node:path';
-import { api, sleep } from './lib.mjs';
+import { api, sleep, BASE } from './lib.mjs';
 
 async function transcodeSessions() {
   const info = await api('/api/system/info');
@@ -411,6 +411,64 @@ export const SUITES = {
       return v.length > 3 && v[v.length - 1].startsWith('1.0.0') && /You have this/.test(v[0]);
     })()`));
     await b.ev(`closeModal(false)`);
+  },
+
+  // Searching stops on the spot; a break found too long isn't skipped on its own; on a TV, OK in a
+  // break brings up the controls with Skip first (PC player, then the TV view)
+  async seekhold(b, t) {
+    const shows = (await api('/api/shows')).shows;
+    const eps = (await api(`/api/shows/episodes?show_id=${encodeURIComponent(shows[0].id)}`)).episodes;
+    const ep = eps.find(e => e.recording_state === 'finished' && (e.duration || 0) >= 1500);
+    if (!ep) return t.skip('Searching a recording', 'needs a finished recording of 25 minutes or more');
+    await b.open(`#/show/${encodeURIComponent(shows[0].id)}`);
+    await b.waitFor(`document.querySelector('.ep-row')`);
+    await b.ev(`player.playEpisode(${JSON.stringify(ep.id)}, 60)`);
+    t.check('PC: the recording plays', await b.waitFor(`!$('#video').paused && $('#video').currentTime > 3`, 120000));
+    await b.ev(`player.skip(30)`); await sleep(3000);
+    t.check('PC: ▶▶ stops on the spot', await b.ev(`$('#video').paused && state.stream.held`));
+    let p = await b.ev(`player.position()`);
+    await b.ev(`player.hold(); player.seekTo(${p} + 900)`);  // past what's converted: the stream starts again there
+    t.check('PC: a jump past what is converted stays stopped there', await b.waitFor(`/Paused at/.test($('#playerStatus').textContent) && Math.abs(player.position() - ${p + 900}) < 5`, 120000)
+      && await b.ev(`$('#video').paused`));
+    await sleep(2000);
+    t.check('PC: ...and does not start on its own', await b.ev(`$('#video').paused`));
+    await b.ev(`$('#video').play().catch(() => {}), true`);
+    t.check('PC: Play carries on from there', await b.waitFor(`!$('#video').paused && !state.stream.held && player.position() > ${p + 901}`, 20000));
+    p = await b.ev(`player.position()`);
+    await b.ev(`Object.assign(state.stream, { autoSkip: true, skippedBreaks: new Set(), breaks: [{ start: ${p}, end: ${p + 600} }] })`); await sleep(2500);
+    t.check('PC: a 10-minute "break" is offered, not skipped', await b.ev(`player.position() < ${p + 30} && !$('#skipBreak').classList.contains('hidden')`));
+    p = await b.ev(`player.position()`);
+    await b.ev(`Object.assign(state.stream, { skippedBreaks: new Set(), breaks: [{ start: ${p}, end: ${p + 60} }] })`);
+    t.check('PC: a normal break is still skipped', await b.waitFor(`player.position() >= ${p + 58}`, 15000));
+    await b.ev(`player.close()`); await sleep(1500);
+
+    // TV view
+    await b.send('Page.navigate', { url: `${BASE}/tv` });
+    await b.waitFor(`typeof player !== 'undefined' && typeof remember === 'function'`, 30000);
+    await b.ev(`remember([${JSON.stringify(ep)}])`);  // (as a recording's page would have)
+    await b.ev(`player.playEpisode(${JSON.stringify(ep.id)}, { from: 'start' })`);
+    t.check('TV: the recording plays', await b.waitFor(`!player.video().paused && player.video().currentTime > 3`, 120000));
+    const key = k => b.ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true }))`);
+    await key('ArrowRight'); await sleep(3000);
+    t.check('TV: ▶▶ stops on the spot', await b.ev(`player.video().paused && player.held && /Paused here/.test($('#osdHint').textContent)`));
+    await key('Enter');
+    t.check('TV: OK carries on', await b.waitFor(`!player.video().paused && !player.held`, 20000));
+    // (once it's moving: starting again at a spot fetches the breaks afresh, over a made-up one)
+    p = await b.ev(`player.position()`);
+    await b.waitFor(`player.position() > ${p} + 2`, 60000); await sleep(2000);
+    p = await b.ev(`player.position()`);
+    await b.ev(`Object.assign(player.s, { autoSkip: true, skippedBreaks: new Set(), breaks: [{ start: ${p}, end: ${p + 600} }] })`); await sleep(1500);
+    t.check('TV: a 10-minute "break" is offered, not skipped', await b.ev(`player.position() < ${p + 30} && /Long break/.test($('#skipBanner').textContent)`),
+      await b.ev(`JSON.stringify({ p0: ${p}, pos: player.position(), paused: player.video().paused, banner: $('#skipBanner').textContent, pending: player.pendingSeek })`));
+    await key('Enter'); await sleep(300);
+    t.check('TV: OK in a break brings up the controls, Skip first', await b.ev(`player.controls && player.controlIndex === 0 && /Skip break/.test($('#osdControls .ctl.on').textContent) && !player.video().paused`));
+    await key('Enter');
+    t.check('TV: OK again skips it', await b.waitFor(`player.position() >= ${p + 595}`, 30000));
+    await b.waitFor(`!player.video().paused`, 30000);
+    p = await b.ev(`player.position()`);
+    await b.ev(`Object.assign(player.s, { skippedBreaks: new Set(), breaks: [{ start: ${p}, end: ${p + 60} }] })`);
+    t.check('TV: a normal break is still skipped', await b.waitFor(`player.position() >= ${p + 58}`, 15000));
+    await b.ev(`player.exit()`); await sleep(1500);
   },
 
   async resume(b, t) {
