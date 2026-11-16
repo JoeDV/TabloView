@@ -21,6 +21,13 @@ TabloView is a fast desktop interface for your Tablo DVR. Browse and play your r
 Sign in with your own Tablo account. Your password goes only to Tablo's sign-in service and is never saved. TabloView runs only on your PC unless you turn on network access for other devices at home.
 
 ## What's new in this version
+1.3.6:
+• Searching a recording stops where you land until you press Play
+• Exports keep 5.1 surround sound
+• Split view: a CC button for each channel
+• Breaks over 7 minutes are no longer skipped on their own
+• Fixed: Spanish captions shown over the English ones
+
 1.3.5:
 • More channels: Tubi's free channels with a guide, or your own playlist (watch only, no tuner)
 • Tubi's channel list can change from day to day

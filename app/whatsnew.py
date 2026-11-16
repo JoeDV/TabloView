@@ -13,6 +13,15 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.3.6": [
+        "Searching through a recording stops where you land: skip ahead or back, or click the timeline, and the picture waits there until you press Play (OK on a TV).",
+        "Exports keep 5.1 surround sound when the broadcast has it. Recordings that are stereo stay stereo.",
+        "Split view: each channel has its own CC button, so you can turn the second channel's captions off when they cover the score.",
+        "On a TV, OK during a commercial break brings up the controls with Skip break first, so you can pause or rewind in a break too. Press OK again to skip.",
+        "A \"break\" over 7 minutes long is more likely part of the show, so it's marked but no longer skipped on its own.",
+        "Captions in the TV view have the same cleaner look as on the PC.",
+        "Fixed: on some recordings, the Spanish captions were shown on top of the English ones.",
+    ],
     "1.3.5": [
         "More channels: add channels from outside your Tablo under Settings → Playback → More channels, and they appear in Live TV under More, on the PC and in the TV view. They don't use a Tablo tuner, and they're watch only: they can't be recorded.",
         "One click sets up Tubi's free channels with a full guide. The list is kept up by a volunteer, so Tubi's channels can come and go from day to day. You can also use iptv-org's larger list (no guide), or a playlist of your own.",
