@@ -255,12 +255,12 @@ let pageLeave = [];  // run when the page is left
 // ---------------------------------------------------------------------------
 // Toasts, menus, dialogs
 // ---------------------------------------------------------------------------
-function toast(message, type = 'info') {
+function toast(message, type = 'info', ms = 4200) {
   const el = document.createElement('div');
   el.className = `toast ${type}`;
   el.textContent = message;
   $('#toasts').appendChild(el);
-  setTimeout(() => { el.classList.add('leaving'); setTimeout(() => el.remove(), 260); }, 4200);
+  setTimeout(() => { el.classList.add('leaving'); setTimeout(() => el.remove(), 260); }, ms);
 }
 
 // A message with one button (e.g. Undo), for a few seconds
@@ -3963,10 +3963,16 @@ async function deleteWatchedForShow(el) {
   }
 }
 
+// A Store copy: a version released that the Store doesn't offer yet (it waits for Microsoft's approval)
+function storeWaitText(u) {
+  return `TabloView ${u.published} is out (you have ${u.current}). The Microsoft Store will offer it once Microsoft has approved it, usually within a day or two. If it still doesn't after that, open the Store → Library → Get updates.`;
+}
+
 function updateStatusHtml() {
   const u = state.update;
   if (u && u.store) {
     if (u.update_available) return `<a href="${esc(u.download_url)}" style="color:var(--accent);font-weight:600">Version ${esc(u.latest)} is available in the Microsoft Store, open it</a>`;
+    if (u.published) return `<span>${esc(storeWaitText(u))}</span> <button class="btn btn-sm btn-ghost" data-action="check-update">Check now</button> <a class="btn btn-sm btn-ghost" href="${esc(u.download_url)}">Open in the Store</a>`;
     return `Kept up to date by the Microsoft Store <button class="btn btn-sm btn-ghost" data-action="check-update">Check now</button> <a class="btn btn-sm btn-ghost" href="${esc(u.download_url)}">Open in the Store</a>`;
   }
   if (!u || !u.enabled) return '<span class="dim">Update checks aren’t set up for this copy</span>';
@@ -6123,10 +6129,11 @@ const ACTIONS = {
     const u = await checkForUpdate(true);
     el.disabled = false;
     if (!u) toast("Couldn't check for updates", 'error');
+    else if (u.store && !u.update_available && u.published) toast(storeWaitText(u), 'info', 12000);
     else if (u.error) toast(u.error, 'error');
     else if (u.update_available) toast(`Version ${u.latest} is available`, 'success');
     else toast(`You're on the latest version (${u.current})`, 'success');
-    if (parseRoute().name === 'device') route();
+    if (parseRoute().name === 'settings') route();  // (the updates line; this page was "device" once)
   },
 };
 

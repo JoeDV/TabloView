@@ -25,13 +25,32 @@ class StoreUpdateTests(unittest.TestCase):
         self.assertEqual((u["latest"], u["download_url"]), ("9.9.9", updates.STORE_LINK))
 
     def test_up_to_date(self):
-        with mock.patch.object(updates, "store_update_version", new=mock.AsyncMock(return_value=None)):
+        with mock.patch.object(updates, "store_update_version", new=mock.AsyncMock(return_value=None)),              mock.patch.object(updates, "published_version", new=mock.AsyncMock(return_value=None)):
             u = self.check()
         self.assertFalse(u["update_available"])
         self.assertIsNone(u["error"])
 
+    def test_released_but_not_in_the_store_yet(self):
+        # Just after a release the Store has nothing newer until Microsoft approves it: not "latest"
+        with mock.patch.object(updates, "store_update_version", new=mock.AsyncMock(return_value=None)),              mock.patch.object(updates, "published_version", new=mock.AsyncMock(return_value="99.0.0")):
+            u = self.check()
+        self.assertFalse(u["update_available"])
+        self.assertEqual(u["published"], "99.0.0")
+
+    def test_nothing_newer_released(self):
+        with mock.patch.object(updates, "store_update_version", new=mock.AsyncMock(return_value=None)),              mock.patch.object(updates, "published_version", new=mock.AsyncMock(return_value=updates.APP_VERSION)):
+            u = self.check()
+        self.assertNotIn("published", u)
+
+    def test_store_has_it_the_notice_isnt_needed(self):
+        notice = mock.AsyncMock(return_value="99.0.0")
+        with mock.patch.object(updates, "store_update_version", new=mock.AsyncMock(return_value="99.0.0")),              mock.patch.object(updates, "published_version", new=notice):
+            u = self.check()
+        self.assertTrue(u["update_available"])
+        notice.assert_not_called()
+
     def test_store_unavailable_is_reported_not_raised(self):
-        with mock.patch.object(updates, "store_update_version", new=mock.AsyncMock(side_effect=OSError("no store"))):
+        with mock.patch.object(updates, "store_update_version", new=mock.AsyncMock(side_effect=OSError("no store"))),              mock.patch.object(updates, "published_version", new=mock.AsyncMock(return_value=None)):
             u = self.check()
         self.assertFalse(u["update_available"])
         self.assertIn("Microsoft Store", u["error"])

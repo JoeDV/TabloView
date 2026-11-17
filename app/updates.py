@@ -62,8 +62,24 @@ async def store_update_version() -> Optional[str]:
     return None
 
 
+async def published_version() -> Optional[str]:
+    """The newest version released on GitHub (the update notice), or None if it can't be read."""
+    url = update_url()
+    if not url:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+            resp = await client.get(url, headers={"Cache-Control": "no-cache"})
+        resp.raise_for_status()
+        return str(resp.json().get("version") or "").strip() or None
+    except Exception as e:
+        print(f"[Updates] Couldn't read the update notice: {e}")
+        return None
+
+
 async def check_for_update(force: bool = False) -> Dict[str, Any]:
-    """Return {'current', 'latest', 'update_available', 'download_url', 'notes', 'error', 'store'}.
+    """Return {'current', 'latest', 'update_available', 'download_url', 'notes', 'error', 'store'}, and
+    for a Store copy 'published': a newer version released that the Store doesn't offer yet.
     Results are cached for CHECK_EVERY_SECONDS; failures never raise."""
     # Store copies ask the Store; everyone else reads version.json, whose download link is the GitHub
     # release (the Windows installer and the Mac and Linux downloads)
@@ -86,6 +102,13 @@ async def check_for_update(force: bool = False) -> Dict[str, Any]:
             result["error"] = ("The Microsoft Store didn't answer TabloView just now. To check for updates, "
                                "open the Store, go to Library, and click Get updates.")
             print(f"[Updates] Couldn't ask the Microsoft Store for updates: {e!r}")
+        if not result["update_available"]:
+            # Released, but the Store doesn't offer it yet (it does once Microsoft has approved it, a
+            # day or two): say so, rather than "You're on the latest version" (the user, 2026-11-16,
+            # just after releasing 1.3.6)
+            published = await published_version()
+            if published and _version_tuple(published) > _version_tuple(APP_VERSION):
+                result["published"] = published
         _cache.update(checked=time.time(), result=result)
         return result
 
