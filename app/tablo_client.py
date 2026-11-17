@@ -12,6 +12,8 @@ import httpx
 
 from tablo_api import TabloAuth, TabloClient
 from tablo_api.models import TabloDevice
+
+from . import background
 from .config import CONFIG_FILE, TABLO_EMAIL, TABLO_PASSWORD
 
 # Requests in flight to the Tablo at once. Its small web server stops accepting connections for a
@@ -208,7 +210,7 @@ class TabloManager:
             now = time.time()
             if now - self.unreachable_since >= self.ADDRESS_CHECK_AFTER and now - self._address_checked_at >= self.ADDRESS_CHECK_EVERY:
                 self._address_checked_at = now
-                asyncio.get_running_loop().create_task(self.refresh_address())
+                background.start(self.refresh_address())
             raise
         if self.unreachable_since is not None:
             print(f"[TabloManager] Tablo is responding again (after {time.time() - self.unreachable_since:.0f} s)")

@@ -20,6 +20,7 @@ from ..database import (
 )
 from ..schedule_check import find_conflicts, find_alternatives
 from ..tablo_client import tablo_manager
+from .. import background
 from ..sync_service import sync_service, extract_image_url
 from .live import pick_logo
 
@@ -263,7 +264,7 @@ async def set_series_schedule(payload: SeriesScheduleRequest):
 
         # Update local SQLite cache, then re-read which airings the Tablo now plans to record
         update_guide_show_schedule(path, rule)
-        asyncio.create_task(refresh_series_airing_states(path))
+        background.start(refresh_series_airing_states(path))
         updated = get_guide_show_by_path(path)
 
         return {
@@ -422,7 +423,7 @@ async def trigger_guide_sync():
     if not tablo_manager.is_authenticated:
         raise HTTPException(status_code=400, detail="Tablo device is not connected")
     if guide_refresh.get("stage") not in ("tablo", "syncing"):
-        asyncio.create_task(refresh_guide_from_tablo())
+        background.start(refresh_guide_from_tablo())
     return {"status": "sync_started", "stage": "tablo"}
 
 

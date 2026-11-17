@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, List
 
-from .. import lanauth
+from .. import background, lanauth
 from ..tablo_client import tablo_manager
 from ..sync_service import sync_service
 from ..database import get_sync_meta
@@ -61,7 +61,7 @@ async def login(req: LoginRequest, request: Request):
         # Autofill often adds a space after the email, which Tablo's sign-in rejects as a wrong email
         devices = await tablo_manager.login(req.email.strip(), req.password)
         # Trigger background library sync automatically on login
-        asyncio.create_task(sync_service.sync_library())
+        background.start(sync_service.sync_library())
         return {
             "success": True,
             "devices_count": len(devices),
@@ -96,7 +96,7 @@ async def select_device(sid: str, request: Request):
     _only_this_pc(request)
     try:
         dev = tablo_manager.select_device(sid)
-        asyncio.create_task(sync_service.sync_library())
+        background.start(sync_service.sync_library())
         return {
             "success": True,
             "active_device": {"name": dev.name, "sid": dev.sid, "local_url": dev.local_url}

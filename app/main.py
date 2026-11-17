@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response, JSONResponse
 from .config import (
     APP_NAME, APP_VERSION, BASE_DIR, RESOURCE_DIR, STATIC_DIR, TRANSCODE_DIR, DOWNLOADS_DIR, IMAGE_CACHE_DIR, HOST, PORT,
 )
-from . import autoexport, commercials, dropouts, encoders, export_pace, lanauth, netcheck, redact, streaming, whatsnew
+from . import autoexport, background, commercials, dropouts, encoders, export_pace, lanauth, netcheck, redact, streaming, whatsnew
 from .settings import exports_dir
 from .database import get_export_jobs, fail_interrupted_exports
 from .database import init_db
@@ -33,7 +33,7 @@ from .routes import plex_routes
 async def lifespan(app: FastAPI):
     # Sign-in tokens and the account's email never reach the log (it gets pasted into forum posts)
     redact.install()
-    asyncio.create_task(asyncio.to_thread(netcheck.tailscale))  # this PC's Tailscale name, for _on_tailnet
+    background.start(asyncio.to_thread(netcheck.tailscale))  # this PC's Tailscale name, for _on_tailnet
     # Startup: initialize database tables
     print("[Startup] Initializing Tablo SQLite database...")
     init_db()
@@ -46,8 +46,8 @@ async def lifespan(app: FastAPI):
     if tablo_manager.is_authenticated:
         print(f"[Startup] Found cached Tablo device: {tablo_manager.device.name} ({tablo_manager.device.local_url})")
         # The Tablo may have a new address since sign-in (a router's choice): the account knows
-        asyncio.create_task(tablo_manager.refresh_address())
-        asyncio.create_task(sync_service.sync_library())
+        background.start(tablo_manager.refresh_address())
+        background.start(sync_service.sync_library())
     else:
         print("[Startup] No authenticated Tablo device yet. Ready for login via web UI.")
 

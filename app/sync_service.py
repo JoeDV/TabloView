@@ -15,7 +15,7 @@ import httpx
 
 from .tablo_client import tablo_manager
 from .notifications import check_all
-from . import cleanup, rerecord, returning, signal_health
+from . import background, cleanup, rerecord, returning, signal_health
 from .database import (
     upsert_show,
     upsert_episode,
@@ -347,7 +347,7 @@ class LibrarySyncService:
 
             # Also sync guide in background task (it checks for conflicts when done)
             if include_guide:
-                asyncio.create_task(self.sync_guide())
+                background.start(self.sync_guide())
             await check_all(conflicts=not include_guide)
             await cleanup.run()
             await rerecord.run()

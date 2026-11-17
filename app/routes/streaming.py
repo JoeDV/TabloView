@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from .. import streaming
+from .. import background, streaming
 from ..tablo_client import tablo_manager
 from .live import pick_logo
 
@@ -52,7 +52,7 @@ async def streaming_shows(q: Optional[str] = Query(None), category: str = Query(
     """Shows with an airing still to come, soonest first (on now at the top), with how many are in
     each category. Loads the listings first if TabloView has none yet."""
     if not streaming.last_refresh() and tablo_manager.is_authenticated and not streaming.status["refreshing"]:
-        asyncio.create_task(streaming.refresh())
+        background.start(streaming.refresh())
     all_shows = await asyncio.to_thread(streaming.shows)
     pool = [s for s in all_shows if not recordable or s["can_record"]]
     if q and q.strip():

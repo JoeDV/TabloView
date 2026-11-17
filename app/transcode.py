@@ -20,7 +20,7 @@ import httpx
 from starlette.responses import Response, StreamingResponse
 from starlette.background import BackgroundTask
 
-from . import childproc, encoders, export_pace
+from . import background, childproc, encoders, export_pace
 from .config import TRANSCODE_DIR, FFMPEG_PATH
 from .database import save_export_job
 from .settings import load_settings, exports_dir
@@ -97,7 +97,7 @@ def remove_dir_with_retry(path: Path, attempts: int = 10):
     if force_rmtree(path, quiet=True):
         return
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
         force_rmtree(path)
         return
@@ -109,7 +109,7 @@ def remove_dir_with_retry(path: Path, attempts: int = 10):
                 return
         force_rmtree(path)  # final attempt logs the error; startup cleanup catches leftovers
 
-    loop.create_task(_retry())
+    background.start(_retry())
 
 
 class StreamSession:
@@ -1051,7 +1051,7 @@ class TranscodeManager:
                     except OSError as e:
                         print(f"[ExportWorker] Export {job_id}: couldn't save its .nfo file: {e}")
                 from . import plex
-                asyncio.create_task(plex.after_export(output_path, episode))  # shows up in Plex right away
+                background.start(plex.after_export(output_path, episode))  # shows up in Plex right away
                 size = output_path.stat().st_size
                 print(f"[ExportWorker] Export {job_id} completed successfully ({round(size / 1024**2, 1)} MB)")
                 save_export_job({

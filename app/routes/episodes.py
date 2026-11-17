@@ -19,7 +19,7 @@ from ..database import (
 )
 from ..tablo_client import tablo_manager
 from ..transcode import transcode_manager
-from .. import previews
+from .. import background, previews
 from ..netcheck import away_from_home
 from .. import lanauth
 
@@ -230,7 +230,7 @@ async def watch_episode(
     sess.tablo_token = watch_data.get("token")
     # The whole recording's timeline previews, from the Tablo (one small file, cached per episode)
     if watch_data.get("bif_url_hd"):
-        asyncio.create_task(previews.fetch(ep["id"], watch_data["bif_url_hd"], ep.get("recording_state") == "finished"))
+        background.start(previews.fetch(ep["id"], watch_data["bif_url_hd"], ep.get("recording_state") == "finished"))
 
     if transcode:
         try:
