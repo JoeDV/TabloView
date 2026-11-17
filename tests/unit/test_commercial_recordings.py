@@ -41,6 +41,10 @@ FLOORS = {  # name: (share of ads skipped, most show skipped, show_end)
     # show comes back from each break (also once under the station's 20 s news teaser, laid over the
     # show's return at 50:53 and counted here as an ad: nobody watches 9-1-1 for it)
     "nine_one_one": (0.97, 5, 3572),
+    # ABC sitcom (2026-11-12) under the station's "Storm Track" box, there for the whole recording, ads
+    # included, and taken for the logo: no breaks at all, until the logo was looked for among the pixels
+    # that come and go. ABC leaves its logo off for the first ~2 minutes back, so ends run a little late
+    "scrubs_weather_box": (0.97, 70, 1800),
     # NBC drama (2026-10-30): the logo is in the lower left; NBC runs its own promos after the logo is back,
     # and its TV-14 rating (lettering, no box) shows as the show returns: the rating ends those breaks
     # (one 26 s later, one 10 s sooner: it had run into the show). The last break still starts 37 s
@@ -136,6 +140,24 @@ class ClaudeAnswerTests(unittest.TestCase):
                 self.assertLessEqual(show, 20)
                 total += show
         self.assertLessEqual(total, 30)  # 25 s across all eight when checked; the finder alone, 654 s
+
+    def test_a_daydream_with_the_logo_on_isnt_a_break(self):
+        # Scrubs (ABC, 2026-11-12): Claude took JD's 51 s daydream (12:20, 1930s suits, ABC's logo on
+        # throughout) for a break in two answers of three, even when told about daydreams
+        from app import claude_ads
+        rec, _, corners = load("scrubs_weather_box")
+        answer = [[170, 290], [740, 791], [861, 1081], [1588, 1811]]
+        found = c._not_over_logo(claude_ads.onto_black_frames(answer, sorted(rec["blacks"]), rec["seconds"]), corners)
+        self.assertEqual(len(found), 3, found)
+        self.assertFalse(any(b["start"] <= 760 < b["end"] for b in found))
+
+    def test_the_logo_keeps_every_real_break(self):
+        from app import claude_ads
+        for name, answer in CLAUDE.items():
+            with self.subTest(name):
+                rec, _, corners = load(name)
+                found = claude_ads.onto_black_frames(answer, sorted(rec["blacks"]), rec["seconds"])
+                self.assertEqual(c._not_over_logo(found, corners), found)
 
 
 if __name__ == "__main__":

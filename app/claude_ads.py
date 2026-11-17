@@ -46,6 +46,10 @@ Do NOT mark as a break:
 - "Next time on..." or "Previously on..." segments that belong to this program
 - End credits of this program
 - The program's own title cards and logo bumpers going into or coming out of a break
+- Daydreams, fantasies, dream sequences, flashbacks and musical numbers with the program's own \
+characters, even when they look nothing like the rest of it (period costumes, another setting, different \
+color grading). Comedies cut to these in the middle of a scene. If the people are the program's cast and \
+the channel logo stays on, it is the program
 
 How to decide (use these cues, in order of strength):
 1. Channel logo (bug) is usually present during the show and absent (or different) during ads/promos.

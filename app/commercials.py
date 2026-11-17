@@ -239,18 +239,58 @@ def _gone_too_long(scores: List[float], t: float) -> bool:
 def best_logo(corners: List[Sequence[bytes]]) -> Optional[Tuple[List[float], float]]:
     """The corner with the channel's logo (most networks: bottom right; some channels use another):
     the clearest one whose mark is never gone for longer than a break. None: no logo to go by."""
-    found = [logo_scores([c[k] for c in corners]) for k in range(len(corners[0]))]
-    found = [f for f in found if f]
+    found = [(k, f) for k in range(len(corners[0])) if (f := logo_scores([c[k] for c in corners]))]
     if not found:
         return None
     # None that stays: not a logo at all, but something like a station's weather bar, there over show
     # and ads alike until it's taken down (Jeopardy on WTHR, 2026-11-16: gone for 10 minutes of the show,
     # which became a 9½-minute "break"). Colour, as for channels without a logo
-    likely = [f for f in found if not _gone_too_long(f[0], f[1])]
+    likely = [(k, f) for k, f in found if not _gone_too_long(f[0], f[1])]
     if not likely:
         return None
-    scores, t, _ = max(likely, key=lambda f: f[2])
+    k, (scores, t, _) = max(likely, key=lambda kf: kf[1][2])
+    if not _logo_breaks(scores, t, [], []):
+        # Never gone, so not the channel's logo but a station's box over show and ads alike (Scrubs,
+        # ABC, 2026-11-12: "Storm Track", the time and temperature bottom right for all 31 minutes, and
+        # the network's see-through logo just above it, lit in only half the seconds of the show). The
+        # logo may still be in that corner, among the pixels that come and go
+        inner = _logo_among_rest([c[k] for c in corners])
+        return inner if inner and not _gone_too_long(*inner) and _logo_breaks(*inner, [], []) else None
     return scores, t
+
+
+# Lit in nearly every second: part of something that stays (a station's box), not a logo that leaves
+STEADY_SHARE = 0.9
+# In _logo_among_rest, a logo pixel is lit this much more often with the logo than without it
+TOGETHER = 0.3
+
+
+def _logo_among_rest(corners: List[Union[bytes, Sequence[bool]]]) -> Optional[Tuple[List[float], float]]:
+    """A corner's logo once what stays on screen is set aside: of the pixels lit often but not always,
+    the ones that come and go together. From all of them, a first guess at the seconds with the logo;
+    then, a few times over, the pixels lit much more in those seconds than in the others, and the
+    seconds from those. None if they don't settle into a clear logo."""
+    marks = [lighter_pixels(c) if isinstance(c, (bytes, bytearray)) else c for c in corners]
+    n = len(marks)
+    freq = [sum(m[i] for m in marks) / n for i in range(len(marks[0]))]
+    logo = [i for i, f in enumerate(freq) if 0.2 < f <= STEADY_SHARE]
+    rest = [i for i, f in enumerate(freq) if f < 0.2]
+    for _ in range(5):
+        if len(logo) < LOGO_MIN_PIXELS or not rest:
+            return None
+        scores = [sum(m[i] for i in logo) / len(logo) - sum(m[i] for i in rest) / len(rest) for m in marks]
+        t, lo, hi = _threshold(scores)
+        on = [s >= t for s in scores]
+        with_logo = sum(on)
+        if not 0 < with_logo < n:
+            return None
+        lit_on = [sum(m[i] for m, o in zip(marks, on) if o) / with_logo for i in range(len(freq))]
+        lit_off = [sum(m[i] for m, o in zip(marks, on) if not o) / (n - with_logo) for i in range(len(freq))]
+        new = [i for i in range(len(freq)) if lit_on[i] - lit_off[i] > TOGETHER]
+        if new == logo:
+            break
+        logo = new
+    return (scores, t) if hi - lo >= LOGO_SEPARATION else None
 
 
 def _logo_breaks(scores: List[float], t: float, edges: List[float], blacks: List[float],
@@ -844,6 +884,26 @@ def rating_boxes(path) -> List[Tuple[int, int]]:
     return show_rating([rating_rows(data[s * per:(s + 1) * per]) for s in range(len(data) // per)])
 
 
+# A break Claude found with the channel's logo on for more of it than this is the show: in the breaks
+# checked, the logo was on for at most a quarter of the time (Hell's Kitchen's last, a promo with it)
+LOGO_ON_IN_BREAK = 0.6
+
+
+def _not_over_logo(breaks: List[Dict[str, float]], corners: Optional[List[Sequence[bytes]]]) -> List[Dict[str, float]]:
+    """Claude's breaks less any the channel's logo stays on through, where there's a clear logo to go by.
+    Claude sees a picture every 10 s and took a Scrubs daydream (ABC, 2026-11-12: the cast in 1930s
+    suits, 51 s, the logo on throughout) for a break in two answers out of three, whatever it was told."""
+    found = best_logo([(c,) if isinstance(c, bytes) else c for c in corners]) if corners else None
+    if not found:
+        return breaks
+    scores, t = found
+
+    def logo_share(b: Dict[str, float]) -> float:
+        seconds = scores[int(b["start"]):int(b["end"])]
+        return sum(s >= t for s in seconds) / len(seconds) if seconds else 0.0
+    return [b for b in breaks if logo_share(b) <= LOGO_ON_IN_BREAK]
+
+
 def _not_over_rating(breaks: Optional[List[Dict[str, float]]], rating: List[Sequence[int]],
                      blacks: List[float], edges: Sequence[float] = ()) -> Optional[List[Dict[str, float]]]:
     """Whatever shows the show's own rating is the show: a break that runs into it ends at the last
@@ -1034,7 +1094,9 @@ async def analyze(ep: Dict[str, str]) -> Optional[str]:
     failed: Dict[str, bool] = {}
     by_claude = await asyncio.to_thread(claude_ads.find, ep, sorted(blacks), float(len(hists)), failed)
     if by_claude is not None:
-        breaks = by_claude = _not_over_rating(by_claude, rating, sorted(blacks), _edges(blacks, feats["quiet"]))
+        by_claude = _not_over_rating(by_claude, rating, sorted(blacks), _edges(blacks, feats["quiet"]))
+        # nor through a stretch the channel's logo stays on for
+        breaks = by_claude = await asyncio.to_thread(_not_over_logo, by_claude, feats["corners"])
     save_commercials(ep["id"], "unreliable" if breaks is None else "done", breaks, method=METHOD,
                      by_claude=by_claude is not None, found_by="claude" if by_claude is not None else how.get("by"),
                      claude_failed=bool(failed.get("yes")))
