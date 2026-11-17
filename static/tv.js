@@ -811,8 +811,14 @@ const player = {
     const cc = ['cc', state.captions ? 'CC: On' : 'CC: Off'];
     const hit = live && this.liveAiring();
     const record = hit ? [['record', isRecording(hit.a) ? '● Recording' : '● Record']] : [];
-    this.controlList = live
-      ? [['pause', this.video().paused ? '▶ Play' : '❚❚ Pause'], ['live', 'Back to live'], ...record, cc, ...shape, ['close', '✕ Close']]
+    const paused = (dual.on && dual.active === 'second' ? dual.video() : this.video()).paused;
+    // Two channels: the layout, and closing the one you aren't hearing (also Back)
+    const other = dual.on && (dual.active === 'second' ? this.s.channel : dual.s.channel);
+    const second = live && !dual.on && dual.allowed() ? [['second', '⊞ Add a channel']] : [];
+    this.controlList = dual.on
+      ? [['pause', paused ? '▶ Play' : '❚❚ Pause'], ['layout', `Layout: ${DUAL_LAYOUT_NAMES[dual.layout]}`], cc, ['close2', `✕ Close ${other ? other.name : 'the other'}`], ['close', '✕ Close both']]
+      : live
+      ? [['pause', paused ? '▶ Play' : '❚❚ Pause'], ['live', 'Back to live'], ...record, cc, ...shape, ...second, ['close', '✕ Close']]
       : [...skipBreak, ['pause', this.video().paused ? '▶ Play' : '❚❚ Pause'], ['back', '◀◀ 10 s'], ['fwd', '30 s ▶▶'], cc, ...shape, ['close', '✕ Close']];
     this.controlIndex = Math.min(index, this.controlList.length - 1);
     this.controls = true;
@@ -866,6 +872,14 @@ const player = {
     if (what === 'close') { this.hideControls(); this.exit(); return; }
     if (what === 'record') { this.recordLive(); return; }
     if (what === 'skipbreak') { this.hideControls(); this.skipBreak(); return; }
+    if (what === 'second') { this.hideControls(); dual.pick(); return; }
+    if (what === 'close2') { this.hideControls(); dual.closeOther(); return; }
+    if (what === 'layout') {
+      dual.cycleLayout();
+      this.controlList[this.controlIndex][1] = `Layout: ${DUAL_LAYOUT_NAMES[dual.layout]}`;
+      this.renderControls();
+      return;
+    }
     if (what === 'cc') {
       this.toggleCaptions();
       this.controlList[this.controlIndex][1] = state.captions ? 'CC: On' : 'CC: Off';
@@ -874,7 +888,7 @@ const player = {
     else if (what === 'fwd') this.skip(30);
     else if (what === 'live') { const w = this.liveWindow(); if (w) this.video().currentTime = Math.max(w.start, w.end - 6); this.video().play().catch(() => {}); }
     const play = this.controlList.find(([v]) => v === 'pause');
-    if (play) play[1] = this.video().paused ? '▶ Play' : '❚❚ Pause';
+    if (play) play[1] = (dual.on && dual.active === 'second' ? dual.video() : this.video()).paused ? '▶ Play' : '❚❚ Pause';
     this.renderControls();
   },
 
@@ -915,8 +929,9 @@ const player = {
     state.captions = !state.captions;
     try { localStorage.setItem('tablo_cc', state.captions ? '1' : '0'); } catch { /* this visit only */ }
     this.applyCaptions();
+    if (dual.on) dual.apply();
     const s = this.s;
-    if (state.captions && this.open && s.sessionId && s.captionsInVideo === false) {
+    if (state.captions && this.open && s.sessionId && s.captionsInVideo === false && !(dual.on && dual.active === 'second')) {
       // This PC's graphics chip (AMD, Apple) drops captions: start again from here, converted on
       // the CPU with them. Turning them off just hides them
       this.banner('Turning on captions…');
@@ -929,8 +944,9 @@ const player = {
 
   applyCaptions() {
     const shown = captionTrack(this.video());
+    const heard = !(dual.on && dual.active === 'second');  // two channels: captions on the one you hear
     for (const t of this.video().textTracks) {
-      t.mode = state.captions && t === shown ? 'showing' : 'hidden';
+      t.mode = state.captions && heard && t === shown ? 'showing' : 'hidden';
       if (t.__raised) continue;
       t.__raised = true;
       t.addEventListener('cuechange', () => this.placeCaptions());
@@ -942,6 +958,7 @@ const player = {
   placeCaptions() {
     const line = $('#player').classList.contains('idle') ? 84 : 64;
     for (const t of this.video().textTracks) stackCues(t, line);
+    for (const t of dual.video().textTracks) stackCues(t, line);
   },
 
   message(text) {
@@ -1165,6 +1182,7 @@ const player = {
       s.sessionId = res.session_id;
       s.captionsInVideo = res.captions !== false;
       this.attach(res.stream_url);
+      if (dual.on) dual.apply();
     } catch (err) {
       this.message(err.status === 409 || err.status === 503 ? `${err.message} Press Back to choose something else.` : `Couldn't tune ${c.name}: ${err.message}`);
     }
@@ -1201,8 +1219,8 @@ const player = {
   },
 
   // Channel up/down in live TV, through the list it was picked from
-  surf(dir) {
-    const list = liveChannels();
+  surf(dir, skip = null) {
+    const list = liveChannels().filter(c => c.channel_id !== skip);  // (two channels: not the other one)
     const i = list.findIndex(c => c.channel_id === this.s.id);
     if (i < 0 || !list.length) return;
     const next = list[(i + dir + list.length) % list.length];
@@ -1291,7 +1309,7 @@ const player = {
   },
 
   togglePlay() {
-    const v = this.video();
+    const v = dual.on && dual.active === 'second' ? dual.video() : this.video();
     if (v.paused) v.play().catch(() => {}); else v.pause();
     this.wake();
   },
@@ -1411,6 +1429,7 @@ const player = {
   close(keepalive = false) {
     if (!this.open) return;
     if (APP) APP.setPlaying(false);
+    dual.stop(keepalive);
     this.undo = null;
     this.held = false;  // (stopped on a spot while searching: the next thing played starts as usual)
     clearTimeout(this.seekTimer);
@@ -1434,6 +1453,272 @@ const player = {
     this.open = false;
     this.message('');
     $('#player').classList.add('hidden');
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Two channels at once (live TV), as on the PC (asked for on the forum): the player keeps the first
+// channel in #video; this runs the second in #video2. You hear one of them; ◀ ▶ pick which, ▲ ▼
+// change the one you hear, Back closes the other. Each takes a tuner, and the TV decodes two
+// pictures: cheaper sticks may not manage, so it isn't offered on a TV with under 2 GB of memory,
+// and if the TV starts dropping frames or the second picture stalls, one is closed (and the TV
+// remembers, to say so the next time).
+// ---------------------------------------------------------------------------
+const DUAL_LAYOUTS = ['side', 'pip'];
+const DUAL_LAYOUT_NAMES = { side: 'Side by side', pip: 'Big and small' };
+const chLabel = c => `${c.major > 0 ? `${c.major}.${c.minor} ` : ''}${c.name}`;
+
+const dual = {
+  on: false, picking: false, active: 'main', s: {},
+  layout: stored('tv_dual_layout', 'side') === 'pip' ? 'pip' : 'side',
+
+  video: () => $('#video2'),
+  // Too little memory to decode two pictures (navigator.deviceMemory: rounded GB; not every browser says)
+  allowed: () => !(navigator.deviceMemory && navigator.deviceMemory < 2),
+  heardChannel() { return this.on && this.active === 'second' ? this.s.channel : player.s.channel; },
+
+  // "Add a channel": the list of channels to pick the second from
+  async pick() {
+    if (this.on || player.s.kind !== 'live') return;
+    if (stored('tv_dual_struggled', '0') === '1'
+      && !await choose('Two channels at once?', 'Last time this TV couldn’t keep up with two channels, so one was closed.',
+        [{ label: 'Try anyway', value: 1 }, { label: 'Cancel', value: 0 }])) return;
+    this.list = liveChannels().filter(c => c.channel_id !== player.s.id);
+    if (!this.list.length) { player.banner('No other channels to add'); return; }
+    this.index = 0;
+    this.picking = true;
+    this.renderPicker();
+  },
+
+  renderPicker() {
+    const box = $('#chPicker');
+    const from = Math.max(0, Math.min(this.index - 3, this.list.length - 7));
+    box.innerHTML = '<div class="pick-title">Add a channel</div><div class="pick-hint">▲ ▼ to choose · OK to add · Back to cancel</div>'
+      + this.list.slice(from, from + 7).map((c, n) => {
+        const on = nowNext(c).now;
+        return `<button class="pick-row ${from + n === this.index ? 'on' : ''}" data-pick="${from + n}"><b>${esc(chLabel(c))}</b><span>${esc(on ? on.title : '')}</span></button>`;
+      }).join('');
+    box.classList.remove('hidden');
+  },
+
+  movePick(dir) {
+    this.index = (this.index + dir + this.list.length) % this.list.length;
+    this.renderPicker();
+  },
+
+  cancelPick() {
+    this.picking = false;
+    $('#chPicker').classList.add('hidden');
+  },
+
+  async choosePick(i = this.index) {
+    const c = this.list[i];
+    this.cancelPick();
+    if (c) await this.start(c);
+  },
+
+  // A tuner for an antenna channel: the same check as tuning one
+  async tunerOk(c) {
+    if (c.kind !== 'ota') return true;
+    let check = null;
+    try { check = await api('/api/live/tune_check'); } catch { return true; }
+    if (check && check.no_free_tuner) {
+      return !!await choose('All tuners are busy', `${c.name} needs a tuner of its own, and none is free right now.`, [{ label: 'Try anyway', value: 1 }, { label: 'Cancel', value: 0 }]);
+    }
+    if (check && check.warn && check.recordings_soon && check.recordings_soon.length) {
+      const first = check.recordings_soon[0];
+      return !!await choose('Not enough tuners', `${first.title} will start recording at ${fmt.time(first.start)}, and a second channel could make it fail.`,
+        [{ label: 'Watch anyway', value: 1 }, { label: 'Cancel', value: 0 }]);
+    }
+    return true;
+  },
+
+  async start(c) {
+    if (!await this.tunerOk(c)) return;
+    player.banner(`Adding ${chLabel(c)}…`, 8000);
+    if (!await this.load(c)) return;
+    this.on = true;
+    this.active = 'main';
+    $('#player').classList.add('dual', `dual-${this.layout}`);
+    this.apply();
+    this.watch();
+    player.banner('◀ ▶ choose which you hear · ▲ ▼ change it · Back closes the other', 6000);
+  },
+
+  async load(c) {
+    const v = this.video();
+    this.teardown();
+    const s = { channel: c, id: c.channel_id };
+    this.s = s;
+    try {
+      // (always with captions, so CC can show them without starting it again)
+      const res = await api('/api/live/tune', { method: 'POST', body: JSON.stringify({ channel_id: c.channel_id, transcode: true, kind: c.kind, captions: true }) });
+      if (this.s !== s) { player.stopById(res.session_id); return false; }
+      Object.assign(s, { sessionId: res.session_id, url: res.stream_url });
+    } catch (err) {
+      player.banner(`Couldn't tune ${c.name}: ${err.message}`, 5000);
+      this.s = {};
+      return false;
+    }
+    applyShape(v, c.channel_id);
+    if (window.Hls && Hls.isSupported()) {
+      const hls = new Hls({ enableWorker: true, backBufferLength: 30, maxBufferLength: 30, maxBufferSize: 40 * 1000 * 1000 });
+      hls.loadSource(s.url);
+      hls.attachMedia(v);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => v.play().catch(() => {}));
+      hls.on(Hls.Events.ERROR, (evt, data) => {
+        if (!data.fatal) return;
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+        else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+        else this.struggled();
+      });
+      this.hls = hls;
+    } else {
+      v.src = s.url;
+      v.play().catch(() => {});
+    }
+    v.onplaying = () => $('#player').classList.add('started2');
+    return true;
+  },
+
+  teardown() {
+    clearInterval(this.watchTimer);
+    if (this.hls) { this.hls.destroy(); this.hls = null; }
+    const v = this.video();
+    v.onplaying = null;
+    v.pause();
+    v.removeAttribute('src');
+    v.load();
+    $('#player').classList.remove('started2');
+  },
+
+  // Back to one channel: the second's tuner goes back to the Tablo
+  stop(keepalive = false) {
+    this.cancelPick();
+    clearTimeout(this.surfTimer);
+    this.surfTarget = null;
+    if (!this.on && !this.s.sessionId) return;
+    player.stopById(this.s.sessionId, keepalive);
+    this.teardown();
+    this.end();
+  },
+
+  end() {
+    this.on = false;
+    this.active = 'main';
+    this.s = {};
+    $('#player').classList.remove('dual', 'dual-side', 'dual-pip', 'hear-second');
+    this.apply();
+  },
+
+  // Close the channel you aren't hearing (Back). Hearing the second, the first is closed and the
+  // second carries on as the only one, in the full picture (its stream moves over: no new tuner)
+  closeOther() {
+    if (!this.on) return;
+    if (this.active === 'main') { this.stop(); return; }
+    clearTimeout(this.surfTimer);
+    const s = this.s;
+    player.teardown();
+    player.stopSession();
+    this.s = {};  // (its session carries on, in the player)
+    this.teardown();
+    this.end();
+    player.s = { kind: 'live', id: s.id, channel: s.channel, shapeKey: s.id, sessionId: s.sessionId, captionsInVideo: true };
+    this.apply();
+    player.attach(s.url);
+  },
+
+  hear(which) {
+    if (!this.on || this.active === which) return;
+    this.active = which;
+    this.apply();
+    player.banner(`Hearing ${chLabel(this.heardChannel())}`);
+  },
+
+  toggleHear() { this.hear(this.active === 'main' ? 'second' : 'main'); },
+
+  cycleLayout() {
+    $('#player').classList.remove(`dual-${this.layout}`);
+    this.layout = DUAL_LAYOUTS[(DUAL_LAYOUTS.indexOf(this.layout) + 1) % DUAL_LAYOUTS.length];
+    try { localStorage.setItem('tv_dual_layout', this.layout); } catch { /* this visit only */ }
+    if (this.on) $('#player').classList.add(`dual-${this.layout}`);
+  },
+
+  // Sound, captions, labels and the title for the channel you hear
+  apply() {
+    const main = player.video(), second = this.video();
+    main.muted = this.on && this.active === 'second';
+    second.muted = !(this.on && this.active === 'second');
+    player.applyCaptions();
+    const shown = captionTrack(second);
+    for (const t of second.textTracks) t.mode = this.on && this.active === 'second' && state.captions && t === shown ? 'showing' : 'hidden';
+    $('#player').classList.toggle('hear-second', this.on && this.active === 'second');
+    if (this.on) {
+      const label = (c, on) => `${on ? '🔊 ' : ''}${esc(c ? chLabel(c) : '')}`;
+      $('#paneLabel1').innerHTML = label(player.s.channel, this.active === 'main');
+      $('#paneLabel2').innerHTML = label(this.s.channel, this.active === 'second');
+    }
+    const c = this.heardChannel();
+    if (c) {
+      const on = nowNext(c).now;
+      $('#osdTitle').textContent = on ? on.title : c.name;
+      $('#osdSub').textContent = chLabel(c);
+    }
+  },
+
+  // ▲ ▼ change the channel you hear (the first channel through the player, as usual)
+  surf(dir) {
+    if (this.active === 'main') { player.surf(dir, this.s.id); return; }
+    const list = liveChannels().filter(c => c.channel_id !== player.s.id);
+    if (!list.length) return;
+    const i = list.findIndex(c => c.channel_id === (this.surfTarget || this.s.id));
+    const next = list[(i + dir + list.length) % list.length];
+    this.surfTarget = next.channel_id;
+    player.banner(chLabel(next));
+    clearTimeout(this.surfTimer);
+    this.surfTimer = setTimeout(() => this.retune(next), 700);
+  },
+
+  async retune(c) {
+    this.surfTarget = null;
+    if (!this.on || c.channel_id === this.s.id) return;
+    if (!await this.tunerOk(c)) return;
+    player.stopById(this.s.sessionId);  // its tuner back first, so the new one can have it
+    if (await this.load(c)) { this.apply(); this.watch(); } else this.stop();
+  },
+
+  // Keeping up: every 2 s, the share of frames each picture dropped since the last look. Over a
+  // quarter on either for 10 s, or the second picture standing still for 20 s: one is closed
+  watch() {
+    clearInterval(this.watchTimer);
+    const q = v => (v.getVideoPlaybackQuality ? v.getVideoPlaybackQuality() : null);
+    let last = null, bad = 0, still = 0, lastTime = -1;
+    const started = Date.now();
+    this.watchTimer = setInterval(() => {
+      if (!this.on || document.hidden) return;
+      const v1 = player.video(), v2 = this.video();
+      const playing = !v2.paused && !v1.paused;
+      still = playing && v2.currentTime === lastTime && Date.now() - started > 20000 ? still + 2 : 0;
+      lastTime = v2.currentTime;
+      const now = [q(v1), q(v2)];
+      if (playing && last && now[0] && now[1] && Date.now() - started > 8000) {
+        const ratio = i => {
+          const shown = now[i].totalVideoFrames - last[i].totalVideoFrames;
+          return shown > 0 ? (now[i].droppedVideoFrames - last[i].droppedVideoFrames) / shown : 0;
+        };
+        bad = Math.max(ratio(0), ratio(1)) > 0.25 ? bad + 2 : 0;
+      }
+      last = now.every(Boolean) ? now.map(x => ({ totalVideoFrames: x.totalVideoFrames, droppedVideoFrames: x.droppedVideoFrames })) : null;
+      if (bad >= 10 || still >= 20) this.struggled();
+    }, 2000);
+  },
+
+  // Keeps the one you hear
+  struggled() {
+    if (!this.on) return;
+    try { localStorage.setItem('tv_dual_struggled', '1'); } catch { /* this visit only */ }
+    this.closeOther();
+    player.banner('This TV couldn’t keep up with two channels, so one was closed.', 6000);
   },
 };
 
@@ -1492,6 +1777,14 @@ function onKey(e) {
   if (dialogDone && isBack(e)) { e.preventDefault(); dialogDone(null); return; }
 
   if (player.open && $('#dialog').classList.contains('hidden')) {
+    // Picking a second channel: ▲ ▼ through the list, OK adds it, Back (or ◀) cancels
+    if (dual.picking) {
+      e.preventDefault();
+      if (k === 'ArrowUp' || k === 'ArrowDown') dual.movePick(k === 'ArrowUp' ? -1 : 1);
+      else if (k === 'Enter' || k === ' ') dual.choosePick();
+      else if (isBack(e) || k === 'ArrowLeft') dual.cancelPick();
+      return;
+    }
     if (player.upNext && (k === 'Enter' || k === ' ')) { e.preventDefault(); player.playNext(); return; }
     if (player.held && !player.controls && k === 'Enter') { e.preventDefault(); player.togglePlay(); return; }
     if (player.inBreak && !player.controls && isBack(e)) { e.preventDefault(); player.hideSkip(); return; }
@@ -1505,6 +1798,19 @@ function onKey(e) {
       return;
     }
     const live = player.s.kind === 'live';
+    // Two channels: ◀ ▶ pick the one you hear (either swaps in Big and small), ▲ ▼ change it,
+    // Back closes the other
+    if (dual.on) {
+      const side = dual.layout === 'side';
+      const twoKeys = {
+        Enter: () => player.showControls(), ' ': () => player.togglePlay(), MediaPlayPause: () => player.togglePlay(),
+        ArrowLeft: () => (side ? dual.hear('main') : dual.toggleHear()), ArrowRight: () => (side ? dual.hear('second') : dual.toggleHear()),
+        ArrowUp: () => dual.surf(-1), ArrowDown: () => dual.surf(1), ChannelUp: () => dual.surf(-1), ChannelDown: () => dual.surf(1),
+        PageUp: () => dual.surf(-1), PageDown: () => dual.surf(1),
+      };
+      if (twoKeys[k]) { e.preventDefault(); twoKeys[k](); player.wake(); return; }
+      if (isBack(e)) { e.preventDefault(); dual.closeOther(); player.wake(); return; }
+    }
     const keys = {
       Enter: () => player.showControls(), ' ': () => player.togglePlay(), MediaPlayPause: () => player.togglePlay(),
       MediaPlay: () => player.video().play(), MediaPause: () => player.video().pause(),
@@ -1543,6 +1849,9 @@ function onClick(e) {
   // A mouse in the player (TV view on a PC): the controls are buttons too
   const ctl = e.target.closest('[data-ctl]');
   if (ctl && player.controls) { player.controlIndex = Number(ctl.dataset.ctl); player.pressControl(); return; }
+  const pick = e.target.closest('[data-pick]');
+  if (pick && dual.picking) { dual.choosePick(Number(pick.dataset.pick)); return; }
+  if (dual.on && !player.controls && e.target.closest('#video2')) { dual.hear('second'); return; }
   if (player.open && !player.controls && e.target.closest('#player')) { player.showControls(); return; }
   // The logo opens or closes the menu with its names; a tap anywhere else closes it
   const rail = $('#rail');
@@ -1627,8 +1936,12 @@ function init() {
   });
   // A caption track appears once the stream's first captions arrive: show it if captions are on
   player.video().textTracks.addEventListener('addtrack', () => player.applyCaptions());
+  dual.video().textTracks.addEventListener('addtrack', () => dual.apply());
   window.addEventListener('hashchange', route);
-  window.addEventListener('resize', () => player.open && applyShape(player.video(), player.s.shapeKey));
+  window.addEventListener('resize', () => {
+    if (player.open) applyShape(player.video(), player.s.shapeKey);
+    if (dual.on) applyShape(dual.video(), dual.s.id);
+  });
   // Leaving the page: save where the recording got to and free the stream (and its tuner)
   window.addEventListener('pagehide', () => player.close(true));
   // Leaving the TV's browser (the remote's Home button) while something plays: it kept playing unseen
@@ -1639,11 +1952,13 @@ function init() {
     clearTimeout(player.awayTimer);
     if (!document.hidden || !player.open || !ON_A_TV) return;
     player.video().pause();
+    dual.video().pause();
     player.awayTimer = setTimeout(() => { if (document.hidden && player.open) player.exit(); }, AWAY_CLOSE_SECONDS * 1000);
   });
   // While something plays (paused too), tell TabloView every minute, so it isn't closed as unused
   setInterval(() => {
-    if (player.s.sessionId) api('/api/live/alive', { method: 'POST', body: JSON.stringify({ session_ids: [player.s.sessionId] }) }).catch(() => {});
+    const ids = [player.s.sessionId, dual.s.sessionId].filter(Boolean);
+    if (ids.length) api('/api/live/alive', { method: 'POST', body: JSON.stringify({ session_ids: ids }) }).catch(() => {});
   }, 60000);
   // TabloView updated on the PC: load the new page. The TV app keeps this page open for days (Home
   // and back only hides it), so it went on running the old version's player after an update
