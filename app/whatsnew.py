@@ -13,6 +13,16 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.3.7": [
+        "Settings has a new look: its sections are listed on the left, and each setting is one row, with what it does on the left and its switch or button on the right. Search settings finds any setting from every section. Help is laid out the same way, with its own search.",
+        "Two channels at once on your TV: in live TV, press OK, then Add a channel. ◀ ▶ choose which one you hear, ▲ ▼ change it, and Back closes the other. If the TV can't keep up with two pictures, TabloView closes one by itself.",
+        "Moving to a new PC: Settings → About & diagnostics saves everything you've set up (settings, show options, the Watch list, reminders, commercial breaks already found) in one file to restore on the new PC. Sign-ins and the PIN aren't in it, so the file is safe to keep anywhere.",
+        "When your Tablo's drive is 90% full, a notice says how much is left and which shows' watched recordings take the most space. Press × to hide it until the drive reaches 95%.",
+        "The Skip break message can be put away while you keep watching: × on the PC, Back on a TV.",
+        "Microsoft Store copies: Check now says when a new version is out but still waiting for the Store's approval, instead of \"You're on the latest version\".",
+        "Fixed: a weather alert banner in the corner of the picture could be taken for the network logo, turning parts of a show into long \"breaks\". Recordings this affected are checked again by themselves.",
+        "Fixed: Find again and Find commercials with Claude did nothing on a recording whose breaks were already found. Also fixed: live TV didn't start after a recording was left stopped on a spot.",
+    ],
     "1.3.6": [
         "Searching through a recording stops where you land: skip ahead or back, or click the timeline, and the picture waits there until you press Play (OK on a TV).",
         "Exports keep 5.1 surround sound when the broadcast has it. Recordings that are stereo stay stereo.",
