@@ -4755,7 +4755,8 @@ const player = {
     this.hideUpNext();
     this.clearMessage();
     Object.assign(state.stream, { channelId, channelName: name, channelKind: kind, episodeId: null,
-                                  shapeKey: channelId, stallSince: 0, stallShown: false });
+                                  shapeKey: channelId, stallSince: 0, stallShown: false,
+                                  held: false });  // (a recording left stopped on a spot: live TV starts as usual)
     this.showTimeline(true);
     this.open(`Live · ${name}`);
     this.setStatus(`<span class="wait">Tuning ${esc(name)}…</span>`);

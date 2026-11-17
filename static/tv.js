@@ -1412,6 +1412,7 @@ const player = {
     if (!this.open) return;
     if (APP) APP.setPlaying(false);
     this.undo = null;
+    this.held = false;  // (stopped on a spot while searching: the next thing played starts as usual)
     clearTimeout(this.seekTimer);
     this.pendingSeek = null;
     if (this.s.kind === 'rec') this.s.gen = (this.s.gen || 0) + 1;  // a stream still starting is stopped when it arrives
