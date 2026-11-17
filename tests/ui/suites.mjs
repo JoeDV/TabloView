@@ -81,7 +81,7 @@ export const SUITES = {
     await b.ev(`window.__fake['/api/live/tuners'] = { total: 4, in_use: 3, held: 2, recording: 1, streams_in_use: 0, streams_total: 4, tuners: [] };
       window.__fake['/api/live/tune_check'] = { total: 4, in_use: 3, held: 2, free_after_tuning: 0, needed: 1, warn: true, no_free_tuner: false, recordings_soon: [{ title: 'Test Show', start: new Date(Date.now() + 1800000).toISOString() }] }; checkTuners()`);
     await sleep(800);
-    t.check('Tuner badge shows tuners still releasing', /2 releasing/.test(await b.ev(`document.getElementById('tunerText').textContent`)));
+    t.check('Tuner badge shows tuners in use and recording', (await b.ev(`document.getElementById('tunerText').textContent`)) === 'Tuners 3/4 · 1 recording');
     if (await b.ev(`!!document.querySelector('.epg-ch[data-kind="ota"]')`)) {
       await b.ev(`document.querySelector('.epg-ch[data-kind="ota"]').click()`); await sleep(800);
       t.check('Antenna channel warns before taking the last tuner', /Test Show will start recording/.test(await b.ev(`(document.querySelector('.overlay .dialog-text') || {}).textContent || ''`)));
@@ -145,6 +145,8 @@ export const SUITES = {
     await key('ArrowLeft'); await sleep(800);
     const back = await b.ev('player.position()');
     t.check('← goes back 10 seconds', back <= before - 7 && back >= before - 13, `${before}s → ${back}s`);
+    t.check('...and stops there until Play', await b.ev(`document.getElementById('video').paused && state.stream.held`));
+    await key(' '); await b.waitFor(`!document.getElementById('video').paused`, 20000);
     await key('m'); await sleep(200);
     t.check('M mutes', await b.ev(`document.getElementById('video').muted`));
     await key('m');
@@ -214,6 +216,7 @@ export const SUITES = {
     await b.ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'c' }))`); await sleep(600);
     const rows = await b.ev(`document.querySelectorAll('#chanPanel .chan-row').length`);
     t.check('C opens the channel list with what’s on', rows > 0 && await b.ev(`!!document.querySelector('#chanPanel .chan-row.current') && !!document.querySelector('#chanPanel .chan-now')`), `${rows} channels`);
+    await b.ev(`player.toggleChannels(false)`); await sleep(300);  // (with the list open, Page Down moves in it)
     await b.ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageDown' }))`); await sleep(200);
     await b.ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageDown' }))`); await sleep(300);
     t.check('Page Down shows where it’s heading', await b.ev(`!document.getElementById('chanOsd').classList.contains('hidden')`));
@@ -273,7 +276,7 @@ export const SUITES = {
     await sleep(300);
     await b.ev(`document.querySelector('[data-action="bulk-export"]').click()`); await sleep(600);
     t.check('Export MP4 on 2 selected episodes queues both (intercepted)', await b.ev(`window.__writes.some(w => w[1] === '/api/episodes/export_batch' && JSON.parse(w[2]).episode_ids.length === 2)`));
-    await b.go('#/settings', `document.querySelector('[data-change="export-format"]')`);
+    await b.go('#/settings?tab=storage', `document.querySelector('[data-change="export-format"]')`);
     t.check('Settings page has the export format setting', (await b.ev(`document.querySelector('[data-change="export-format"]').options.length`)) === 2);
   },
 
@@ -321,7 +324,7 @@ export const SUITES = {
     t.check('In a break, a Skip break button shows', await b.ev(`!document.getElementById('skipBreak').classList.contains('hidden')`));
     await b.ev(`document.getElementById('skipBreak').click()`); await sleep(300);
     t.check('Skip break jumps to the end of the break', (await b.ev('window.__seek')) === 420);
-    await b.ev(`state.stream.autoSkip = true; player.checkBreak(305)`); await sleep(300);
+    await b.ev(`Object.defineProperty(player.video(), 'paused', { configurable: true, get: () => false }); state.stream.autoSkip = true; player.checkBreak(305); delete player.video().paused`); await sleep(300);
     t.check('With auto-skip on it jumps by itself', (await b.ev('window.__seek')) === 420 && /Skipped/.test(await b.ev(`document.getElementById('toasts').textContent`)));
     await b.ev(`player.playEpisode = player.__realPlay; state.stream.episodeId = null; player.close()`);
   },
