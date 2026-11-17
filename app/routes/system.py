@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from ..config import APP_NAME, APP_VERSION, IS_PACKAGED, IS_STORE, FFMPEG_PATH, HOME_DIR, DOWNLOADS_DIR
 from ..settings import load_settings, save_settings, exports_dir
 from ..updates import check_for_update
-from .. import background, commercials, dropouts, encoders, lanauth, netcheck, notifications, presence, startup, whatsnew
+from .. import background, backup, commercials, dropouts, encoders, lanauth, netcheck, notifications, presence, startup, whatsnew
 from ..tablo_client import tablo_manager
 from ..sync_service import sync_service
 from ..database import get_sync_meta, get_export_jobs, delete_export_job, get_storage_by_show
@@ -518,8 +518,14 @@ async def update_settings(update: SettingsUpdate, request: Request):
 
 @router.get("/storage")
 async def get_storage():
-    """Fetch storage usage from Tablo attached hard drive(s)."""
-    return await tablo_manager.get_storage_info()
+    """Fetch storage usage from Tablo attached hard drive(s). When it's almost full (90% used), also
+    "almost_full" and the shows with the most watched recordings, for the banner."""
+    info = await tablo_manager.get_storage_info()
+    level = notifications.space_level(info)
+    if level:
+        info["almost_full"] = level
+        info["deletable"] = notifications.deletable_shows()
+    return info
 
 
 @router.get("/system/startup")
@@ -574,6 +580,30 @@ async def signal_report():
     from .. import signal_health
     await asyncio.to_thread(signal_health.update_history)
     return {"channels": signal_health.report(), "days": signal_health.REPORT_DAYS}
+
+
+@router.post("/backup")
+async def make_backup(request: Request):
+    """Everything set up in TabloView, to move it to another PC (app/backup.py). The page sends its
+    browser preferences: {"browser": {...}}."""
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    data = await asyncio.to_thread(backup.make, (body or {}).get("browser") or {})
+    return {"backup": data, "summary": backup.summary(data)}
+
+
+@router.post("/backup/restore")
+async def restore_backup(request: Request):
+    try:
+        data = await request.json()
+    except ValueError:
+        raise HTTPException(400, "This isn't a TabloView backup file.")
+    try:
+        return await asyncio.to_thread(backup.restore, data)
+    except backup.BackupError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.get("/storage/shows")

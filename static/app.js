@@ -104,7 +104,7 @@ function askForPin(code) {
   pinScreen.className = 'pin-screen';
   pinScreen.innerHTML = code === 'pin_not_set'
     ? `<div class="pin-box"><div class="brand-mark" data-icon="tv"></div><h2>TabloView</h2>
-        <p>To use TabloView on this device, first set a PIN on the PC running TabloView: <b>Settings → Network access</b>.</p>
+        <p>To use TabloView on this device, first set a PIN on the PC running TabloView: <b>Settings → Desktop &amp; network</b>.</p>
         <button class="btn btn-primary" onclick="location.reload()">Try again</button></div>`
     : `<form class="pin-box" id="pinForm"><div class="brand-mark" data-icon="tv"></div><h2>TabloView</h2>
         <p>Enter the PIN to use TabloView on this device.</p>
@@ -387,7 +387,26 @@ async function loadStorage() {
       $('#storageUsed').textContent = 'Storage unavailable';
       $('#storageFree').textContent = '';
     }
+    showSpaceBanner(s);
   } catch { /* shown as unavailable */ }
+}
+
+// The Tablo's drive almost full (90% used, again at 95%: app/notifications.py), with the shows whose
+// watched recordings take the most space. Hidden with × until it reaches the next level; once
+// it's under 90% again, the next time it fills shows it again
+function deletableText(list) {
+  return (list || []).slice(0, 2).map(t => `${t.title} (${fmt.size(t.bytes / 1024 ** 3)})`).join(', ');
+}
+function showSpaceBanner(s) {
+  const banner = $('#spaceBanner');
+  const level = (s && s.connected && s.almost_full) || 0;
+  if (!level) save('space_dismissed', 0);
+  const show = level > Number(store('space_dismissed', 0));
+  banner.classList.toggle('hidden', !show);
+  if (!show) return;
+  banner.dataset.level = level;
+  const tips = deletableText(s.deletable);
+  $('#spaceBannerText').textContent = `${fmt.size(s.free_gb)} free (${Math.round(s.percent_used)}% used).${tips ? ` Most space in watched recordings: ${tips}.` : ''}`;
 }
 
 function setSyncState(syncing, lastSync) {
@@ -1460,17 +1479,17 @@ function signalPanel(sig) {
   const badge = { frequent: '<span class="tag tag-warn">Frequent problems</span>', some: '<span class="tag">Some problems</span>', ok: '<span class="dim">Fine</span>' };
   const signalTrouble = list.some(c => c.status !== 'ok' && c.signal);
   return `
-    <div class="panel" style="grid-column:1/-1">
-      <h3>Signal health</h3><div class="panel-sub">How recordings on each channel turned out over the last ${sig.days} days, and why the Tablo says any failed.</div>
-      <div class="signal-list">${list.map(c => `
+    <section class="set-card">
+      <header class="set-card-head"><h3>By channel</h3><p>How recordings on each channel turned out over the last ${sig.days} days, and why the Tablo says any failed.</p></header>
+      <div class="set-body signal-list">${list.map(c => `
         <div class="signal-row ${c.status}">
           <div class="signal-ch"><b>${esc(c.channel)}</b> ${esc(c.call_sign)}${c.network ? ` <span class="dim">${esc(c.network)}</span>` : ''}</div>
           <div>${c.problems ? `${c.problems} of ${plural(c.recordings, 'recording')} had problems` : `${plural(c.recordings, 'recording')}, no problems`}</div>
           <div class="dim">${esc([c.reason, c.when].filter(Boolean).join(', '))}${c.last_problem ? ` · last ${esc(fmt.day(c.last_problem))}` : ''}</div>
           <div>${badge[c.status]}</div>
         </div>`).join('')}</div>
-      ${signalTrouble ? `<p class="dim" style="margin-top:12px;font-size:12.5px">Weak or lost signal is almost always the antenna, not the Tablo. Check where the channel’s tower is (rabbitears.info or antennaweb.org) and aim the antenna toward it; try it higher up or at a different window, or add an amplifier for long cable runs. Then run a channel scan in the Tablo app, which also shows each channel’s signal strength. Storms and heavy rain can cause it too.</p>` : ''}
-    </div>`;
+      ${signalTrouble ? `<p class="set-sub dim" style="font-size:12.5px;padding-bottom:18px">Weak or lost signal is almost always the antenna, not the Tablo. Check where the channel’s tower is (rabbitears.info or antennaweb.org) and aim the antenna toward it; try it higher up or at a different window, or add an amplifier for long cable runs. Then run a channel scan in the Tablo app, which also shows each channel’s signal strength. Storms and heavy rain can cause it too.</p>` : ''}
+    </section>`;
 }
 
 // Where MP4 exports go: the Windows folder picker on the PC, or a typed path where there isn't one
@@ -1630,7 +1649,7 @@ function commercialTag(ep) {
     // When: after Find again, the only sign it ran when the breaks come out the same
     const w = fmt.when(ep.commercials_found_at).replace(/^(Today|Yesterday) /, (m, d) => `${d.toLowerCase()} at `);
     const found = w ? `, found ${w}` : '';
-    const noClaude = ep.claude_failed ? '<span class="ad-tag dim" title="Claude couldn’t be reached for this recording, so TabloView found its breaks itself. Claude is asked again later (Settings → Playback shows why)">No Claude</span>' : '';
+    const noClaude = ep.claude_failed ? '<span class="ad-tag dim" title="Claude couldn’t be reached for this recording, so TabloView found its breaks itself. Claude is asked again later (Settings → Commercials &amp; dropouts shows why)">No Claude</span>' : '';
     return noClaude + (ep.commercial_breaks
       ? `<span class="ad-tag" title="${plural(ep.commercial_breaks, 'commercial break')} marked${ep.commercials_by_claude ? ' by Claude' : ''}${found}; skip them in the player">${icon('next', 11)}${ep.commercial_breaks}</span>`
       : '<span class="ad-tag dim" title="No commercial breaks found${found}">0</span>');
@@ -2656,7 +2675,7 @@ function onNowChannels(channels, now) {
 }
 
 // iptv-org's community list of free US channels: offered in Settings, never set on its own
-// Lists offered in Settings → Playback → More channels, never set on their own: [playlist, guide]
+// Lists offered in Settings → Live TV, never set on their own: [playlist, guide]
 const EXTRA_PRESETS = {
   tubi: ['https://raw.githubusercontent.com/BuddyChewChew/tubi-scraper/refs/heads/main/tubi_playlist.m3u',
          'https://raw.githubusercontent.com/BuddyChewChew/tubi-scraper/refs/heads/main/tubi_epg.xml'],
@@ -2701,7 +2720,7 @@ function renderEpgKeepingPlace() {
   if (el) { el.scrollTop = top; el.scrollLeft = left; }
 }
 
-// Settings → Playback → More channels: what the playlist and guide gave
+// Settings → Live TV: what the playlist and guide gave
 async function showExtraStatus() {
   const el = $('#extraStatus');
   if (!el || !$('#extraPlaylist').value.trim()) { if (el) el.textContent = ''; return; }
@@ -2721,7 +2740,7 @@ async function showExtraStatus() {
 
 function epgCatButtons() {
   let cats = hasFavorites() ? [['favorites', 'Favorites'], ...EPG_CATS] : EPG_CATS;
-  // Channels from the playlist in Settings → Playback → More channels
+  // Channels from the playlist in Settings → Live TV
   if (((state.epg && state.epg.channels) || []).some(c => c.kind === 'extra')) {
     const i = cats.findIndex(([k]) => k === 'all');
     cats = [...cats.slice(0, i), ['extra', 'More'], ...cats.slice(i)];
@@ -2847,7 +2866,7 @@ function renderEpg(scrollToNow = false) {
   const head = `<div class="epg-head"><div class="epg-head-ch" style="width:${EPG.CH_W}px"></div>${slots.map(s => `<div class="epg-slot" style="width:${slotW}px">${esc(fmt.time(s.iso))}</div>`).join('')}</div>`;
   const hiddenN = channels.filter(c => c.kind === 'extra' && c.hidden).length;
   const extraNote = state.epgCategory === 'extra'
-    ? `<div class="dim" style="padding:8px 12px;font-size:13px">Channels from your playlist (Settings → Playback → More channels). They <b>don’t use a Tablo tuner</b>, and they’re <b>watch only</b>: they can’t be recorded.
+    ? `<div class="dim" style="padding:8px 12px;font-size:13px">Channels from your playlist (Settings → Live TV). They <b>don’t use a Tablo tuner</b>, and they’re <b>watch only</b>: they can’t be recorded.
         Point at a channel to star it (Favorites and On now) or hide it.${hiddenN ? ` <a href="#" data-action="extra-show-hidden">${state.epgShowHidden ? 'Leave out' : 'Show'} the ${plural(hiddenN, 'hidden channel')}</a>` : ''}</div>` : '';
   scroll.innerHTML = `${extraNote}<div class="epg-board" id="epgBoard">${head}${rows}<div class="epg-now hidden" id="epgNow"></div></div>`;
   hydrateIcons(scroll);
@@ -2979,7 +2998,7 @@ function openAiringModal(key) {
         <span class="tag">${esc(fmt.dayLabel(a.air_datetime))} ${esc(fmt.time(a.air_datetime))}–${esc(fmt.time(end))}</span>
         <span class="tag">${esc(fmt.dur(a.duration))}</span>
         ${a.is_new ? '<span class="tag tag-new">NEW</span>' : ''}${a.is_premiere ? '<span class="tag tag-premiere">PREMIERE</span>' : ''}
-        ${c.kind === 'extra' ? '<span class="tag" title="A channel from your playlist (Settings → Playback → More channels)">No tuner needed · watch only, can’t be recorded</span>' : ''}
+        ${c.kind === 'extra' ? '<span class="tag" title="A channel from your playlist (Settings → Live TV)">No tuner needed · watch only, can’t be recorded</span>' : ''}
       </div>
       ${a.description ? `<p class="dialog-text">${esc(a.description)}</p>` : ''}
     </div>
@@ -3330,30 +3349,104 @@ PAGES.antenna = async (r, token) => {
   if (antenna.channel) sel.value = antenna.channel.channel_id;
 };
 
-// Help: the user guide (static/help.html, one <section> per topic), with its contents at the top
+// Help: the user guide (static/help.html, one <section> per topic), laid out like Settings: the
+// topics in a list on the left (with a search), one topic at a time on the right
+const HELP_ICONS = {
+  'help-start': 'home', 'help-pages': 'layout', 'help-watching': 'play', 'help-live': 'live', 'help-recording': 'calendar',
+  'help-watchlist': 'queue', 'help-commercials': 'forward', 'help-tv': 'tv', 'help-exports': 'download',
+  'help-settings': 'settings', 'help-faq': 'help', 'help-about': 'info',
+};
+let helpGuide = null;  // the guide's sections, read once per visit to Help
+
+// Questions and troubleshooting: each question (a paragraph starting in bold) opens to its answer
+// (that paragraph's rest and anything up to the next question)
+function helpQuestions(section) {
+  const kids = [...section.children];
+  const out = [];
+  let open = null;
+  for (const el of kids) {
+    const q = el.tagName === 'P' && el.firstElementChild && el.firstElementChild.tagName === 'B' && el.firstChild === el.firstElementChild;
+    if (q) {
+      open = document.createElement('details');
+      open.className = 'help-q';
+      const summary = document.createElement('summary');
+      summary.innerHTML = el.firstElementChild.innerHTML;
+      el.firstElementChild.remove();
+      const answer = document.createElement('div');
+      answer.className = 'help-a';
+      if (el.textContent.trim()) answer.appendChild(el);
+      open.append(summary, answer);
+      out.push(open);
+    } else if (open && el.tagName !== 'H2') {
+      open.lastElementChild.appendChild(el);
+    } else {
+      out.push(el);
+    }
+  }
+  section.replaceChildren(...out);
+}
+
 PAGES.help = async (r, token) => {
-  paint(`<div class="page"><div class="page-head"><div><h1 class="page-title">Help</h1>
-    <div class="page-sub">How to use TabloView. Press <kbd>?</kbd> in the player for its keyboard shortcuts.</div></div></div>
-    <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
-  let html;
-  try {
-    const res = await fetch('/static/help.html?v=16');
-    if (!res.ok) throw new Error(res.status);
-    html = await res.text();
-  } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
-  if (stale(token)) return;
-  const guide = document.createElement('div');
-  guide.className = 'help';
-  guide.innerHTML = html;
-  // Links inside the guide to another of its sections
-  guide.querySelectorAll('[data-help-jump]').forEach(a => { a.dataset.action = 'help-jump'; a.dataset.id = a.dataset.helpJump; a.href = '#/help'; });
-  const toc = [...guide.querySelectorAll('section[id] > h2')].map(h =>
-    `<button class="chip" data-action="help-jump" data-id="${esc(h.parentElement.id)}">${esc(h.textContent)}</button>`).join('');
-  const list = view().querySelector('.list');
-  list.outerHTML = `<div class="help-toc">${toc}</div>`;
-  view().querySelector('.page').appendChild(guide);
-  const jump = r.query.get('topic');
-  if (jump) document.getElementById(jump)?.scrollIntoView();  fillCredits(guide);
+  if (!helpGuide) {
+    paint(`<div class="page"><div class="page-head"><div><h1 class="page-title">Help</h1></div></div>
+      <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
+    let html;
+    try {
+      const res = await fetch('/static/help.html?v=20');
+      if (!res.ok) throw new Error(res.status);
+      html = await res.text();
+    } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
+    if (stale(token)) return;
+    const guide = document.createElement('div');
+    guide.innerHTML = html;
+    // Links inside the guide to another of its topics
+    guide.querySelectorAll('[data-help-jump]').forEach(a => { a.href = `#/help?topic=${a.dataset.helpJump}`; });
+    const faq = guide.querySelector('#help-faq');
+    if (faq) helpQuestions(faq);
+    helpGuide = [...guide.querySelectorAll('section[id]')].map(s => ({ id: s.id, title: s.querySelector('h2').textContent, section: s, text: s.textContent.toLowerCase() }));
+  }
+  const topics = helpGuide;
+  const i = Math.max(0, topics.findIndex(t => t.id === r.query.get('topic')));
+  const topic = topics[i];
+  const prev = topics[i - 1], next = topics[i + 1];
+  const nav = topics.map(t => `
+      <a href="#/help?topic=${t.id}" class="set-nav-item${t === topic ? ' active' : ''}" data-topic="${t.id}">${icon(HELP_ICONS[t.id] || 'help', 16)}<span>${esc(t.title)}</span></a>`).join('');
+  paint(`<div class="page help-page">
+    <div class="page-head"><div><h1 class="page-title">Help</h1>
+      <div class="page-sub">How to use TabloView. In the player, press <kbd>?</kbd> for its keyboard shortcuts.</div></div></div>
+    <div class="settings-layout">
+      <nav class="set-nav">
+        <div class="help-search">${icon('search', 15)}<input class="input" id="helpSearch" placeholder="Search help" autocomplete="off" value="${esc(state.helpQuery || '')}"></div>
+        ${nav}
+        <div class="dim help-none hidden">Nothing in Help mentions that.</div>
+      </nav>
+      <div class="set-content">
+        <article class="help" id="helpTopic"></article>
+        <div class="help-pager">
+          ${prev ? `<a href="#/help?topic=${prev.id}" class="help-pager-link">${icon('back', 15)}<span><small>Previous</small>${esc(prev.title)}</span></a>` : '<span></span>'}
+          ${next ? `<a href="#/help?topic=${next.id}" class="help-pager-link next"><span><small>Next</small>${esc(next.title)}</span>${icon('next', 15)}</a>` : ''}
+        </div>
+      </div>
+    </div>
+  </div>`);
+  $('#helpTopic').appendChild(topic.section);
+  fillCredits(topic.section);
+  view().scrollTop = 0;
+  // Search: the topics that mention every word typed (kept while moving between topics)
+  const search = $('#helpSearch');
+  const filter = () => {
+    const words = search.value.toLowerCase().split(/\s+/).filter(Boolean);
+    state.helpQuery = search.value;
+    let shown = 0;
+    for (const t of topics) {
+      const hit = words.every(w => t.text.includes(w) || t.title.toLowerCase().includes(w));
+      view().querySelector(`[data-topic="${t.id}"]`).classList.toggle('hidden', !hit);
+      shown += hit;
+    }
+    view().querySelector('.help-none').classList.toggle('hidden', shown > 0);
+  };
+  search.addEventListener('input', filter);
+  if (search.value) filter();
 };
 
 // About and licenses: the FFmpeg in use, and where its exact source is (the bundled one changes with builds)
@@ -3409,6 +3502,39 @@ function renderDownloads(jobs) {
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
+// Settings building blocks: a card of rows, each a setting's name and one line about it on the left,
+// its control on the right (switch, list or button)
+const setCard = (title, sub, body, attrs = '') => `
+  <section class="set-card"${attrs}>
+    <header class="set-card-head"><h3>${title}</h3>${sub ? `<p>${sub}</p>` : ''}</header>
+    ${body}
+  </section>`;
+// A row; a switch row is a <label>, so clicking its words flips it
+const setRow = (label, desc, control = '', { tag = 'div', cls = '' } = {}) => `
+  <${tag} class="set-row${cls ? ` ${cls}` : ''}">
+    <div class="set-text"><div class="set-label">${label}</div>${desc ? `<div class="set-desc">${desc}</div>` : ''}</div>
+    ${control ? `<div class="set-control">${control}</div>` : ''}
+  </${tag}>`;
+const setSwitch = (label, desc, change, on, extra = '') =>
+  setRow(label, desc, `<input type="checkbox" class="switch" data-change="${change}" ${on ? 'checked' : ''} ${extra}>`, { tag: 'label', cls: 'set-row-switch' });
+const setSelect = (change, options, value, extra = '') =>
+  `<select class="select" data-change="${change}" ${extra}>${options.map(([v, label]) => `<option value="${v}" ${String(value) === String(v) ? 'selected' : ''}>${label}</option>`).join('')}</select>`;
+const setNote = (html, warn = false) => `<div class="set-note${warn ? ' warn' : ''}">${html}</div>`;
+
+// The sections, in the order of the list on the left. Old links (?tab=playback for More channels...)
+// still open a section: ids kept, new ones added
+const SETTINGS_SECTIONS = [
+  ['general', 'General', 'settings'],
+  ['playback', 'Playback', 'play'],
+  ['commercials', 'Commercials & dropouts', 'forward'],
+  ['live', 'Live TV', 'live'],
+  ['storage', 'Storage & exports', 'download'],
+  ['plex', 'Plex', 'library'],
+  ['desktop', 'Desktop & network', 'tv'],
+  ['signal', 'Signal health', 'antenna'],
+  ['diagnostics', 'About & diagnostics', 'info'],
+];
+
 PAGES.settings = async (r, token) => {
   const [, , info, settings, space, boot, playback, signal] = await Promise.all([
     loadStatus(), loadStorage(),
@@ -3424,303 +3550,319 @@ PAGES.settings = async (r, token) => {
   const dev = st.active_device;
   const storage = state.storage || {};
 
-  const network = `
-    <div class="panel">
-      <h3>Network access</h3><div class="panel-sub">Let phones, tablets and other computers on your home network open TabloView.</div>
-      ${`
-        <label class="switch-row">
-          <input type="checkbox" class="switch" data-change="allow-lan" ${settings.allow_lan ? 'checked' : ''}>
-          <span>Allow other devices on my network</span>
-        </label>
-        <p class="dim" style="margin-top:10px;font-size:12.5px">Other devices sign in with a PIN; this PC never asks for it. Leave this off on shared or public networks.</p>
-        ${settings.allow_lan && !info.lan_pin_set ? '<p style="margin-top:10px;color:var(--warn);font-size:13px;font-weight:600">Set a PIN: other devices can’t use TabloView until you do.</p>' : ''}
-        <div class="panel-actions">
-          <button class="btn btn-sm" data-action="set-pin">${info.lan_pin_set ? 'Change PIN' : 'Set PIN'}</button>
-          ${info.lan_pin_set ? '<button class="btn btn-sm btn-ghost" data-action="pin-signout">Sign out other devices</button>' : ''}
+  // ---- General
+  const tablo = st.authenticated && dev ? setCard('Your Tablo', '', `
+      <div class="set-device">
+        <div class="set-device-icon">${icon('tv', 22)}</div>
+        <div class="set-device-text">
+          <div class="set-device-name">${esc(dev.name)} <span class="set-pill ok">Connected</span></div>
+          <div class="set-desc">${esc(st.email || '')}</div>
         </div>
-        <label class="switch-row" style="margin-top:14px">
-          <input type="checkbox" class="switch" data-change="tailscale-no-pin" ${settings.tailscale_no_pin ? 'checked' : ''}>
-          <span>No PIN for devices on my Tailscale</span>
-        </label>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">Phones and laptops signed in to your Tailscale open TabloView without the PIN, at home or away. Anyone you've shared this PC with in Tailscale gets in too, so leave it off if you share it. Devices on your home network still need the PIN, and so does Tailscale Funnel (the open internet).</p>
-        ${!info.packaged && !!settings.allow_lan !== !!info.listening_on_network ? `<p style="margin-top:10px;color:var(--warn);font-size:13px;font-weight:600">To apply this, stop TabloView (above) and run its start script again.</p>` : ''}
-        <div id="lanActivity"></div>`}
-      ${info.listening_on_network && info.network_url ? `<p style="margin-top:12px">On other devices, open <b>${esc(info.network_url)}</b></p>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">On Google TV or Fire TV, get the <b>TabloView app</b>: in the Downloader app, enter <b>${esc(info.network_url.replace(/^https?:\/\//, ''))}/app</b> (<a href="#/help?topic=help-tv">how</a>). On other TVs, open <b>${esc(info.network_url)}/tv</b> in the TV's browser.</p>
-        <div id="lanAccess"></div>` : ''}
-    </div>`;
+        <div class="set-control">
+          ${(st.devices || []).length > 1 ? `<select class="select" data-change="select-device" title="Switch to another Tablo on this account">${st.devices.map(d => `<option value="${esc(d.sid)}" ${d.sid === dev.sid ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>` : ''}
+          <button class="btn btn-sm btn-ghost btn-danger-text" data-action="logout">Sign out</button>
+        </div>
+      </div>
+      <dl class="set-kv">
+        <dt>Address</dt><dd>${esc(dev.local_url)}</dd>
+        <dt>Device ID</dt><dd>${esc(dev.sid)}</dd>
+      </dl>`) : setCard('Your Tablo', '', setRow('Not connected', 'Sign in from the welcome page to use your Tablo.'));
 
-  // Run from a start script (Mac, Linux, or from source): no tray icon, so stop it from here
-  const desktop = !info.packaged ? `
-    <div class="panel">
-      <h3>Running TabloView</h3><div class="panel-sub">TabloView runs in the window you started it from. Closing the browser doesn't stop it.</div>
-      ${info.this_computer
-        ? '<button class="btn btn-danger btn-sm" data-action="stop-app">Stop TabloView</button>'
-        : '<p class="dim" style="font-size:13px">It can be stopped on the computer running it.</p>'}
-      <p class="dim" style="margin-top:10px;font-size:12.5px">To start it again, run its start script as before (start-mac.sh on a Mac, start-linux.sh on Linux).</p>
-    </div>` : `
-    <div class="panel">
-      <h3>Desktop app</h3><div class="panel-sub">Run TabloView in the background so it can let you know when something needs attention.</div>
-      ${boot.supported ? `
-        <label class="switch-row">
-          <input type="checkbox" class="switch" data-change="startup" ${boot.enabled ? 'checked' : ''} ${boot.locked ? 'disabled' : ''}>
-          <span>Start TabloView when I sign in to Windows</span>
-        </label>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">${boot.locked
-          ? 'This was turned off in Task Manager. To turn it back on, open Task Manager → Startup apps and enable TabloView for TabloTV.'
-          : 'It starts quietly in the system tray; your browser opens only when you click the tray icon.'}</p>`
-      : '<p class="dim" style="font-size:13px">Starting with Windows is available in the installed app.</p>'}
-      ${boot.notifications_available ? `
-        <label class="switch-row" style="margin-top:14px">
-          <input type="checkbox" class="switch" data-change="notifications" ${settings.notifications !== false ? 'checked' : ''}>
-          <span>Notify me about recording problems and conflicts</span>
-        </label>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">A Windows notification when a recording fails or stops early, or when more shows are set to record at once than you have tuners (in the next 2 days). Each one is shown once.</p>`
-      : '<p class="dim" style="margin-top:10px;font-size:13px">Notifications are available in the installed app.</p>'}
-    </div>`;
+  const library = setCard('Library', `Last synced ${st.last_sync ? `${esc(fmt.ago(st.last_sync))} <span class="dim">(${esc(new Date(st.last_sync).toLocaleString())})</span>` : 'never'} · ${plural(st.total_shows || 0, 'show')}, ${plural(st.total_episodes || 0, 'recording')}`, `
+      ${setRow('Check for new recordings', 'The guide also refreshes every 6 hours while this is on. Changes you make in TabloView show up right away either way.',
+        setSelect('auto-sync', [[0, 'Off'], [5, 'Every 5 minutes'], [15, 'Every 15 minutes'], [30, 'Every 30 minutes'], [60, 'Every hour']], Number(settings.auto_sync_minutes ?? 15)))}
+      ${setSwitch('Record failed recordings again', 'When a recording fails or comes out short, a rerun of the same episode in the next two weeks is set to record, if one doesn’t clash.', 'rerecord-failed', settings.rerecord_failed !== false)}
+      ${setRow('Sync now', 'Read your recordings and the guide from the Tablo again.', `
+        <button class="btn btn-sm" data-action="refresh-library">${icon('refresh', 15)}Sync recordings</button>
+        <button class="btn btn-sm" data-action="sync-guide">${icon('guide', 15)}Refresh guide</button>`)}`);
 
-  const aboutHead = `TabloView ${esc(info.version || '')}${info.packaged ? '' : ' (running from source)'} · <a href="#" data-action="version-history">Version history</a>`;
-  const aboutList = `
-      <dl class="kv">
+  const appearance = setCard('Appearance', 'On this computer.', `
+      ${setRow('Channel logos', 'The stations’ own logos, or all in white.',
+        setSelect('logo-style', [['color', 'In color'], ['white', 'All white']], settings.logo_style === 'white' ? 'white' : 'color'))}
+      ${setRow('Open TabloView on', 'The page you see when TabloView opens.', setSelect('start-page', START_PAGES, store('tv_start_page', 'home')))}`);
+
+  // ---- Playback
+  const picture = setCard('Picture', playback.encoder ? `Converting with ${esc(playback.encoder)}${playback.hardware ? ': your graphics chip, so the processor stays free' : ''}.` : '', `
+      ${setRow('Video quality', 'Fastest helps older PCs keep up.',
+        setSelect('video-quality', [['auto', 'Automatic (recommended)'], ['best', 'Best quality'], ['fastest', 'Fastest (older PCs)']], playback.quality || 'auto'))}
+      ${setSwitch('Smooth motion (60 fps)', 'Antenna TV at its full 60 frames a second, best for sports. Much harder on the PC: turn it off if you see stutters. Live TV that can’t keep up goes back to standard motion by itself.', 'smooth-motion', playback.smooth_motion, playback.quality === 'fastest' ? 'disabled' : '')}
+      ${setRow('Buffer before playing', 'Longer waits a little more before starting, and stutters less on a busy network.',
+        setSelect('buffer', [4, 8, 15, 30].map(v => [v, `${v} seconds`]), state.bufferTarget))}
+      ${setRow('Away from home', 'Over Tailscale on a slow connection (phone data, hotel Wi-Fi): 720p uses about a third of the data, 480p about a seventh. At home nothing changes.',
+        setSelect('away-picture', [['full', 'Full picture'], ['720', 'Smaller: 720p'], ['480', 'Smallest: 480p']], settings.away_picture || 'full'))}`);
+
+  const watching = setCard('Watching', '', `
+      ${setSwitch('Play the next episode automatically', 'When a show ends, the next unwatched episode starts after a 10-second countdown you can cancel.', 'autoplay', state.autoplay)}`);
+
+  // ---- Commercials & dropouts
+  const skipping = setCard('Skipping', 'For shows with Skip commercials turned on, on the show’s page.', `
+      ${setSwitch('Skip commercial breaks automatically', 'Off: a Skip break button appears instead (or press S). Breaks over 7 minutes are never skipped on their own.', 'skip-commercials', settings.skip_commercials)}
+      ${setSwitch('Skip signal dropouts automatically', 'Parts a weak signal broke up or froze, marked in red on the timeline. Off: a Skip dropout button appears instead.', 'skip-dropouts', settings.skip_dropouts)}`);
+
+  const claudeStatus = settings.claude_key_set
+    ? `<span class="set-pill ok">On</span>${settings.claude_last_cost != null ? ` <span class="dim">· last recording about $${settings.claude_last_cost.toFixed(2)}</span>` : ''}`
+    : '<span class="set-pill">Off</span>';
+  const finding = setCard('Finding them', 'In the background, on this PC, while nothing is playing.', `
+      ${setRow(`Find commercials with Claude ${claudeStatus}`, 'More accurate on channels without a logo, such as CBS. With your own Anthropic API key, Claude looks at each recording’s preview pictures (one every 10 seconds), which are sent to Anthropic: about 5 cents per hour of TV, on your Anthropic account. Without a key TabloView finds the breaks itself.',
+        `<button class="btn btn-sm" data-action="claude-key">${settings.claude_key_set ? 'Change key' : 'Add API key'}</button>
+         ${settings.claude_key_set ? '<button class="btn btn-sm btn-ghost" data-action="claude-key-remove">Remove</button>' : ''}`)}
+      ${settings.claude_key_set && settings.claude_error ? setNote(`Claude’s last try didn’t work: ${esc(settings.claude_error)}`, true) : ''}
+      ${setSwitch('Check flagged recordings for signal dropouts', 'Recordings your Tablo marks as not clean are read once each, taking about a quarter of their length and most of one CPU core; the status line shows it. Off: recordings already checked keep their marks.', 'find-dropouts', settings.find_dropouts !== false)}`);
+
+  // ---- Live TV: channels from outside the Tablo (app/extra_channels.py), Live TV's "More" tab
+  const more = setCard('More channels', 'Channels from outside your Tablo, from a playlist (an M3U file’s web address). They appear in Live TV under <b>More</b>.', `
+      <div class="set-facts">
+        <div>${icon('check', 15)}<span><b>No Tablo tuner needed:</b> watch them while your Tablo records, or with every tuner busy.</span></div>
+        <div class="warn">${icon('alert', 15)}<span><b>Watch only:</b> neither your Tablo nor TabloView can record them.</span></div>
+      </div>
+      <div class="set-row set-row-stack">
+        <div class="set-text"><div class="set-label">Quick setup</div><div class="set-desc">Fills in both addresses and saves. TabloView doesn’t run or check these lists, so channels can come and go.</div></div>
+        <div class="set-presets">
+          <button class="set-preset" data-action="extra-preset" data-preset="tubi" title="Fill in and save Tubi's channel list and its guide">
+            <b>Tubi’s free channels</b><span>News, crime, movies, sports replays, with a full guide. Kept up by a volunteer on GitHub.</span></button>
+          <button class="set-preset" data-action="extra-preset" data-preset="iptv-org" title="Fill in and save iptv-org's list of free US channels">
+            <b>iptv-org’s list</b><span>About 1,500 free US channels, no guide. Some may be off the air or not from the channel’s owner.</span></button>
+        </div>
+      </div>
+      <div class="set-row set-row-stack">
+        <div class="set-text"><div class="set-label">Your own playlist</div><div class="set-desc">From Channels DVR, an HDHomeRun or ErsatzTV, for example.</div></div>
+        <div class="set-fields">
+          <label>Playlist address (M3U)<input class="input" id="extraPlaylist" placeholder="https://…/playlist.m3u" value="${esc(settings.extra_playlist_url || '')}"></label>
+          <label>Guide address (XMLTV, optional)<input class="input" id="extraGuide" placeholder="https://…/epg.xml.gz" value="${esc(settings.extra_guide_url || '')}"></label>
+          <div class="set-inline"><button class="btn btn-sm btn-primary" data-action="extra-save">Save</button><span class="dim" id="extraStatus"></span></div>
+        </div>
+      </div>`);
+
+  // ---- Storage & exports
+  const exports = setCard('Exports', 'Recordings saved as MP4 files: Export MP4 in a recording’s ⋯ menu. They’re listed under Downloads.', `
+      ${setRow('Format', 'Smaller is H.264, about 2.2 GB per hour of HD, and plays almost anywhere. Original is the broadcast exactly as recorded, about 3.2 GB per hour.',
+        setSelect('export-format', [['smaller', 'Smaller'], ['original', 'Original']], settings.export_format || 'smaller'))}
+      <div class="set-row set-row-stack export-folder">
+        <div class="set-text"><div class="set-label">Save exports to</div></div>
+        <div class="set-folder">
+          <code class="path-box" title="${esc(info.downloads_dir || '')}">${esc(info.downloads_dir || '')}</code>
+          <button class="btn btn-sm" data-action="export-folder">Change…</button>
+          <button class="btn btn-sm btn-ghost" data-action="export-folder-type" title="Type or paste a folder's path, such as a network folder">Type a path…</button>
+          ${info.downloads_dir && info.default_downloads_dir && info.downloads_dir !== info.default_downloads_dir
+            ? '<button class="btn btn-sm btn-ghost" data-action="export-folder-reset">Reset</button>' : ''}
+        </div>
+      </div>
+      ${setSwitch('Sort into show and season folders', 'Show\\Season 01\\Show - S01E02 - Title.mp4, the layout Plex, Jellyfin and Kodi expect. Every export also carries its title, episode, description and air date.', 'export-show-folders', settings.export_show_folders)}
+      ${setSwitch('Save an .nfo file with each export', 'Details beside the video for Jellyfin, Emby and Kodi (Plex doesn’t read them).', 'export-nfo', settings.export_nfo)}`);
+
+  const drives = setCard('Your Tablo’s storage', storage.connected ? `${fmt.size(storage.used_gb)} of ${fmt.size(storage.total_gb)} used` : 'Unavailable', (storage.almost_full
+      ? setNote(`<b>Almost full:</b> ${fmt.size(storage.free_gb)} free. Delete watched recordings below (Space by show) or from a show’s page.`, true) : '') + (storage.drives || []).map(d => `
+      <div class="set-row">
+        <div class="set-text" style="flex:1">
+          <div class="meter-row"><span class="set-label">${esc(d.name)}</span><span class="dim">${fmt.size(d.free_gb)} free</span></div>
+          <div class="meter" style="height:6px;margin-top:8px"><div class="meter-fill" style="width:${Math.min(d.percent_used, 100)}%"></div></div>
+        </div>
+      </div>`).join(''));
+
+  // ---- Desktop & network
+  const thisPc = !info.packaged ? setCard('Running TabloView', 'It runs in the window you started it from; closing the browser doesn’t stop it.', `
+      ${setRow('Stop TabloView', 'To start it again, run its start script (start-mac.sh on a Mac, start-linux.sh on Linux).',
+        info.this_computer ? '<button class="btn btn-sm btn-danger" data-action="stop-app">Stop TabloView</button>' : '<span class="dim">From the computer running it</span>')}`)
+    : setCard('Desktop app', 'TabloView runs in the background, in the system tray.', `
+      ${boot.supported ? setSwitch('Start with Windows', boot.locked
+          ? 'Turned off in Task Manager. To turn it back on: Task Manager → Startup apps → TabloView for TabloTV.'
+          : 'Starts quietly in the tray when you sign in; the browser opens only when you click the tray icon.', 'startup', boot.enabled, boot.locked ? 'disabled' : '')
+        : setRow('Start with Windows', 'Available in the installed app.')}
+      ${boot.notifications_available ? setSwitch('Notify me about recording problems', 'A Windows notification when a recording fails or stops early, when more shows will record at once than you have tuners (in the next 2 days), or when your Tablo’s drive is almost full.', 'notifications', settings.notifications !== false)
+        : setRow('Notifications', 'Available in the installed app.')}`);
+
+  const access = setCard('Network access', 'Let phones, tablets, TVs and other computers open TabloView.', `
+      ${setSwitch('Allow other devices on my network', 'They sign in with a PIN; this PC never asks for it. Leave this off on shared or public networks.', 'allow-lan', settings.allow_lan)}
+      ${settings.allow_lan && !info.lan_pin_set ? setNote('Set a PIN: other devices can’t use TabloView until you do.', true) : ''}
+      ${!info.packaged && !!settings.allow_lan !== !!info.listening_on_network ? setNote('To apply this, stop TabloView (above) and run its start script again.', true) : ''}
+      ${setRow('PIN', info.lan_pin_set ? 'Changing it signs every other device out.' : 'Not set yet.', `
+        <button class="btn btn-sm" data-action="set-pin">${info.lan_pin_set ? 'Change PIN' : 'Set PIN'}</button>
+        ${info.lan_pin_set ? '<button class="btn btn-sm btn-ghost" data-action="pin-signout">Sign out other devices</button>' : ''}`)}
+      ${setSwitch('No PIN for devices on my Tailscale', 'Your phones and laptops on Tailscale skip the PIN, at home or away. Anyone you’ve shared this PC with in Tailscale gets in too. The home network and Tailscale Funnel still need it.', 'tailscale-no-pin', settings.tailscale_no_pin)}
+      ${info.listening_on_network && info.network_url ? `
+        <div class="set-row set-row-stack">
+          <div class="set-text"><div class="set-label">Open it on other devices</div>
+            <div class="set-desc">On this network: <b>${esc(info.network_url)}</b>. On Google TV or Fire TV, get the <b>TabloView app</b>: in the Downloader app, enter <b>${esc(info.network_url.replace(/^https?:\/\//, ''))}/app</b> (<a href="#/help?topic=help-tv">how</a>). On other TVs, open <b>${esc(info.network_url)}/tv</b> in the TV’s browser.</div>
+            <div id="lanAccess"></div></div>
+        </div>` : ''}
+      <div class="set-sub" id="lanActivity"></div>`);
+
+  // ---- About & diagnostics
+  const about = setCard(`TabloView ${esc(info.version || '')}${info.packaged ? '' : ' <span class="dim">(running from source)</span>'}`, '<a href="#" data-action="version-history">Version history</a>', `
+      <dl class="set-kv">
         <dt>Updates</dt><dd>${updateStatusHtml()}</dd>
         <dt>Playback engine</dt><dd>${info.ffmpeg_found ? 'FFmpeg ready' : '<span style="color:var(--warn)">FFmpeg not found: in-browser playback and MP4 export won’t work. VLC still works.</span>'}</dd>
         <dt>App data</dt><dd>${esc(info.data_dir || '')}</dd>
-      </dl>`;
+      </dl>`);
+  const diagnostics = setCard('Diagnostics', 'For a forum post or a GitHub issue when something isn’t working.', `
+      ${info.this_computer ? setRow('Copy diagnostics', 'Versions, your Tablo, settings and the end of TabloView’s log, without your sign-in details, email or Windows user name.',
+        `<button class="btn btn-sm" data-action="copy-diagnostics">${icon('copy', 15)}Copy</button>`) : ''}
+      ${setRow('API inspector', 'Asks the Tablo’s local API and the cloud guide, and shows what they answer.',
+        `<button class="btn btn-sm" data-action="run-inspector">${icon('info', 15)}Run</button>`)}
+      <div id="inspectorOut" class="set-sub"></div>`);
 
-  const connection = st.authenticated && dev ? `
-    <div class="panel">
-      <h3>Tablo</h3><div class="panel-sub">Connected</div>
-      <dl class="kv">
-        <dt>Name</dt><dd>${esc(dev.name)}</dd>
-        <dt>Address</dt><dd>${esc(dev.local_url)}</dd>
-        <dt>Device ID</dt><dd>${esc(dev.sid)}</dd>
-        <dt>Account</dt><dd>${esc(st.email || '')}</dd>
-      </dl>
-      ${(st.devices || []).length > 1 ? `<div class="panel-actions"><select class="select" data-change="select-device">${st.devices.map(d => `<option value="${esc(d.sid)}" ${d.sid === dev.sid ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select></div>` : ''}
-      <div class="panel-actions"><button class="btn btn-danger btn-sm" data-action="logout">Sign out</button></div>
-      <div style="border-top:1px solid var(--border);margin-top:18px;padding-top:16px">
-        <h3>${aboutHead}</h3>${aboutList}
-      </div>
-    </div>` : `
-    <div class="panel">
-      <h3>About</h3><div class="panel-sub">${aboutHead}</div>${aboutList}
-    </div>`;
+  const moving = setCard('Backup and moving to a new PC', 'Everything you’ve set up in TabloView, in one file. Save it, then restore it on the new PC once you’ve signed in there.', `
+      ${setRow('Save a backup', 'Settings, each show’s options, the Watch list, reminders, commercial breaks already found, signal history, and this browser’s player preferences. Not your Tablo, Plex or Claude sign-ins or the PIN, so the file is safe to keep anywhere: set those up again on the new PC.',
+        `<button class="btn btn-sm" data-action="backup-save">${icon('download', 15)}Save backup</button>`)}
+      ${setRow('Restore from a backup', 'Its settings replace these. Its Watch list, reminders and commercial breaks are added to what’s here.',
+        '<button class="btn btn-sm" data-action="backup-restore">Restore…</button>')}`);
 
-  const libraryPanel = `
-      <div class="panel">
-        <h3>Library sync</h3><div class="panel-sub">Recordings are cached locally so pages load instantly.</div>
-        <dl class="kv">
-          <dt>Last sync</dt><dd>${st.last_sync ? `${esc(fmt.ago(st.last_sync))} (${esc(new Date(st.last_sync).toLocaleString())})` : 'Never'}</dd>
-          <dt>Cached</dt><dd>${plural(st.total_shows || 0, 'show')}, ${plural(st.total_episodes || 0, 'recording')}</dd>
-        </dl>
-        <label class="switch-row" style="margin-top:16px;font-weight:400;cursor:default">
-          <span>Check for new recordings</span>
-          <select class="select" data-change="auto-sync" style="height:32px">
-            ${[[0, 'Off'], [5, 'Every 5 minutes'], [15, 'Every 15 minutes'], [30, 'Every 30 minutes'], [60, 'Every hour']]
-              .map(([v, label]) => `<option value="${v}" ${Number(settings.auto_sync_minutes ?? 15) === v ? 'selected' : ''}>${label}</option>`).join('')}
-          </select>
-        </label>
-        <p class="dim" style="font-size:12.5px;margin-top:8px">When on, the guide also refreshes every 6 hours. Changes you make in TabloView show up immediately either way.</p>
-        <label class="switch-row" style="margin-top:14px">
-          <input type="checkbox" class="switch" data-change="rerecord-failed" ${settings.rerecord_failed !== false ? 'checked' : ''}>
-          <span>Record failed recordings again</span>
-        </label>
-        <p class="dim" style="font-size:12.5px;margin-top:6px">When a recording fails or comes out short, TabloView sets a rerun of the same episode to record (one that doesn’t clash with other recordings), if the guide has one in the next two weeks.</p>
-        <div class="panel-actions">
-          <button class="btn btn-sm" data-action="refresh-library">${icon('refresh', 15)}Sync recordings</button>
-          <button class="btn btn-sm" data-action="sync-guide">${icon('guide', 15)}Refresh guide</button>
-        </div>
-      </div>
-`;
-  const storagePanel = `
-      <div class="panel">
-        <h3>Storage</h3><div class="panel-sub">${storage.connected ? `${fmt.size(storage.used_gb)} of ${fmt.size(storage.total_gb)} used` : 'Unavailable'}</div>
-        ${(storage.drives || []).map(d => `
-          <div style="margin-bottom:14px">
-            <div class="meter-row" style="font-size:13px"><span>${esc(d.name)}</span><span class="dim">${fmt.size(d.free_gb)} free</span></div>
-            <div class="meter" style="height:6px"><div class="meter-fill" style="width:${Math.min(d.percent_used, 100)}%"></div></div>
-          </div>`).join('')}
-      </div>
-`;
-  const playbackPanel = `
-      <div class="panel">
-        <h3>Playback</h3><div class="panel-sub">Picture quality, skipping and buffering for watching in TabloView.</div>
-        <label class="switch-row" style="font-weight:400;cursor:default">
-          <span>Video quality</span>
-          <select class="select" data-change="video-quality" style="height:32px">
-            ${[['auto', 'Automatic (recommended)'], ['best', 'Best quality'], ['fastest', 'Fastest (older PCs)']]
-              .map(([v, label]) => `<option value="${v}" ${(playback.quality || 'auto') === v ? 'selected' : ''}>${label}</option>`).join('')}
-          </select>
-        </label>
-        ${playback.encoder ? `<p class="dim" style="margin-top:6px;font-size:12.5px">Converting with ${esc(playback.encoder)}${playback.hardware ? ' (your graphics chip, so the CPU stays free)' : ''}.</p>` : ''}
-        <label class="switch-row" style="margin-top:14px">
-          <input type="checkbox" class="switch" data-change="smooth-motion" ${playback.smooth_motion ? 'checked' : ''} ${playback.quality === 'fastest' ? 'disabled' : ''}>
-          <span>Smooth motion (60 fps)</span>
-        </label>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">Shows antenna TV at its full 60 motion steps a second, like on the TV. Best for sports. It works your PC much harder: if you see glitches or stutters, or live TV falls behind, turn it off. (If live TV can't keep up, TabloView switches that channel back to standard motion by itself.)</p>
-        <label class="switch-row" style="font-weight:400;cursor:default;margin-top:14px">
-          <span>Away from home (Tailscale)</span>
-          <select class="select" data-change="away-picture" style="height:32px">
-            ${[['full', 'Full picture, as at home'], ['720', 'Smaller: 720p'], ['480', 'Smallest: 480p']]
-              .map(([v, label]) => `<option value="${v}" ${(settings.away_picture || 'full') === v ? 'selected' : ''}>${label}</option>`).join('')}
-          </select>
-        </label>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">For watching over Tailscale on a slow connection (phone data, hotel Wi-Fi): 720p uses about a third of the data of the full picture, 480p about a seventh. At home nothing changes.</p>
-        <label class="switch-row" style="font-weight:400;cursor:default;margin-top:14px">
-          <span>Buffer before playing</span>
-          <select class="select" data-change="buffer" style="height:32px">
-            ${[4, 8, 15, 30].map(v => `<option value="${v}" ${state.bufferTarget === v ? 'selected' : ''}>${v} seconds</option>`).join('')}
-          </select>
-        </label>
-        <label class="switch-row" style="margin-top:16px">
-          <input type="checkbox" class="switch" data-change="skip-commercials" ${settings.skip_commercials ? 'checked' : ''}>
-          <span>Skip commercial breaks automatically</span>
-        </label>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">For shows with “Skip commercials” turned on (on the show’s page). Off: a Skip break button appears instead (or press S).</p>
-        <div class="switch-row" style="font-weight:400;cursor:default;margin-top:16px">
-          <span>Find commercials with Claude</span>
-          <span class="dim" style="font-size:13px">${settings.claude_key_set ? 'On' : 'Off'}</span>
-        </div>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">More accurate on channels without a logo in the corner, such as CBS: with your own Anthropic API key, Claude looks at each recording’s preview pictures (one every 10 seconds) to see where the breaks are. Those pictures are sent to Anthropic, and it costs about 5 cents per hour of TV on your Anthropic account (7 cents for a 90-minute show). Without a key, or if Claude can’t be reached, TabloView finds the breaks itself as before.</p>
-        ${settings.claude_key_set && settings.claude_last_cost != null ? `<p class="dim" style="margin-top:6px;font-size:12.5px">The last recording cost about $${settings.claude_last_cost.toFixed(2)}.</p>` : ''}
-        ${settings.claude_key_set && settings.claude_error ? `<p style="margin-top:6px;font-size:12.5px;color:var(--warn)">Last try didn’t work: ${esc(settings.claude_error)}</p>` : ''}
-        <div class="panel-actions" style="margin-top:8px">
-          <button class="btn btn-sm" data-action="claude-key">${settings.claude_key_set ? 'Change key' : 'Add API key'}</button>
-          ${settings.claude_key_set ? '<button class="btn btn-sm btn-ghost" data-action="claude-key-remove">Remove key</button>' : ''}
-        </div>
-        <label class="switch-row" style="margin-top:16px">
-          <input type="checkbox" class="switch" data-change="skip-dropouts" ${settings.skip_dropouts ? 'checked' : ''}>
-          <span>Skip signal dropouts automatically</span>
-        </label>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">When a weak signal left part of a recording broken up or frozen, TabloView finds it in the background and marks it in red on the timeline. Off: a Skip dropout button appears instead (or press S).</p>
-        <label class="switch-row" style="margin-top:16px">
-          <input type="checkbox" class="switch" data-change="find-dropouts" ${settings.find_dropouts !== false ? 'checked' : ''}>
-          <span>Check flagged recordings for signal dropouts</span>
-        </label>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">Recordings your Tablo marks as not clean are read once each in the background, when nothing is playing, to find those spots. It takes about a quarter of the recording’s length and most of one CPU core while it runs; the status line shows it. Off: nothing is checked, and recordings already checked keep their marks.</p>
-        <label class="switch-row" style="margin-top:16px">
-          <input type="checkbox" class="switch" data-change="autoplay" ${state.autoplay ? 'checked' : ''}>
-          <span>Play the next episode automatically</span>
-        </label>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">When a show ends, TabloView counts down 10 seconds to the next unwatched episode. You can cancel and keep watching.</p>
-      </div>
-`;
-  const exportsPanel = `
-      <div class="panel">
-        <h3>Exports</h3><div class="panel-sub">Recordings saved as MP4 files (Export MP4 on a recording’s ⋯ menu), listed under Downloads.</div>
-        <label class="switch-row" style="font-weight:400;cursor:default">
-          <span>Format</span>
-          <select class="select" data-change="export-format" style="height:32px">
-            ${[['smaller', 'Smaller (about a third smaller)'], ['original', 'Original (exact copy, larger)']]
-              .map(([v, label]) => `<option value="${v}" ${(settings.export_format || 'smaller') === v ? 'selected' : ''}>${label}</option>`).join('')}
-          </select>
-        </label>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">Smaller exports are converted to H.264 (with your graphics chip when it can): about 2.2 GB per hour of HD instead of 3.2 GB, and they play on almost anything. Original keeps the broadcast video exactly as recorded.</p>
-        <div class="export-folder" style="margin-top:16px">
-          <div class="switch-row" style="font-weight:400;cursor:default;align-items:center">
-            <span style="flex-shrink:0">Save exports to</span>
-            <code class="path-box" title="${esc(info.downloads_dir || '')}">${esc(info.downloads_dir || '')}</code>
-          </div>
-          <div class="panel-actions" style="margin-top:8px">
-            <button class="btn btn-sm" data-action="export-folder">Change…</button>
-            <button class="btn btn-sm btn-ghost" data-action="export-folder-type" title="Type or paste a folder's path, such as a network folder">Type a path…</button>
-            ${info.downloads_dir && info.default_downloads_dir && info.downloads_dir !== info.default_downloads_dir
-              ? '<button class="btn btn-sm btn-ghost" data-action="export-folder-reset">Reset</button>' : ''}
-          </div>
-        </div>
-        <label class="switch-row" style="margin-top:16px">
-          <input type="checkbox" class="switch" data-change="export-show-folders" ${settings.export_show_folders ? 'checked' : ''}>
-          <span>Sort exports into show and season folders</span>
-        </label>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">Show\\Season 01\\Show - S01E02 - Title.mp4, the layout Plex, Jellyfin and Kodi expect, so they recognize each show and fetch its details. Every export also carries its title, episode number, description and air date inside the file.</p>
-        <label class="switch-row" style="margin-top:16px">
-          <input type="checkbox" class="switch" data-change="export-nfo" ${settings.export_nfo ? 'checked' : ''}>
-          <span>Save an .nfo file with each export</span>
-        </label>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">A small file beside the video with its details, which Jellyfin, Emby and Kodi use as is (Plex doesn’t read them).</p>
-      </div>
-`;
-  // Channels from outside the Tablo (app/extra_channels.py): Live TV's "More" tab
-  const extraPanel = `
-      <div class="panel">
-        <h3>More channels</h3><div class="panel-sub">Add channels from outside your Tablo: free streaming channels, or your own sources, from a playlist (an M3U file's web address). They appear in Live TV under <b>More</b> and play like any channel.</div>
-        <ul style="margin:6px 0 10px 18px;font-size:13px;line-height:1.6">
-          <li><b>They don't use a Tablo tuner:</b> watch them while your Tablo records, or with every tuner busy. They come straight from the internet to this PC.</li>
-          <li style="color:var(--warn)"><b>They're watch only:</b> your Tablo can't record them, and TabloView can't either.</li>
-        </ul>
-        <label style="display:block;font-size:13px;margin-top:4px">Playlist address (M3U)
-          <input class="input" id="extraPlaylist" style="width:100%;margin-top:4px" placeholder="https://…/playlist.m3u" value="${esc(settings.extra_playlist_url || '')}">
-        </label>
-        <label style="display:block;font-size:13px;margin-top:12px">Guide address (XMLTV, optional)
-          <input class="input" id="extraGuide" style="width:100%;margin-top:4px" placeholder="https://…/epg.xml.gz" value="${esc(settings.extra_guide_url || '')}">
-        </label>
-        <div class="panel-actions" style="margin-top:10px">
-          <button class="btn btn-sm btn-primary" data-action="extra-save">Save</button>
-          ${`<button class="btn btn-sm" data-action="extra-preset" data-preset="tubi" title="Fill in and save Tubi's channel list and its guide">Use Tubi's free channels (with guide)</button>
-            <button class="btn btn-sm" data-action="extra-preset" data-preset="iptv-org" title="Fill in and save iptv-org's list of free US channels">Use iptv-org's list (no guide)</button>`}
-          <span class="dim" id="extraStatus" style="font-size:12.5px"></span>
-        </div>
-        <p class="dim" style="margin-top:8px;font-size:12.5px">Don't have one? <b>Tubi:</b> Tubi's free channels (news, crime, movies, sports replays) with a full guide, streamed from Tubi itself. The list is kept up by a volunteer on GitHub (BuddyChewChew/tubi-scraper). <b>iptv-org:</b> a community list of about 1,500 free US channels with no guide; some may be off the air, and some may not come from the channel's owner. TabloView doesn't run or check either list, so channels can change or stop working. Or use a playlist you know, from Channels DVR, an HDHomeRun or ErsatzTV for example.</p>
-      </div>
-`;
-  const appearancePanel = `
-      <div class="panel">
-        <h3>Appearance</h3><div class="panel-sub">How TabloView looks.</div>
-        <label class="switch-row" style="font-weight:400;cursor:default">
-          <span>Channel logos</span>
-          <select class="select" data-change="logo-style" style="height:32px">
-            <option value="color" ${settings.logo_style !== 'white' ? 'selected' : ''}>In color</option>
-            <option value="white" ${settings.logo_style === 'white' ? 'selected' : ''}>All white</option>
-          </select>
-        </label>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">The stations' own logos in color, or all in white like before.</p>
-        <label class="switch-row" style="font-weight:400;cursor:default;margin-top:14px">
-          <span>Open TabloView on</span>
-          <select class="select" data-change="start-page" style="height:32px">
-            ${START_PAGES.map(([v, label]) => `<option value="${v}" ${store('tv_start_page', 'home') === v ? 'selected' : ''}>${label}</option>`).join('')}
-          </select>
-        </label>
-        <p class="dim" style="margin-top:6px;font-size:12.5px">The page you see when TabloView opens, on this computer.</p>
-      </div>
-`;
-  const diagnosticsPanel = `
-      <div class="panel" style="grid-column:1/-1">
-        <h3>Diagnostics</h3><div class="panel-sub">For a forum post or a GitHub issue when something isn't working: versions, your Tablo, settings and the end of TabloView's log, without your sign-in details, email or Windows user name. Or probe the Tablo's local API and the cloud guide.</div>
-        <div class="panel-actions">
-          ${info.this_computer ? `<button class="btn btn-sm" data-action="copy-diagnostics">${icon('copy', 15)}Copy diagnostics</button>` : ''}
-          <button class="btn btn-sm" data-action="run-inspector">${icon('info', 15)}Run API inspector</button>
-        </div>
-        <div id="inspectorOut"></div>
-      </div>
-`;
-  const signalHtml = signalPanel(signal) || `
-      <div class="panel" style="grid-column:1/-1">
-        <h3>Signal health</h3><div class="panel-sub">How recordings on each channel turned out, and why the Tablo says any failed.</div>
-        <p class="dim" style="font-size:13px">Nothing to show yet: this fills in as your Tablo records.</p>
+  const signalHtml = signalPanel(signal) || setCard('Signal health', 'How recordings on each channel turned out, and why the Tablo says any failed.',
+    setRow('Nothing to show yet', 'This fills in as your Tablo records.'));
+
+  const SECTIONS = {
+    general: ['General', 'Your Tablo, keeping the library up to date, and how TabloView looks.', tablo + library + appearance],
+    playback: ['Playback', 'Picture and what happens as you watch.', picture + watching],
+    commercials: ['Commercials & dropouts', 'Finding and skipping commercial breaks, and parts a weak signal broke up.', skipping + finding],
+    live: ['Live TV', 'Channels beyond your Tablo’s.', more],
+    storage: ['Storage & exports', 'Saving recordings as MP4 files, and what’s using your Tablo’s space.', exports + drives + spaceByShowPanel(space, storage.connected ? storage.used_gb : 0)],
+    plex: ['Plex', 'Exports showing up in Plex right away.', '<section class="set-card" id="plexPanel"><header class="set-card-head"><h3>Plex</h3><p><span class="spinner"></span></p></header></section>'],
+    desktop: ['Desktop & network', 'This PC, your network, and other devices using TabloView.', thisPc + networkPanel() + access],
+    signal: ['Signal health', 'How your recordings are coming in.', signalHtml],
+    diagnostics: ['About & diagnostics', 'Versions, updates, backups and help with problems.', about + moving + diagnostics],
+  };
+  // Old addresses: More channels was under Playback, the commercial switches too
+  const asked = r.query.get('tab') || 'general';
+  const id = SECTIONS[asked] ? asked : 'general';
+  const nav = SETTINGS_SECTIONS.map(([sid, label, ic]) => `
+      <a href="#/settings${sid === 'general' ? '' : `?tab=${sid}`}" class="set-nav-item${sid === id ? ' active' : ''}" data-section="${sid}">${icon(ic, 16)}<span>${label}</span></a>`).join('');
+  // Every section is on the page (one shown at a time), so a search can look through all of them
+  const sections = SETTINGS_SECTIONS.map(([sid]) => {
+    const [title, sub, body] = SECTIONS[sid];
+    return `<div class="set-section${sid === id ? '' : ' hidden'}" data-section="${sid}">
+        <div class="set-content-head"><h2>${title}</h2><p>${sub}</p></div>
+        ${body}
       </div>`;
-  const TABS = [
-    ['general', 'General', connection + libraryPanel + appearancePanel],
-    ['playback', 'Playback', playbackPanel + extraPanel],
-    ['storage', 'Storage', storagePanel + exportsPanel + spaceByShowPanel(space, storage.connected ? storage.used_gb : 0)],
-    ['plex', 'Plex', '<div class="panel" id="plexPanel"><h3>Plex</h3><div class="panel-sub"><span class="spinner"></span></div></div>'],
-    ['signal', 'Signal health', signalHtml],
-    ['desktop', 'Desktop & network', networkPanel() + desktop + network],
-    ['diagnostics', 'Diagnostics', diagnosticsPanel],
-  ];
-  const current = TABS.find(([id]) => id === r.query.get('tab')) || TABS[0];
-  const tab = ([id, label]) => `<a href="#/settings${id === 'general' ? '' : `?tab=${id}`}" class="${id === current[0] ? 'active' : ''}" style="display:inline-flex;align-items:center;height:28px;padding:0 12px;border-radius:7px;font-weight:500;font-size:13px">${label}</a>`;
+  }).join('');
 
-  paint(`<div class="page">
-    <div class="page-head"><div><h1 class="page-title">Settings</h1><div class="page-sub">Your Tablo and TabloView's settings</div></div></div>
-    <div class="toolbar"><div class="segmented tabs">${TABS.map(tab).join('')}</div></div>
-    <div class="panel-grid">
-${current[2]}
+  paint(`<div class="page settings-page">
+    <div class="page-head"><div><h1 class="page-title">Settings</h1></div></div>
+    <div class="settings-layout">
+      <nav class="set-nav">
+        <div class="help-search">${icon('search', 15)}<input class="input" id="settingsSearch" type="search" placeholder="Search settings" autocomplete="off" value="${esc(state.settingsQuery || '')}"></div>
+        ${nav}
+      </nav>
+      <div class="set-content">
+        ${sections}
+        <div class="set-none hidden">${setCard('Nothing matches', '', setRow('No setting mentions that', 'Try another word, or look in <a href="#/help">Help</a>.'))}</div>
+      </div>
     </div>
   </div>`);
-  if (current[0] === 'plex') loadPlex(token);
-  if (current[0] === 'desktop') { loadNetwork(token); loadLanActivity(token); if (info.listening_on_network) loadLanAccess(token, info); }
-  if (current[0] === 'playback') showExtraStatus();
+  // Parts of a section that fill in once it's opened (or a search reaches them)
+  const loaders = {
+    plex: () => loadPlex(token),
+    desktop: () => Promise.all([loadNetwork(token), loadLanActivity(token), info.listening_on_network ? loadLanAccess(token, info) : null]),
+    live: () => showExtraStatus(),
+  };
+  const loaded = new Set();
+  const load = sid => {
+    if (loaded.has(sid) || !loaders[sid]) return null;
+    loaded.add(sid);
+    return Promise.resolve(loaders[sid]()).catch(() => {});
+  };
+  load(id);
+
+  // Search: every row (and card) whose words, with its card's and section's names, include every
+  // word typed; the sections with none are hidden, and the list on the left marks which have some
+  const search = $('#settingsSearch');
+  const ALIASES = { ad: 'commercial', ads: 'commercial', ai: 'claude', disk: 'storage', drive: 'storage', space: 'storage', mp4: 'export', remote: 'away', phone: 'devices' };
+  const filter = () => {
+    state.settingsQuery = search.value;
+    const words = search.value.toLowerCase().split(/\s+/).filter(Boolean);
+    const searching = words.length > 0;
+    // Each word from the start of a word ("pin" finds PIN, not keeping)
+    const starts = w => new RegExp(`(^|[^a-z0-9])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`);
+    const tests = words.map(w => [starts(w), ALIASES[w] && starts(ALIASES[w])]);
+    const all = text => tests.every(([re, alias]) => re.test(text) || (alias && alias.test(text)));
+    let found = 0;
+    view().querySelectorAll('.set-section').forEach(sec => {
+      const sid = sec.dataset.section;
+      // A part that fills in later is searched again once it has
+      const later = searching && load(sid);
+      if (later) later.then(() => { if (!stale(token) && search.value) filter(); });
+      const secText = sec.querySelector('.set-content-head').textContent.toLowerCase();
+      let hits = 0;
+      sec.querySelectorAll('.set-card').forEach(card => {
+        const head = card.querySelector(':scope > .set-card-head');
+        const headText = `${secText} ${head ? head.textContent.toLowerCase() : ''}`;
+        const whole = !searching || all(headText);
+        // The card's parts: its rows, lists and notes (inside a .set-body, that body's)
+        const parts = [...card.children].filter(el => el !== head).flatMap(el => el.classList.contains('set-body') ? [...el.children] : [el]);
+        let shown = 0;
+        for (const el of parts) {
+          const hit = whole || all(`${headText} ${el.textContent.toLowerCase()}`);
+          el.classList.toggle('search-hidden', !hit);
+          if (hit && el.textContent.trim()) shown++;
+        }
+        card.classList.toggle('search-hidden', searching && !shown && !whole);
+        hits += whole ? Math.max(shown, 1) : shown;
+      });
+      sec.classList.toggle('hidden', searching ? !hits : sid !== id);
+      view().querySelector(`.set-nav-item[data-section="${sid}"]`).classList.toggle('no-match', searching && !hits);
+      found += hits;
+    });
+    view().querySelector('.settings-layout').classList.toggle('searching', searching);
+    view().querySelector('.set-none').classList.toggle('hidden', !searching || found > 0);
+  };
+  search.addEventListener('input', () => { filter(); view().scrollTop = 0; });
+  // A section picked from the list ends the search
+  view().querySelectorAll('.set-nav-item').forEach(a => a.addEventListener('click', () => { state.settingsQuery = ''; }));
+  if (search.value) filter();
 };
+
+// Settings → About & diagnostics: everything set up, in a file to restore on another PC (app/backup.py).
+// This browser's own preferences go in it too, and come back into the browser that restores it
+const BACKUP_BROWSER_KEYS = ['tablo_buffer_target', 'tablo_autoplay', 'tablo_cc', 'tablo_cc_second', 'tablo_volume', 'tv_start_page', 'tv_lib_sort', 'tv_lib_layout'];
+
+async function saveBackup(btn) {
+  btn.disabled = true;
+  try {
+    const browser = {};
+    for (const k of BACKUP_BROWSER_KEYS) { const v = store(k, null); if (v !== null) browser[k] = v; }
+    const { backup, summary } = await api('/api/backup', { method: 'POST', body: JSON.stringify({ browser }) });
+    const blob = new Blob([JSON.stringify(backup, null, 1)], { type: 'application/json' });
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `TabloView backup ${new Date().toISOString().slice(0, 10)}.json` });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    toast(`Backup saved to your downloads: ${plural(summary.settings, 'setting')}, ${plural(summary.watch_list, 'recording')} on the Watch list, breaks for ${plural(summary.commercials, 'recording')}`, 'success');
+  } catch (err) { toast(`Couldn’t save the backup: ${err.message}`, 'error'); }
+  btn.disabled = false;
+}
+
+function restoreBackup() {
+  const input = Object.assign(document.createElement('input'), { type: 'file', accept: '.json,application/json' });
+  input.addEventListener('change', async () => {
+    const file = input.files[0];
+    if (!file) return;
+    let data;
+    try { data = JSON.parse(await file.text()); } catch { toast('This isn’t a TabloView backup file.', 'error'); return; }
+    if (!data || data.kind !== 'TabloView backup') { toast('This isn’t a TabloView backup file.', 'error'); return; }
+    const made = data.created ? new Date(data.created).toLocaleString() : 'an unknown date';
+    if (!await confirmDialog({ title: 'Restore this backup?', text: `Saved ${made} by TabloView ${data.version || ''}. Its settings replace the ones here; its Watch list, reminders and commercial breaks are added to what’s here.`, confirm: 'Restore' })) return;
+    let out;
+    try { out = await api('/api/backup/restore', { method: 'POST', body: JSON.stringify(data) }); } catch (err) { toast(err.message, 'error'); return; }
+    for (const [k, v] of Object.entries(out.browser || {})) save(k, v);
+    const done = [
+      plural(out.settings, 'setting'),
+      out.watch_list && `${plural(out.watch_list, 'recording')} on the Watch list`,
+      out.reminders && plural(out.reminders, 'reminder'),
+      out.commercials && `commercial breaks for ${plural(out.commercials, 'recording')}`,
+      out.history && `signal history for ${plural(out.history, 'recording')}`,
+    ].filter(Boolean);
+    await openModal(`
+      <div class="dialog-body">
+        <div class="dialog-title">Backup restored</div>
+        <div class="dialog-text">Brought in: ${esc(done.join(', '))}.</div>
+        ${(out.notes || []).map(n => `<div class="dialog-text" style="color:var(--warn)">${esc(n)}</div>`).join('')}
+        <div class="dialog-text dim">Still to set up on this PC, if you used them: Plex (Settings → Plex), your Claude API key (Settings → Commercials &amp; dropouts), network access and its PIN (Settings → Desktop &amp; network).</div>
+      </div>
+      <div class="dialog-foot"><button class="btn btn-primary" data-action="modal-ok" data-autofocus>OK</button></div>`);
+    location.reload();  // this browser's preferences, and every page, as restored
+  });
+  input.click();
+}
 
 // Settings → Plex: sign in, choose the server, and have Plex scan each new export (app/plex.py)
 async function loadPlex(token) {
@@ -3728,56 +3870,40 @@ async function loadPlex(token) {
   try { d = await api('/api/plex'); } catch (err) { d = { error: err.message }; }
   const el = $('#plexPanel');
   if (stale(token) || !el) return;
-  const intro = 'Plex usually doesn’t notice new files on a network drive by itself, so exports wait for its next scheduled scan. Connected, TabloView asks Plex to scan each export as soon as it’s saved.';
-  let body;
+  const intro = 'Plex often doesn’t notice new files on a network drive by itself, so exports wait for its next scheduled scan. Connected, TabloView asks Plex to scan each export as soon as it’s saved.';
+  let head, body;
   if (!d.signed_in) {
-    body = `<div class="panel-sub">Not connected</div>
-      <p class="dim" style="font-size:13px">${intro}</p>
-      <p class="dim" style="font-size:13px;margin-top:8px">Signing in opens Plex’s own page, where you approve TabloView. TabloView never sees your Plex password.</p>
-      ${d.error ? `<p style="color:var(--warn);font-size:13px;margin-top:8px">${esc(d.error)}</p>` : ''}
-      <div class="panel-actions"><button class="btn btn-primary btn-sm" data-action="plex-signin">Sign in to Plex</button></div>`;
+    head = `<h3>Plex <span class="set-pill">Not connected</span></h3><p>${intro}</p>`;
+    body = `${setRow('Sign in to Plex', 'Opens Plex’s own page, where you approve TabloView. TabloView never sees your Plex password.',
+        '<button class="btn btn-primary btn-sm" data-action="plex-signin">Sign in to Plex</button>')}
+      ${d.error ? setNote(esc(d.error), true) : ''}`;
   } else if (!d.server) {
     const servers = d.servers || [];
-    body = `<div class="panel-sub">Signed in. Which Plex server should scan your exports?</div>
-      ${d.error ? `<p style="color:var(--warn);font-size:13px">${esc(d.error)}</p>` : ''}
-      ${servers.length ? `<div class="panel-actions"><select class="select" id="plexServer">${servers.map(x => `<option value="${esc(x.id)}">${esc(x.name)}${x.owned ? '' : ' (shared with you)'}</option>`).join('')}</select>
-        <button class="btn btn-primary btn-sm" data-action="plex-server">Use this server</button></div>`
-        : '<p class="dim" style="font-size:13px">No Plex servers on this account.</p>'}
-      <div class="panel-actions"><button class="btn btn-sm btn-ghost" data-action="plex-signout">Sign out of Plex</button></div>`;
+    head = `<h3>Plex <span class="set-pill">Signed in</span></h3><p>Which Plex server should scan your exports?</p>`;
+    body = `${d.error ? setNote(esc(d.error), true) : ''}
+      ${servers.length ? setRow('Server', '', `<select class="select" id="plexServer">${servers.map(x => `<option value="${esc(x.id)}">${esc(x.name)}${x.owned ? '' : ' (shared with you)'}</option>`).join('')}</select>
+        <button class="btn btn-primary btn-sm" data-action="plex-server">Use this server</button>`) : setRow('No Plex servers on this account', '')}
+      ${setRow('Plex account', '', '<button class="btn btn-sm btn-ghost" data-action="plex-signout">Sign out of Plex</button>')}`;
   } else {
     const lib = d.export_library;
-    // The export folder is set in one place (Storage → Exports); this only says which library it lands in
+    // The export folder is set in one place (Storage & exports); this only says which library it lands in
     const library = d.error ? `<span style="color:var(--warn)">${esc(d.error)}</span>`
       : lib ? `${esc(lib.title)} <span class="dim">(Plex sees it as ${esc(lib.path)})</span>`
       : '<span style="color:var(--warn)">None: this folder isn’t in any of this server’s libraries.</span> Add it to a TV Shows library in Plex, or choose a folder that’s in one.';
-    body = `<div class="panel-sub">Connected</div>
-      <dl class="kv">
+    head = `<h3>Plex <span class="set-pill ok">Connected</span></h3><p>${intro}</p>`;
+    body = `<dl class="set-kv">
         <dt>Server</dt><dd>${esc(d.server.name)} <span class="dim">(${esc(d.server.uri)})</span></dd>
-        <dt>Export folder</dt><dd>${esc(d.export_folder)} <span class="dim">· <a href="#/settings?tab=storage">change it in Storage → Exports</a></span></dd>
+        <dt>Export folder</dt><dd>${esc(d.export_folder)} <span class="dim">· <a href="#/settings?tab=storage">change it in Storage &amp; exports</a></span></dd>
         <dt>Plex library</dt><dd>${library}</dd>
       </dl>
-      <label class="switch-row" style="margin-top:14px">
-        <input type="checkbox" class="switch" data-change="plex-scan" ${d.scan ? 'checked' : ''}>
-        <span>Ask Plex to scan each new export</span>
-      </label>
-      <p class="dim" style="margin-top:6px;font-size:12.5px">${intro} Turn on <b>Sort exports into show and season folders</b> (<a href="#/settings?tab=storage">Storage → Exports</a>) so Plex recognizes each show.</p>
-      <label class="switch-row" style="margin-top:14px">
-        <input type="checkbox" class="switch" data-change="plex-copy-watched" ${d.copy_watched ? 'checked' : ''}>
-        <span>Carry over watched and resume point</span>
-      </label>
-      <p class="dim" style="margin-top:6px;font-size:12.5px">Once Plex has a new export, it’s marked watched there if you watched the recording, or resumes where you stopped.</p>
-      <label class="switch-row" style="margin-top:14px">
-        <input type="checkbox" class="switch" data-change="plex-fix-match" ${d.fix_match ? 'checked' : ''}>
-        <span>Fix exports Plex matches to the wrong show</span>
-      </label>
-      <p class="dim" style="margin-top:6px;font-size:12.5px">If Plex puts a new export under another series, TabloView matches it to the show it was recorded as. Only with show folders on, and only for a show whose folder holds nothing else.${d.show_folders ? '' : ' <span style="color:var(--warn)">Show folders are off, so this does nothing now.</span>'}</p>
-      <p class="dim" style="margin-top:14px;font-size:12.5px">To have a show’s recordings deleted from your Tablo once they’re in Plex, turn on <b>Delete once in Plex</b> on its page.${d.archive_shows ? ` On for ${esc(plural(d.archive_shows, 'show'))}.` : ''}</p>
-      <div class="panel-actions">
-        <button class="btn btn-sm" data-action="plex-scan-now" ${lib ? '' : 'disabled'}>Scan now</button>
-        <button class="btn btn-sm btn-ghost" data-action="plex-signout">Sign out of Plex</button>
-      </div>`;
+      ${setSwitch('Ask Plex to scan each new export', `Turn on <b>Sort into show and season folders</b> (<a href="#/settings?tab=storage">Storage &amp; exports</a>) so Plex recognizes each show.`, 'plex-scan', d.scan)}
+      ${setSwitch('Carry over watched and resume point', 'Once Plex has a new export, it’s marked watched there if you watched the recording, or resumes where you stopped.', 'plex-copy-watched', d.copy_watched)}
+      ${setSwitch('Fix exports Plex matches to the wrong show', `Matches it to the show it was recorded as, with show folders on, for a show whose folder holds nothing else.${d.show_folders ? '' : ' <span style="color:var(--warn)">Show folders are off, so this does nothing now.</span>'}`, 'plex-fix-match', d.fix_match)}
+      ${setRow('Delete once in Plex', `Turn it on on a show’s page to have its recordings deleted from your Tablo once they’re in Plex.${d.archive_shows ? ` On for ${esc(plural(d.archive_shows, 'show'))}.` : ''}`)}
+      ${setRow('Plex server', '', `<button class="btn btn-sm" data-action="plex-scan-now" ${lib ? '' : 'disabled'}>Scan now</button>
+        <button class="btn btn-sm btn-ghost" data-action="plex-signout">Sign out of Plex</button>`)}`;
   }
-  el.innerHTML = `<h3>Plex</h3>${body}`;
+  el.innerHTML = `<header class="set-card-head">${head}</header>${body}`;
 }
 
 async function plexSignin(btn) {
@@ -3811,13 +3937,10 @@ async function plexSignin(btn) {
 // Settings → Desktop & network: how the Tablo and this PC are connected, and a test of the link
 // between them (app/netcheck.py)
 function networkPanel() {
-  return `
-    <div class="panel">
-      <h3>Network</h3><div class="panel-sub">How your Tablo and this computer are connected, and how fast video gets from one to the other</div>
-      <dl class="kv" id="netStatus"><dt>Checking</dt><dd><span class="spinner"></span></dd></dl>
-      <div class="panel-actions"><button class="btn btn-sm" data-action="net-test">Test connection</button></div>
-      <div id="netTest" style="margin-top:12px;font-size:13px"></div>
-    </div>`;
+  return setCard('Network', 'How your Tablo and this computer are connected.', `
+      <dl class="set-kv" id="netStatus"><dt>Checking</dt><dd><span class="spinner"></span></dd></dl>
+      ${setRow('Test connection', 'Reads part of a recording for about 10 seconds to see how fast video arrives.', '<button class="btn btn-sm" data-action="net-test">Test connection</button>')}
+      <div id="netTest" class="set-sub"></div>`);
 }
 
 async function loadNetwork(token) {
@@ -3937,11 +4060,10 @@ function spaceByShowPanel(data, usedGb) {
         : '<span class="dim">Nothing watched yet</span>'}</div>
     </div>`).join('');
   return `
-    <div class="panel" style="grid-column:1/-1">
-      <h3>Space by show</h3>
-      <div class="panel-sub">Biggest first. The orange part of each bar is recordings you’ve watched. Amounts are approximate.</div>
-      <div class="space-list">${rows}</div>
-    </div>`;
+    <section class="set-card">
+      <header class="set-card-head"><h3>Space by show</h3><p>Biggest first. The orange part of each bar is recordings you’ve watched. Amounts are approximate.</p></header>
+      <div class="set-body space-list">${rows}</div>
+    </section>`;
 }
 
 async function deleteWatchedForShow(el) {
@@ -5862,6 +5984,11 @@ const ACTIONS = {
     try { await api(`/api/exports/${encodeURIComponent(el.dataset.id)}`, { method: 'DELETE' }); } catch (err) { toast(err.message, 'error'); }
     if (parseRoute().name === 'downloads') route();
   },
+  'space-dismiss': () => {
+    save('space_dismissed', $('#spaceBanner').dataset.level || 90);
+    $('#spaceBanner').classList.add('hidden');
+  },
+  'space-open': () => { location.hash = '#/settings?tab=storage'; },
   'guide-retry': async el => {
     el.disabled = true;
     try {
@@ -5982,7 +6109,7 @@ const ACTIONS = {
     if (!await confirmDialog({ title: 'Sign out of Plex?', text: 'TabloView stops asking Plex to scan new exports. Your Plex libraries aren’t changed.', confirm: 'Sign out' })) return;
     try { await api('/api/plex/signout', { method: 'POST' }); loadPlex(routeToken); } catch (err) { toast(err.message, 'error'); }
   },
-  'help-jump': (el, e) => { if (e) e.preventDefault(); document.getElementById(el.dataset.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
+  'help-jump': (el, e) => { if (e) e.preventDefault(); location.hash = `#/help?topic=${el.dataset.id}`; },
   'pb-shape': el => pictureShape.menu(el),
   'export-folder': el => chooseExportFolder(el),
   'export-folder-type': el => chooseExportFolder(el, true),
@@ -6103,6 +6230,8 @@ const ACTIONS = {
 
   'run-inspector': () => runInspector(),
   'copy-diagnostics': () => copyDiagnostics(),
+  'backup-save': el => saveBackup(el),
+  'backup-restore': () => restoreBackup(),
   'logout': async () => {
     if (!await confirmDialog({ title: 'Sign out of Tablo?', text: 'TabloView will stop syncing until you sign in again.', confirm: 'Sign out', danger: true })) return;
     await api('/api/auth/logout', { method: 'POST' }).catch(() => {});

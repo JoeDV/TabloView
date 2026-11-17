@@ -22,13 +22,40 @@ export const SUITES = {
       ['#/scheduled', '.sched-row, #schedList .empty', 'Scheduled (series)'],
       ['#/scheduled?view=upcoming', '.upcoming-row, #schedList .empty', 'Scheduled (upcoming)'],
       ['#/downloads', '#dlList .list, #dlList .empty', 'Downloads'],
-      ['#/settings', '.panel', 'Settings'],
+      ['#/settings', '.set-card', 'Settings'],
+      ['#/help', '.help section', 'Help'],
     ]) {
       t.check(`${label} page renders`, await b.go(hash, `document.querySelector(${JSON.stringify(ready)})`, 30000));
     }
     await b.ev(`location.hash = '#/device?tab=playback'`);
     t.check('An old Device link opens Settings', await b.waitFor(`location.hash === '#/settings?tab=playback' && document.querySelector('.page-title').textContent === 'Settings'`));
-    t.check('Settings page shows the app version', /TabloView \d+\.\d+\.\d+/.test(await b.ev(`document.querySelector('.panel-grid').textContent`)));
+    await b.go('#/settings?tab=diagnostics', `document.querySelector('[data-action="version-history"]')`);
+    t.check('Settings → About shows the app version', /TabloView \d+\.\d+\.\d+/.test(await b.ev(`document.querySelector('.set-content').textContent`)));
+    t.check('Settings → About has backup and restore', await b.ev(`!!document.querySelector('[data-action="backup-save"]') && !!document.querySelector('[data-action="backup-restore"]')`));
+    await b.go('#/settings?tab=commercials', `document.querySelector('[data-change="skip-commercials"]')`);
+    t.check('Each section has its own place in the list', (await b.ev(`document.querySelectorAll('.set-nav-item').length`)) === 9
+      && /Commercials/.test(await b.ev(`document.querySelector('.set-nav-item.active').textContent`)));
+    // Settings search: the matching rows from every section, the rest hidden
+    await b.ev(`(() => { const s = document.getElementById('settingsSearch'); s.value = 'pin'; s.dispatchEvent(new Event('input')); })()`);
+    const pinRows = await b.ev(`[...document.querySelectorAll('.set-section .set-row')].filter(r => r.offsetParent).map(r => r.querySelector('.set-label').textContent.trim())`);
+    t.check('Settings search finds the PIN, from another section', pinRows.includes('PIN') && pinRows.length < 6, pinRows.join(', '));
+    await b.ev(`(() => { const s = document.getElementById('settingsSearch'); s.value = 'zzqx'; s.dispatchEvent(new Event('input')); })()`);
+    t.check('Settings search says when nothing matches', await b.ev(`!document.querySelector('.set-none').classList.contains('hidden')`));
+    await b.ev(`(() => { const s = document.getElementById('settingsSearch'); s.value = ''; s.dispatchEvent(new Event('input')); })()`);
+    // The drive almost full: a notice across the top, hidden with × until it's fuller
+    await b.ev(`save('space_dismissed', 0); showSpaceBanner({ connected: true, almost_full: 90, free_gb: 90, percent_used: 91, deletable: [{ title: 'Show A', count: 3, bytes: 5e9 }] })`);
+    t.check('Almost-full notice shows with the shows to delete from', await b.ev(`!document.getElementById('spaceBanner').classList.contains('hidden') && /Show A/.test(document.getElementById('spaceBannerText').textContent)`));
+    await b.ev(`document.querySelector('[data-action="space-dismiss"]').click(); showSpaceBanner({ connected: true, almost_full: 90, free_gb: 90, percent_used: 91 })`);
+    const stillHidden = await b.ev(`document.getElementById('spaceBanner').classList.contains('hidden')`);
+    await b.ev(`showSpaceBanner({ connected: true, almost_full: 95, free_gb: 40, percent_used: 96 })`);
+    t.check('Hidden until 95%', stillHidden && await b.ev(`!document.getElementById('spaceBanner').classList.contains('hidden')`));
+    await b.ev(`save('space_dismissed', 0); loadStorage()`);
+    await b.go('#/help', `document.querySelector('#helpSearch')`);
+    await b.ev(`(() => { const s = document.getElementById('helpSearch'); s.value = 'tailscale'; s.dispatchEvent(new Event('input')); })()`);
+    const shown = await b.ev(`[...document.querySelectorAll('.help-page .set-nav-item:not(.hidden)')].length`);
+    t.check('Help search narrows the topics', shown > 0 && shown < (await b.ev(`document.querySelectorAll('.help-page .set-nav-item').length`)), `${shown} topics`);
+    await b.go('#/help?topic=help-faq', `document.querySelector('#help-faq .help-q')`);
+    t.check('A Help link opens its topic, questions folded', /Questions/.test(await b.ev(`document.querySelector('.help h2').textContent`)) && !(await b.ev(`document.querySelector('.help-q').open`)));
   },
 
   async library(b, t) {
@@ -351,7 +378,7 @@ export const SUITES = {
       await b.ev(`!$('#updateNotice').classList.contains('hidden') && $('#updateNotice').href.startsWith('ms-windows-store:') && /1\\.1\\.7/.test($('#updateNoticeText').textContent)`));
     await b.ev(`window.__fake['/api/system/update'] = { current: '1.1.7', latest: null, update_available: false, store: true, enabled: true, download_url: 'ms-windows-store://pdp/?productid=9NCWVSC7KX2N', error: null }; void checkForUpdate(true)`);
     await sleep(800);
-    await b.go('#/settings', `document.querySelector('[data-action="check-update"]')`);
+    await b.go('#/settings?tab=diagnostics', `document.querySelector('[data-action="check-update"]')`);
     t.check('Settings → About offers Check now and Open in the Store', /Open in the Store/.test(await b.ev(`document.getElementById('view').textContent`)));
   },
 
@@ -399,6 +426,43 @@ export const SUITES = {
     t.check('Closing the live channel leaves the recording playing with its sound', await b.ev(`!dual.on && !$('#video').paused && $('#video').__audio.gain.gain.value === 1`));
   },
 
+  // TV view: two channels at once, with the remote's keys. Streaming channels, so no antenna tuner
+  // is taken; still plays for real, so only with TABLOVIEW_ALLOW_TUNE=1
+  async tvdual(b, t) {
+    if (!process.env.TABLOVIEW_ALLOW_TUNE) return t.skip('TV: two channels at once', 'set TABLOVIEW_ALLOW_TUNE=1 to play for real');
+    await b.send('Page.navigate', { url: `${BASE}/tv#/live` });
+    await b.waitFor(`typeof dual !== 'undefined' && state.live`, 30000);
+    await b.ev(`state.liveTab = 'fast'`);
+    const chans = await b.ev(`liveChannels().slice(0, 3).map(c => c.channel_id)`);
+    if (chans.length < 3) return t.skip('TV: two channels at once', 'fewer than 3 streaming channels');
+    const key = k => b.ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true }))`);
+    await b.ev(`player.tune(${JSON.stringify(chans[0])})`);
+    t.check('TV: a channel plays', await b.waitFor(`!player.video().paused && player.video().currentTime > 2`, 60000));
+    await key('Enter'); await sleep(300);
+    t.check('TV: OK offers Add a channel', await b.ev(`player.controlList.some(([v]) => v === 'second')`));
+    await b.ev(`player.controlIndex = player.controlList.findIndex(([v]) => v === 'second'); player.pressControl()`); await sleep(300);
+    t.check('TV: the channel list opens, without the one playing', await b.ev(`dual.picking && !$('#chPicker').classList.contains('hidden') && !dual.list.some(c => c.channel_id === player.s.id)`));
+    await key('ArrowDown'); await key('ArrowUp');
+    await key('Enter');
+    t.check('TV: both play, side by side, the first one heard', await b.waitFor(`dual.on && dual.video().currentTime > 2 && !player.video().paused && $('#player').classList.contains('dual-side')`, 60000)
+      && await b.ev(`!player.video().muted && dual.video().muted && /🔊/.test($('#paneLabel1').textContent)`));
+    await key('ArrowRight'); await sleep(300);
+    t.check('TV: ▶ hears the right-hand one', await b.ev(`dual.active === 'second' && player.video().muted && !dual.video().muted && /🔊/.test($('#paneLabel2').textContent)`));
+    const was = await b.ev(`dual.s.id`), first = await b.ev(`player.s.id`);
+    await key('ArrowDown');
+    t.check('TV: ▼ changes the channel you hear, not the other', await b.waitFor(`dual.s.id && dual.s.id !== ${JSON.stringify(was)} && dual.s.id !== player.s.id && dual.video().currentTime > 2`, 60000)
+      && await b.ev(`player.s.id === ${JSON.stringify(first)}`));
+    await key('Enter'); await sleep(300);
+    await b.ev(`player.controlIndex = player.controlList.findIndex(([v]) => v === 'layout'); player.pressControl()`); await sleep(300);
+    t.check('TV: Layout switches to Big and small', await b.ev(`$('#player').classList.contains('dual-pip') && /Big and small/.test($('#osdControls .ctl.on').textContent)`));
+    await key('Escape'); await sleep(200);  // the buttons away
+    const heard = await b.ev(`dual.s.id`), heardSession = await b.ev(`dual.s.sessionId`);
+    await key('Escape'); await sleep(1500);
+    t.check('TV: Back closes the other, the one you hear carries on full screen', await b.ev(`!dual.on && player.s.id === ${JSON.stringify(heard)} && player.s.sessionId === ${JSON.stringify(heardSession)} && !$('#player').classList.contains('dual')`)
+      && await b.waitFor(`!player.video().paused && !player.video().muted`, 20000));
+    await b.ev(`player.exit()`); await sleep(1500);
+  },
+
     async whatsnew(b, t) {
     await b.open('#/');
     await b.ev(`window.__fake['/api/system/whatsnew'] = { show: true, version: '9.9.9', notes: ['First thing', 'Second thing'] }; void showWhatsNew()`);
@@ -407,7 +471,7 @@ export const SUITES = {
       && (await b.ev(`document.querySelectorAll('.whatsnew-list li').length`)) === 2);
     await b.ev(`document.querySelector('[data-action="modal-ok"]').click()`); await sleep(500);
     t.check('Closing it records it as seen (intercepted)', await b.ev(`window.__writes.some(w => w[1] === '/api/system/whatsnew/seen')`));
-    await b.go('#/settings', `document.querySelector('[data-action="version-history"]')`);
+    await b.go('#/settings?tab=diagnostics', `document.querySelector('[data-action="version-history"]')`);
     await b.ev(`document.querySelector('[data-action="version-history"]').click()`); await sleep(800);
     t.check('Settings → Version history lists every version, newest first', await b.ev(`(() => {
       const v = [...document.querySelectorAll('.changelog-version')].map(h => h.textContent);

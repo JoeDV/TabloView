@@ -124,14 +124,14 @@
   <ol>
     <li>On a show's page, turn on <b>Skip commercials</b>. TabloView finds the breaks in that show's unwatched recordings, newest first. For a single recording, use <b>Find commercials</b> in its <b>⋯</b> menu. For a series that hasn't recorded yet, the same switch is on its page in the Guide (or open it from Scheduled).</li>
     <li>Breaks appear as marks on the player's timeline. When one comes up, press <b>Skip break</b> (or <kbd>S</kbd>). To keep watching without it on screen, click the <b>×</b> at its end. On a TV, press <b>OK</b> and then <b>OK</b> again to skip, or <b>Back</b> to hide the message.</li>
-    <li>To skip them without pressing anything, turn on <a href="#/settings?tab=playback">Settings → Playback</a> → <b>Skip commercial breaks automatically</b>.</li>
+    <li>To skip them without pressing anything, turn on <a href="#/settings?tab=commercials">Settings → Commercials &amp; dropouts</a> → <b>Skip commercial breaks automatically</b>.</li>
     <li>A "break" longer than 7 minutes is more likely part of the show, so it's marked but never skipped on its own.</li>
     <li>If a skip cut into the show, press <b>Undo</b> on the message that appears (or <kbd>U</kbd>; on a TV, press <b>Up</b> within a few seconds). It goes back to where the skip started, and that part is never skipped again in that recording.</li>
   </ol>
   <p><b>Find again:</b> after an update improves the finder, use <b>Find again</b> beside a show's Skip commercials switch to redo its unwatched recordings, or <b>Find commercials again</b> in a recording's <b>⋯</b> menu. Updates don't redo anything by themselves.</p>
   <p>It looks for the channel's logo in the corner of the picture (most networks take it off during ads), the moment of black and silence at the edges of a break, and how different the picture looks from the show. When it isn't sure, it leaves a few seconds of ad in rather than cut into the show, and it never skips past the end of the show.</p>
   <p>Finding breaks takes a few minutes per recording and pauses while you watch or export, so it doesn't slow anything down. It keeps going with the browser closed, as long as TabloView is running.</p>
-  <p><b>Signal dropouts:</b> when your Tablo says a recording didn't come in cleanly, TabloView finds where a weak signal broke up the picture and marks those parts in red on the timeline. Skip them with <b>Skip dropout</b> (or <kbd>S</kbd>), or automatically with <a href="#/settings?tab=playback">Settings → Playback</a>. Finding them means reading the whole recording once, in the background while nothing is playing: about a quarter of its length, using most of one CPU core. The status line shows <b>Checking signal</b> while it runs, and you can turn it off in Settings → Playback.</p>
+  <p><b>Signal dropouts:</b> when your Tablo says a recording didn't come in cleanly, TabloView finds where a weak signal broke up the picture and marks those parts in red on the timeline. Skip them with <b>Skip dropout</b> (or <kbd>S</kbd>), or automatically with <a href="#/settings?tab=commercials">Settings → Commercials &amp; dropouts</a>. Finding them means reading the whole recording once, in the background while nothing is playing: about a quarter of its length, using most of one CPU core. The status line shows <b>Checking signal</b> while it runs, and you can turn it off in Settings → Commercials &amp; dropouts.</p>
 </section>
 
 <section id="help-tv">
@@ -159,6 +159,7 @@
     <li>Open the address with <code>/tv</code> on the end, typing <code>http://</code> too, or the browser searches for it instead. From then on that browser opens in TV view.</li>
     <li><b>Arrows</b> move, <b>OK</b> picks, <b>Back</b> goes back. <b>◀</b> from the left edge (or Back) opens the menu.</li>
     <li>While watching, <b>OK</b> brings up big buttons: Pause, 10 s back, 30 s ahead, CC (captions), Shape and Close (live TV: Back to live and Record); during a commercial break, Skip break comes first. Without them, ◀ ▶ skip and ▲ ▼ change channel. In a recording, ◀ ▶ leave the picture waiting where you land until you press OK.</li>
+    <li><b>Two channels at once</b> (live TV): OK, then <b>Add a channel</b>, and pick one. <b>◀ ▶</b> choose which you hear, <b>▲ ▼</b> change that one, and <b>Back</b> closes the other. OK's buttons change the layout (side by side, or big and small). Each channel uses its own tuner. Cheaper streaming sticks may not manage two pictures: if the TV can't keep up, TabloView closes one by itself.</li>
     <li>When a recording ends, <b>Up next</b> starts the show's next unwatched episode in a few seconds (OK plays it now, Back stops). Turning off <b>Play the next episode automatically</b> on the Settings page, in the same browser, turns it off.</li>
     <li><b>Commercial breaks</b> show on the progress bar and are skipped as on the PC: automatically if that's on, otherwise press <b>OK</b> during a break to skip it.</li>
     <li><b>PC view</b> (at the bottom of TV view's menu) switches that browser back to the full TabloView, and <b>TV view</b> (top right on the PC) switches to TV view.</li>
@@ -191,17 +192,20 @@
 
 <section id="help-settings">
   <h2>Settings</h2>
-  <p>TabloView's settings are on the <a href="#/settings">Settings</a> page, in six tabs; most apply straight away.</p>
+  <p>TabloView's settings are on the <a href="#/settings">Settings</a> page, in nine sections listed on its left. Most apply straight away. To find one, type a word or two in <b>Search settings</b> above the list (for example <i>buffer</i>, <i>Plex</i> or <i>PIN</i>): the matching settings from every section are shown together.</p>
+  <p>When your Tablo's drive is 90% full, a notice across the top of TabloView says how much is free and which shows' watched recordings take the most space. Hide it with ×: it comes back at 95%. In the desktop app, a Windows notification says it too.</p>
   <table>
-    <thead><tr><th>Tab</th><th>What you can set or see</th></tr></thead>
+    <thead><tr><th>Section</th><th>What you can set or see</th></tr></thead>
     <tbody>
-      <tr><td>General</td><td>Your Tablo and account (Sign out); <b>Library sync</b>: how often to check for new recordings, and whether to record failed recordings again; <b>Appearance</b>: channel logos in colour or white, and the page TabloView opens on</td></tr>
-      <tr><td>Playback</td><td><b>Video quality</b> (Automatic, Best, or Fastest for older PCs), <b>Smooth motion</b> (60 fps, best for sports, harder on the PC), <b>Buffer before playing</b>, skip commercials and dropouts automatically, check flagged recordings for dropouts, play the next episode automatically</td></tr>
-      <tr><td>Storage</td><td>Space used on your Tablo's drive, space by show, and <b>Exports</b>: format, folder, show folders and .nfo files</td></tr>
-      <tr><td>Plex</td><td>Sign in to Plex and choose your server; TabloView then asks it to scan each new export, so it shows up in Plex right away, carries over whether you watched it, and fixes it if Plex matched it to the wrong show</td></tr>
-      <tr><td>Signal health</td><td>Which channels' recordings failed or broke up, when, and why, with tips</td></tr>
-      <tr><td>Desktop &amp; network</td><td><b>Network</b>: how your Tablo and this computer are connected, and a connection test; <b>Start TabloView when I sign in to Windows</b>, notifications about recording problems and conflicts, and <b>network access</b> with the PIN for other devices</td></tr>
-      <tr><td>Diagnostics</td><td>Details to send when reporting a problem; sign-in details are hidden, so it's safe to share</td></tr>
+      <tr><td><a href="#/settings">General</a></td><td>Your Tablo and account (Sign out); how often to check for new recordings, and whether to record failed recordings again; channel logos in color or white, and the page TabloView opens on</td></tr>
+      <tr><td><a href="#/settings?tab=playback">Playback</a></td><td><b>Video quality</b> (Automatic, Best, or Fastest for older PCs), <b>Smooth motion</b> (60 fps, best for sports, harder on the PC), <b>Buffer before playing</b>, the picture <b>away from home</b>, and playing the next episode automatically</td></tr>
+      <tr><td><a href="#/settings?tab=commercials">Commercials &amp; dropouts</a></td><td>Skipping commercial breaks and signal dropouts automatically, finding breaks with Claude (your own API key), and checking flagged recordings for dropouts</td></tr>
+      <tr><td><a href="#/settings?tab=live">Live TV</a></td><td><b>More channels</b>: Tubi's free channels, iptv-org's list, or your own playlist and guide</td></tr>
+      <tr><td><a href="#/settings?tab=storage">Storage &amp; exports</a></td><td><b>Exports</b>: format, folder, show and season folders, .nfo files; the space used on your Tablo's drive, and space by show</td></tr>
+      <tr><td><a href="#/settings?tab=plex">Plex</a></td><td>Sign in to Plex and choose your server; TabloView then asks it to scan each new export, carries over whether you watched it, and fixes it if Plex matched it to the wrong show</td></tr>
+      <tr><td><a href="#/settings?tab=desktop">Desktop &amp; network</a></td><td>Starting with Windows and notifications (recording problems, conflicts, the drive almost full); how your Tablo and this computer are connected, with a connection test; <b>network access</b> for other devices, the PIN, and the devices using TabloView</td></tr>
+      <tr><td><a href="#/settings?tab=signal">Signal health</a></td><td>Which channels' recordings failed or broke up, when, and why, with tips</td></tr>
+      <tr><td><a href="#/settings?tab=diagnostics">About &amp; diagnostics</a></td><td>Your version, updates, version history, and details to copy when reporting a problem (sign-in details are left out, so it's safe to share)</td></tr>
     </tbody>
   </table>
 </section>
@@ -222,7 +226,7 @@
   <p><b>A channel won't tune.</b> All tuners may be busy with recordings or another app: click <b>Tuners</b> at the top of the page to see. If it still fails, the Tablo may not be picking up that channel right now; the <a href="#/antenna">Antenna</a> helper shows its signal.</p>
   <p><b>Live TV stopped.</b> TabloView restarts a stuck stream by itself; if it can't, press <b>Try again</b>.</p>
   <p><b>Will I lose my recordings if my Tablo is replaced?</b> Recordings belong to the Tablo that made them, so a replacement starts empty, even with the same drive. Export the ones you want to keep (see <a data-help-jump="help-exports">Saving recordings to your PC</a>).</p>
-  <p><b>Still stuck?</b> Copy the details from <a href="#/settings?tab=diagnostics">Settings → Diagnostics</a> and report the problem on <a href="https://github.com/JoeDV/TabloView/issues" target="_blank" rel="noopener">GitHub</a>.</p>
+  <p><b>Still stuck?</b> Copy the details from <a href="#/settings?tab=diagnostics">Settings → About &amp; diagnostics</a> and report the problem on <a href="https://github.com/JoeDV/TabloView/issues" target="_blank" rel="noopener">GitHub</a>.</p>
 </section>
 
 <section id="help-about">
