@@ -53,6 +53,10 @@ DEFAULTS: Dict[str, Any] = {
     "rerecord_failed": True,  # schedule a rerun of a recording that failed or came out short (app/rerecord.py)
     "commercial_shows": [],  # show ids whose recordings get commercial breaks found (app/commercials.py)
     "commercial_episodes": [],  # single recordings asked for from the episode menu
+    # Recordings done before, to be found again: Find again, or with Claude (missing here until 1.3.7,
+    # so those requests were dropped without a word)
+    "commercial_redo": [],
+    "long_logo_breaks_redone": False,  # the one-time look for over-long logo breaks (commercials.redo_long_logo_breaks)
     "auto_export_shows": [],  # show ids whose new recordings are exported to MP4 automatically (app/autoexport.py)
     "skip_commercials": False,  # skip breaks automatically in the player (otherwise a Skip button)
     "claude_api_key": None,  # the user's Anthropic key: Claude finds the breaks (app/claude_ads.py; never shown or logged)

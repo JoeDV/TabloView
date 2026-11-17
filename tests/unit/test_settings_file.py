@@ -23,6 +23,21 @@ class SettingsFileTests(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
+    def test_every_key_the_app_saves_is_kept(self):
+        # save_settings keeps only the keys it knows: commercial_redo was missing, so "Find again" and
+        # "Find commercials with Claude" on a recording already done were dropped without a word
+        import re
+        app = Path(settings.__file__).parent
+        saved = set()
+        for f in app.rglob("*.py"):
+            for call in re.findall(r"save_settings\(\{([^}]*)\}", f.read_text(encoding="utf-8")):
+                saved |= set(re.findall(r'"([a-z_0-9]+)":', call))
+        self.assertTrue(saved)
+        nested = {"salt", "hash"}  # inside lan_pin's value, not keys of their own
+        self.assertEqual(sorted(saved - set(settings.DEFAULTS) - nested), [])
+        settings.save_settings({"commercial_redo": ["ep_1"]})
+        self.assertEqual(settings.load_settings()["commercial_redo"], ["ep_1"])
+
     def test_saves_and_keeps_the_previous_copy(self):
         settings.save_settings({"port": 7071})
         settings.save_settings({"notifications": False})

@@ -100,6 +100,28 @@ class RealRecordingTests(unittest.TestCase):
                 self.assertLessEqual(show, show_limit)
 
 
+class WeatherBannerTests(unittest.TestCase):
+    def test_a_station_banner_isnt_taken_for_the_logo(self):
+        # The Floor (Fox 59, 2026-11-16): a severe thunderstorm watch banner top left for the first
+        # 28 minutes, over show and ads alike, then gone. It was taken for the logo, and the rest of
+        # the show became three breaks of 8 to 11 minutes. Fox's own logo is bottom right
+        rec, hists, corners = load("the_floor_weather_banner")
+        found = c.find_breaks(hists, rec["blacks"], corners, [tuple(s) for s in rec["silences"]])
+        mid = [b for b in found if 0 < b["start"] and b["end"] < rec["seconds"] - 60]
+        self.assertGreaterEqual(len(mid), 5)
+        self.assertTrue(all(b["end"] - b["start"] < 300 for b in mid), found)
+        self.assertFalse(any(b["start"] <= 1800 < b["end"] for b in found))  # 30:00 is the show
+
+    def test_a_weather_bar_in_every_corner_isnt_a_logo(self):
+        # Jeopardy (syndicated, WTHR, 2026-11-16): a severe thunderstorm watch bar along the bottom,
+        # over show and ads, taken down from about 15:00 to 25:00. Both bottom corners "lost their
+        # logo" for ten minutes of the show: no logo to go by, so colour
+        rec, hists, corners = load("jeopardy_weather_bar")
+        how = {}
+        c.find_breaks(hists, rec["blacks"], corners, [tuple(s) for s in rec["silences"]], how=how)
+        self.assertNotEqual(how["by"], "logo")
+
+
 class ClaudeAnswerTests(unittest.TestCase):
     def test_claude_answers_on_black_frames(self):
         from app import claude_ads

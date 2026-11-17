@@ -224,13 +224,32 @@ def logo_scores(corners: List[Union[bytes, Sequence[bool]]]) -> Optional[Tuple[L
     return (scores, t, hi - lo) if hi - lo >= LOGO_SEPARATION else None
 
 
+# A "logo" gone this long in the middle of a show isn't the channel's: no break runs that long
+LOGO_GONE_MAX = 7 * 60
+
+
+def _gone_too_long(scores: List[float], t: float) -> bool:
+    """Whether this corner's mark is missing for longer than any break, away from the start and end.
+    The Floor (Fox, 2026-11-16) had a graphic top left for its first 28 minutes only: it separated
+    a little more clearly than Fox's own logo (bottom right), so the rest of the show, 29 minutes,
+    was taken for three breaks of 8 to 11 minutes."""
+    return any(b["end"] - b["start"] > LOGO_GONE_MAX for b in _logo_breaks(scores, t, [], []))
+
+
 def best_logo(corners: List[Sequence[bytes]]) -> Optional[Tuple[List[float], float]]:
-    """The corner with the channel's logo (most networks: bottom right; some channels use another)."""
+    """The corner with the channel's logo (most networks: bottom right; some channels use another):
+    the clearest one whose mark is never gone for longer than a break. None: no logo to go by."""
     found = [logo_scores([c[k] for c in corners]) for k in range(len(corners[0]))]
     found = [f for f in found if f]
     if not found:
         return None
-    scores, t, _ = max(found, key=lambda f: f[2])
+    # None that stays: not a logo at all, but something like a station's weather bar, there over show
+    # and ads alike until it's taken down (Jeopardy on WTHR, 2026-11-16: gone for 10 minutes of the show,
+    # which became a 9½-minute "break"). Colour, as for channels without a logo
+    likely = [f for f in found if not _gone_too_long(f[0], f[1])]
+    if not likely:
+        return None
+    scores, t, _ = max(likely, key=lambda f: f[2])
     return scores, t
 
 
@@ -537,6 +556,32 @@ def queue_redo(*episode_ids: str) -> None:
 def _redo_done(episode_id: str) -> None:
     if episode_id in redo_episodes():
         save_settings({"commercial_redo": [e for e in redo_episodes() if e != episode_id]})
+
+
+def redo_long_logo_breaks() -> None:
+    """Once: unwatched recordings whose logo-found breaks include one longer than any real break (away
+    from the start and end) are found again. A station banner could be taken for the logo before
+    best_logo checked for it (The Floor, 2026-11-16: 29 minutes of show in three "breaks")."""
+    import json
+    if load_settings().get("long_logo_breaks_redone"):
+        return
+    redo = []
+    with get_connection() as conn:
+        rows = conn.execute("""SELECT c.episode_id, c.breaks_json, e.duration, e.raw_json FROM commercials c
+                               JOIN episodes e ON e.id = c.episode_id
+                               WHERE c.status = 'done' AND c.found_by = 'logo' AND e.status != 'Watched'""").fetchall()
+    for r in rows:
+        try:
+            breaks = json.loads(r["breaks_json"] or "[]")
+        except ValueError:
+            continue
+        length = recording_details(r["raw_json"])["actual_duration"] or r["duration"] or 0
+        if any(b["end"] - b["start"] > LOGO_GONE_MAX and b["start"] > 0 and b["end"] < length - 60 for b in breaks):
+            redo.append(r["episode_id"])
+    if redo:
+        print(f"[Commercials] Finding the breaks again in {len(redo)} recording(s) with a break longer than {LOGO_GONE_MAX // 60} minutes")
+        queue_redo(*redo)
+    save_settings({"long_logo_breaks_redone": True})
 
 
 def pending(shows: Optional[List[str]] = None) -> List[Dict[str, str]]:
@@ -1010,6 +1055,10 @@ def _note_asked_done(title: str) -> None:
 async def worker_loop() -> None:
     """Every minute: if nothing is playing, analyze the next waiting recording."""
     from .tablo_client import tablo_manager
+    try:
+        await asyncio.to_thread(redo_long_logo_breaks)
+    except Exception as e:
+        print(f"[Commercials] Couldn't look for over-long breaks: {e}")
     while True:
         await asyncio.sleep(WORKER_INTERVAL)
         try:
