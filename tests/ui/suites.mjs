@@ -437,6 +437,8 @@ export const SUITES = {
     p = await b.ev(`player.position()`);
     await b.ev(`Object.assign(state.stream, { autoSkip: true, skippedBreaks: new Set(), breaks: [{ start: ${p}, end: ${p + 600} }] })`); await sleep(2500);
     t.check('PC: a 10-minute "break" is offered, not skipped', await b.ev(`player.position() < ${p + 30} && !$('#skipBreak').classList.contains('hidden')`));
+    await b.ev(`$('#skipBreak .skip-x').click()`); await sleep(1500);
+    t.check('PC: × puts Skip break away and it keeps playing', await b.ev(`$('#skipBreak').classList.contains('hidden') && !$('#video').paused && player.position() < ${p + 30}`));
     p = await b.ev(`player.position()`);
     await b.ev(`Object.assign(state.stream, { skippedBreaks: new Set(), breaks: [{ start: ${p}, end: ${p + 60} }] })`);
     t.check('PC: a normal break is still skipped', await b.waitFor(`player.position() >= ${p + 58}`, 15000));
@@ -460,6 +462,9 @@ export const SUITES = {
     await b.ev(`Object.assign(player.s, { autoSkip: true, skippedBreaks: new Set(), breaks: [{ start: ${p}, end: ${p + 600} }] })`); await sleep(1500);
     t.check('TV: a 10-minute "break" is offered, not skipped', await b.ev(`player.position() < ${p + 30} && /Long break/.test($('#skipBanner').textContent)`),
       await b.ev(`JSON.stringify({ p0: ${p}, pos: player.position(), paused: player.video().paused, banner: $('#skipBanner').textContent, pending: player.pendingSeek })`));
+    await key('Escape'); await sleep(1500);
+    t.check('TV: Back puts the banner away and it keeps playing', await b.ev(`$('#skipBanner').classList.contains('hidden') && !player.inBreak && player.open && !player.video().paused`));
+    await b.ev(`player.dismissed = new Set()`); await sleep(1000);  // (offered again, for the next checks)
     await key('Enter'); await sleep(300);
     t.check('TV: OK in a break brings up the controls, Skip first', await b.ev(`player.controls && player.controlIndex === 0 && /Skip break/.test($('#osdControls .ctl.on').textContent) && !player.video().paused`));
     await key('Enter');

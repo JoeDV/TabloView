@@ -969,6 +969,7 @@ const player = {
     const previous = this.open ? this.s.sessionId : null;  // the Watch list's recording before this one
     this.s = { kind: 'rec', id, ep, duration: ep.actual_duration || ep.duration || 0, shapeKey: ep.channel_identifier || ep.channel_name };
     this.held = false;
+    this.dismissed = new Set();  // breaks whose banner Back put away: not shown again in this recording
     if (previous) { this.teardown(); await this.stopById(previous); }
     this.loadBreaks(this.s);
     this.loadPreviews(this.s);
@@ -1071,9 +1072,11 @@ const player = {
       this.seekTo(b.end);
       return;
     }
-    // Watching it anyway (or went back into one already skipped): OK skips it
+    // Watching it anyway (or went back into one already skipped): OK skips it; Back puts it away
+    const key = `${kind}${b.start}`;
+    if (this.dismissed && this.dismissed.has(key)) { this.showSkip(null); return; }
     const what = kind === 'break' ? (long ? 'Long break? (not skipped on its own)' : 'Commercial break') : 'Signal dropout';
-    this.showSkip({ end: b.end, kind: kind === 'break' ? 'break' : 'dropout', text: `${what} · ${fmt.clock(b.end - pos)} left · OK, then OK again to skip` });
+    this.showSkip({ end: b.end, key, kind: kind === 'break' ? 'break' : 'dropout', text: `${what} · ${fmt.clock(b.end - pos)} left · OK, then OK again to skip · Back to hide` });
   },
 
   notABreak(b, from) {
@@ -1094,6 +1097,12 @@ const player = {
     const el = $('#skipBanner');
     el.textContent = skip ? skip.text : '';
     el.classList.toggle('hidden', !skip);
+  },
+
+  // Back while the banner is up: put it away and keep watching
+  hideSkip() {
+    if (this.inBreak && this.inBreak.key) (this.dismissed = this.dismissed || new Set()).add(this.inBreak.key);
+    this.showSkip(null);
   },
 
   skipBreak() {
@@ -1484,6 +1493,7 @@ function onKey(e) {
   if (player.open && $('#dialog').classList.contains('hidden')) {
     if (player.upNext && (k === 'Enter' || k === ' ')) { e.preventDefault(); player.playNext(); return; }
     if (player.held && !player.controls && k === 'Enter') { e.preventDefault(); player.togglePlay(); return; }
+    if (player.inBreak && !player.controls && isBack(e)) { e.preventDefault(); player.hideSkip(); return; }
     // The button row: arrows move along it, OK presses, Back/up/down put it away
     if (player.controls) {
       e.preventDefault();

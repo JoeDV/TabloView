@@ -4131,6 +4131,8 @@ function captionTrack(video) {
 // Survivor): it's marked, but not skipped on its own. Real breaks rarely run past 5 minutes
 const LONG_BREAK = 7 * 60;
 
+const SKIP_X = '<i class="skip-x" data-action="skip-break-hide" title="Hide this and keep watching">×</i>';
+
 const CAPTION_ROW = 5.5;
 function stackCues(track, bottom) {
   const cues = [...(track.activeCues || [])];
@@ -4190,6 +4192,8 @@ const player = {
       recoveries: 0, stallSince: 0, stallShown: false,
       // Commercial breaks skipped so far stay skipped when the same recording restarts (seek, stall)
       breaks: sameEpisode ? state.stream.breaks : [], skippedBreaks: sameEpisode ? state.stream.skippedBreaks : new Set(),
+      // Breaks and dropouts whose Skip button was put away (×): not offered again in this recording
+      dismissed: sameEpisode && state.stream.dismissed ? state.stream.dismissed : new Set(),
       dropouts: sameEpisode ? state.stream.dropouts : [], skippedDropouts: sameEpisode ? state.stream.skippedDropouts : new Set(),
       episodeId: id, channelId: null, offset: start,
       shapeKey: ep ? ep.channel_identifier || ep.channel_name || null : null, shapeName: ep ? ep.channel_name : '',
@@ -4548,8 +4552,10 @@ const player = {
       this.seekTo(b.end);
       return;
     }
+    if (s.dismissed && s.dismissed.has(`b${b.start}`)) { btn.classList.add('hidden'); return; }
     btn.dataset.end = b.end;
-    btn.innerHTML = `Skip break ${icon('next', 16)}<span>${fmtClock(b.end - pos)}</span>`;
+    btn.dataset.key = `b${b.start}`;
+    btn.innerHTML = `Skip break ${icon('next', 16)}<span>${fmtClock(b.end - pos)}</span>${SKIP_X}`;
     btn.title = long ? `Found as a ${fmt.dur(b.end - b.start)} break: that's long for one, so it isn't skipped on its own` : '';
     btn.classList.remove('hidden');
   },
@@ -4567,8 +4573,10 @@ const player = {
       this.seekTo(d.end);
       return;
     }
+    if (s.dismissed && s.dismissed.has(`d${d.start}`)) { btn.classList.add('hidden'); return; }
     btn.dataset.end = d.end;
-    btn.innerHTML = `Skip dropout ${icon('next', 16)}<span>${fmtClock(d.end - pos)}</span>`;
+    btn.dataset.key = `d${d.start}`;
+    btn.innerHTML = `Skip dropout ${icon('next', 16)}<span>${fmtClock(d.end - pos)}</span>${SKIP_X}`;
     btn.classList.remove('hidden');
   },
 
@@ -4585,6 +4593,15 @@ const player = {
     s.skippedBreaks = new Set();
     this.drawBreaks();
     this.seekTo(b.start);  // where the show was cut off
+  },
+
+  // × on Skip break: put it away and keep watching (a wrongly found 10-minute "break" kept it up
+  // the whole time)
+  hideSkipBreak() {
+    const btn = $('#skipBreak');
+    if (!state.stream.dismissed) state.stream.dismissed = new Set();
+    if (btn.dataset.key) state.stream.dismissed.add(btn.dataset.key);
+    btn.classList.add('hidden');
   },
 
   skipBreak() {
@@ -6055,6 +6072,7 @@ const ACTIONS = {
   },
   'pb-cc': () => player.toggleCaptions(),
   'skip-break': () => player.skipBreak(),
+  'skip-break-hide': () => player.hideSkipBreak(),
   'rerecord': el => rerecordDialog(el.dataset.id),
   'rerecord-pick': async el => {
     el.disabled = true;
