@@ -3337,7 +3337,7 @@ PAGES.help = async (r, token) => {
     <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
   let html;
   try {
-    const res = await fetch('/static/help.html?v=15');
+    const res = await fetch('/static/help.html?v=16');
     if (!res.ok) throw new Error(res.status);
     html = await res.text();
   } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }

@@ -46,6 +46,7 @@
   <p>Click an episode to play it in the browser; if you stopped partway, TabloView asks whether to resume or start over. Your place is saved to the Tablo, so the Tablo's own apps pick up where you left off too.</p>
   <ul>
     <li><b>Timeline:</b> hover it to see a preview picture of that moment, click to jump. Commercial breaks show as marks on it.</li>
+    <li><b>Finding your place:</b> after a jump (the timeline, the skip buttons, <kbd>←</kbd> <kbd>→</kbd>), the picture waits there until you press Play or <kbd>Space</kbd>.</li>
     <li><b>Speed:</b> 1× to 1.5×, with the speed menu or the <kbd>&lt;</kbd> and <kbd>&gt;</kbd> keys.</li>
     <li><b>Picture shape</b> (the button showing Auto, or <kbd>A</kbd>): for channels that send a squeezed or stretched picture. Auto shows it as sent; 4:3 when people look too wide; 16:9 when they look too thin; Zoom for black bars on all four sides. It's remembered for that channel.</li>
     <li><b>Captions</b> (<kbd>T</kbd>), the <b>sleep timer</b> (the moon button) and <b>picture in picture</b> (<kbd>P</kbd>).</li>
@@ -84,7 +85,7 @@
     <li><b>Record</b> the show you're watching with the Record button, from now until it ends.</li>
     <li><b>Signal meter:</b> on antenna channels, a badge beside the channel name shows how much of the picture is arriving intact. Click it for the last 5 minutes.</li>
   </ul>
-  <p><b>Two channels at once:</b> press <kbd>2</kbd> (or the two-rectangles button) and pick a second channel. <kbd>Tab</kbd> switches which one you hear, and <kbd>V</kbd> changes the layout: side by side, big and small, or one full screen. The silent one shows captions. Each channel uses its own tuner.</p>
+  <p><b>Two channels at once:</b> press <kbd>2</kbd> (or the two-rectangles button) and pick a second channel. <kbd>Tab</kbd> switches which one you hear, and <kbd>V</kbd> changes the layout: side by side, big and small, or one full screen. Each channel has its own <b>CC</b> button on its picture: the silent one shows captions unless you turn them off (handy when they cover a game's score). Each channel uses its own tuner.</p>
 </section>
 
 <section id="help-recording">
@@ -122,8 +123,9 @@
   <p>TabloView finds the commercial breaks in your recordings on your PC, in the background, so you can skip them with one press or have them skipped automatically.</p>
   <ol>
     <li>On a show's page, turn on <b>Skip commercials</b>. TabloView finds the breaks in that show's unwatched recordings, newest first. For a single recording, use <b>Find commercials</b> in its <b>⋯</b> menu. For a series that hasn't recorded yet, the same switch is on its page in the Guide (or open it from Scheduled).</li>
-    <li>Breaks appear as marks on the player's timeline. When one comes up, press <b>Skip break</b> (or <kbd>S</kbd>).</li>
+    <li>Breaks appear as marks on the player's timeline. When one comes up, press <b>Skip break</b> (or <kbd>S</kbd>). To keep watching without it on screen, click the <b>×</b> at its end. On a TV, press <b>OK</b> and then <b>OK</b> again to skip, or <b>Back</b> to hide the message.</li>
     <li>To skip them without pressing anything, turn on <a href="#/settings?tab=playback">Settings → Playback</a> → <b>Skip commercial breaks automatically</b>.</li>
+    <li>A "break" longer than 7 minutes is more likely part of the show, so it's marked but never skipped on its own.</li>
     <li>If a skip cut into the show, press <b>Undo</b> on the message that appears (or <kbd>U</kbd>; on a TV, press <b>Up</b> within a few seconds). It goes back to where the skip started, and that part is never skipped again in that recording.</li>
   </ol>
   <p><b>Find again:</b> after an update improves the finder, use <b>Find again</b> beside a show's Skip commercials switch to redo its unwatched recordings, or <b>Find commercials again</b> in a recording's <b>⋯</b> menu. Updates don't redo anything by themselves.</p>
@@ -156,7 +158,7 @@
   <ul>
     <li>Open the address with <code>/tv</code> on the end, typing <code>http://</code> too, or the browser searches for it instead. From then on that browser opens in TV view.</li>
     <li><b>Arrows</b> move, <b>OK</b> picks, <b>Back</b> goes back. <b>◀</b> from the left edge (or Back) opens the menu.</li>
-    <li>While watching, <b>OK</b> brings up big buttons: Pause, 10 s back, 30 s ahead, CC (captions), Shape and Close (live TV: Back to live and Record). Without them, ◀ ▶ skip and ▲ ▼ change channel.</li>
+    <li>While watching, <b>OK</b> brings up big buttons: Pause, 10 s back, 30 s ahead, CC (captions), Shape and Close (live TV: Back to live and Record); during a commercial break, Skip break comes first. Without them, ◀ ▶ skip and ▲ ▼ change channel. In a recording, ◀ ▶ leave the picture waiting where you land until you press OK.</li>
     <li>When a recording ends, <b>Up next</b> starts the show's next unwatched episode in a few seconds (OK plays it now, Back stops). Turning off <b>Play the next episode automatically</b> on the Settings page, in the same browser, turns it off.</li>
     <li><b>Commercial breaks</b> show on the progress bar and are skipped as on the PC: automatically if that's on, otherwise press <b>OK</b> during a break to skip it.</li>
     <li><b>PC view</b> (at the bottom of TV view's menu) switches that browser back to the full TabloView, and <b>TV view</b> (top right on the PC) switches to TV view.</li>
@@ -172,6 +174,7 @@
     <li>Choose <b>Export MP4</b> in a recording's <b>⋯</b> menu, or select several episodes and export them together.</li>
     <li><b>Automatically, for a show:</b> turn on <b>Export to MP4</b> on the show's page. Each new recording is exported once it has finished recording, and you can choose to export the ones already recorded too. They're exported one at a time, each only once (deleting the MP4 or cancelling it under Downloads doesn't bring it back), and they wait while the drive has less than 10 GB free. This works while TabloView is running; recordings made while the PC is off are exported the next time it starts.</li>
     <li>Follow them on the <a href="#/downloads">Downloads</a> page, where you can cancel or remove one.</li>
+    <li><b>Sound:</b> recordings broadcast in 5.1 surround keep it; stereo ones stay stereo.</li>
     <li>Exports run several times faster than real time while nothing else plays from your Tablo, and slow down by themselves when something starts, so watching isn't affected.</li>
   </ul>
   <table>
