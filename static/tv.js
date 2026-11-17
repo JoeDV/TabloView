@@ -814,7 +814,7 @@ const player = {
     const paused = (dual.on && dual.active === 'second' ? dual.video() : this.video()).paused;
     // Two channels: the layout, and closing the one you aren't hearing (also Back)
     const other = dual.on && (dual.active === 'second' ? this.s.channel : dual.s.channel);
-    const second = live && !dual.on && dual.allowed() ? [['second', '⊞ Add a channel']] : [];
+    const second = live && !dual.on ? [['second', '⊞ Add a channel']] : [];  // (on a TV that can't, it says so when pressed)
     this.controlList = dual.on
       ? [['pause', paused ? '▶ Play' : '❚❚ Pause'], ['layout', `Layout: ${DUAL_LAYOUT_NAMES[dual.layout]}`], cc, ['close2', `✕ Close ${other ? other.name : 'the other'}`], ['close', '✕ Close both']]
       : live
@@ -1480,6 +1480,10 @@ const dual = {
   // "Add a channel": the list of channels to pick the second from
   async pick() {
     if (this.on || player.s.kind !== 'live') return;
+    if (!this.allowed()) {
+      player.banner('This TV doesn’t have enough memory to show two channels at once.', 5000);
+      return;
+    }
     if (stored('tv_dual_struggled', '0') === '1'
       && !await choose('Two channels at once?', 'Last time this TV couldn’t keep up with two channels, so one was closed.',
         [{ label: 'Try anyway', value: 1 }, { label: 'Cancel', value: 0 }])) return;
