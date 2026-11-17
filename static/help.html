@@ -29,7 +29,7 @@
       <tr><td>Home</td><td>Continue watching, recent recordings, what's recording soon, returning shows and premieres. <b>Customize</b> puts them in your order and hides the ones you don't use (TV view follows it)</td></tr>
       <tr><td>Library</td><td>Every recorded show; open one to play, mark watched, protect, delete or export episodes. Tick several to delete, export or add them to the Watch list together: <b>Shift</b>-click ticks every one in between, and <b>Select…</b> above the list picks a whole season, those with no season, or the watched ones</td></tr>
       <tr><td>Watch list</td><td>Recordings from any show queued to play one after another</td></tr>
-      <tr><td>Guide</td><td>The next two weeks of shows on your antenna and streaming channels; record from here</td></tr>
+      <tr><td>Guide</td><td>The next two weeks of shows on your antenna and streaming channels; record from here. <b>For you</b> suggests shows like the ones you record</td></tr>
       <tr><td>Live TV</td><td>A channel guide; click a channel to watch it live</td></tr>
       <tr><td>Scheduled</td><td>Your series recordings and every upcoming recording, with conflicts</td></tr>
       <tr><td>Antenna</td><td>A helper for aiming your antenna, with a live picture-quality readout</td></tr>
@@ -95,6 +95,11 @@
     <li><b>Record New</b> records only episodes the guide marks new; <b>Record All</b> records every airing; <b>Stop</b> ends the series.</li>
     <li><b>One episode:</b> choose Record on a single airing.</li>
     <li><b>Browse:</b> filter by TV shows, Movies or Sports (grouped by sport and league), or use the highlights such as new primetime episodes and premieres.</li>
+    <li><b>For you:</b> shows on your antenna channels in the next two weeks that you don't record, picked to suit the series you do (only those: nothing about what you watch). Any with a new series or season premiering are listed first, under <b>Premiering soon</b>, since a premiere is the easiest time to start a show. Each says why it's suggested, and a show leaves the list once you record it.
+      <ul>
+        <li><b>With a Claude key</b> (<a href="#/settings?tab=commercials">Settings → Commercials &amp; dropouts</a>, the same key that finds commercials), Claude picks them: it knows the shows, not just their genres. Only the names and genres of the shows are sent to Anthropic. It's asked when you open For you and the last picks are out of date (you changed what you record, a week went by, or most of them have aired or been recorded), about 4 cents a time. <b>New picks</b> asks again now.</li>
+        <li><b>Without a key</b>, they're matched by genre, with shows that only have reruns coming further down.</li>
+      </ul></li>
     <li><b>Streaming channels:</b> the Streaming channels tab lists a week of shows on the free streaming channels, by category. Many of them can be recorded like antenna shows; the "Recordable channels only" filter shows which.</li>
   </ul>
   <p><b>Scheduled</b> lists every series you record and each upcoming recording:</p>
@@ -129,7 +134,8 @@
     <li>If a skip cut into the show, press <b>Undo</b> on the message that appears (or <kbd>U</kbd>; on a TV, press <b>Up</b> within a few seconds). It goes back to where the skip started, and that part is never skipped again in that recording.</li>
   </ol>
   <p><b>Find again:</b> after an update improves the finder, use <b>Find again</b> beside a show's Skip commercials switch to redo its unwatched recordings, or <b>Find commercials again</b> in a recording's <b>⋯</b> menu. Updates don't redo anything by themselves.</p>
-  <p>It looks for the channel's logo in the corner of the picture (most networks take it off during ads), the moment of black and silence at the edges of a break, and how different the picture looks from the show. When it isn't sure, it leaves a few seconds of ad in rather than cut into the show, and it never skips past the end of the show.</p>
+  <p>It looks for the channel's logo in the corner of the picture (most networks take it off during ads), the moment of black and silence at the edges of a break, and how different the picture looks from the show. When it isn't sure, it leaves a few seconds of ad in rather than cut into the show, and it never skips past the end of the show. A station's own box that stays on screen the whole time, such as a weather box with the time and temperature, isn't taken for the network's logo.</p>
+  <p><b>With Claude</b> (your own API key, <a href="#/settings?tab=commercials">Settings → Commercials &amp; dropouts</a>), Claude looks at the recording's preview pictures and says where the breaks are; TabloView then lines its edges up with the black frames it measured. A stretch where the channel's logo stays on is never treated as a break, even if Claude takes it for one: a daydream or flashback scene can look nothing like the rest of the show.</p>
   <p>Finding breaks takes a few minutes per recording and pauses while you watch or export, so it doesn't slow anything down. It keeps going with the browser closed, as long as TabloView is running.</p>
   <p><b>Signal dropouts:</b> when your Tablo says a recording didn't come in cleanly, TabloView finds where a weak signal broke up the picture and marks those parts in red on the timeline. Skip them with <b>Skip dropout</b> (or <kbd>S</kbd>), or automatically with <a href="#/settings?tab=commercials">Settings → Commercials &amp; dropouts</a>. Finding them means reading the whole recording once, in the background while nothing is playing: about a quarter of its length, using most of one CPU core. The status line shows <b>Checking signal</b> while it runs, and you can turn it off in Settings → Commercials &amp; dropouts.</p>
 </section>
@@ -159,7 +165,7 @@
     <li>Open the address with <code>/tv</code> on the end, typing <code>http://</code> too, or the browser searches for it instead. From then on that browser opens in TV view.</li>
     <li><b>Arrows</b> move, <b>OK</b> picks, <b>Back</b> goes back. <b>◀</b> from the left edge (or Back) opens the menu.</li>
     <li>While watching, <b>OK</b> brings up big buttons: Pause, 10 s back, 30 s ahead, CC (captions), Shape and Close (live TV: Back to live and Record); during a commercial break, Skip break comes first. Without them, ◀ ▶ skip and ▲ ▼ change channel. In a recording, ◀ ▶ leave the picture waiting where you land until you press OK.</li>
-    <li><b>Two channels at once</b> (live TV): OK, then <b>Add a channel</b>, and pick one. <b>◀ ▶</b> choose which you hear, <b>▲ ▼</b> change that one, and <b>Back</b> closes the other. OK's buttons change the layout (side by side, or big and small). Each channel uses its own tuner. Cheaper streaming sticks may not manage two pictures: if the TV can't keep up, TabloView closes one by itself.</li>
+    <li><b>Two channels at once</b> (live TV): OK, then <b>Add a channel</b>, and pick one. <b>◀ ▶</b> choose which you hear, <b>▲ ▼</b> change that one, and <b>Back</b> closes the other. OK's buttons change the layout (side by side, or big and small). Each channel uses its own tuner. It needs a TV or stick with at least 2 GB of memory (most Fire TV Sticks have 1 GB; the Fire TV Stick 4K Max and onn 4K have 2 GB): on one with less, Add a channel says so. If the TV can't keep up, TabloView closes one by itself.</li>
     <li>When a recording ends, <b>Up next</b> starts the show's next unwatched episode in a few seconds (OK plays it now, Back stops). Turning off <b>Play the next episode automatically</b> on the Settings page, in the same browser, turns it off.</li>
     <li><b>Commercial breaks</b> show on the progress bar and are skipped as on the PC: automatically if that's on, otherwise press <b>OK</b> during a break to skip it.</li>
     <li><b>PC view</b> (at the bottom of TV view's menu) switches that browser back to the full TabloView, and <b>TV view</b> (top right on the PC) switches to TV view.</li>

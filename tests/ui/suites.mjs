@@ -426,6 +426,46 @@ export const SUITES = {
     t.check('Closing the live channel leaves the recording playing with its sound', await b.ev(`!dual.on && !$('#video').paused && $('#video').__audio.gain.gain.value === 1`));
   },
 
+  // Guide → For you: shows to try, from the series being recorded, with why; premieres first
+  async foryou(b, t) {
+    await b.send('Page.navigate', { url: `${BASE}/#/guide` });
+    await b.waitFor(`!!document.querySelector('[data-action="guide-highlight"][data-value="foryou"]')`, 20000);
+    await b.ev(`document.querySelector('[data-action="guide-highlight"][data-value="foryou"]').click()`);
+    const res = await api('/api/guide/recommendations');
+    if (!res.recorded) return t.skip('Guide: For you', 'nothing set to record');
+    t.check('Guide: For you lists shows, each saying why', await b.waitFor(`document.querySelectorAll('#guideGrid .media-card .media-why').length > 0`, 120000)
+      && await b.ev(`document.querySelectorAll('#guideGrid .media-card').length === document.querySelectorAll('#guideGrid .media-why').length`));
+    t.check('Guide: For you hides the TV shows / Movies / Sports chips', await b.ev(`$('#guideTypes').classList.contains('hidden')`));
+    t.check('Guide: For you says how they were picked', await b.ev(`/(Picked by Claude|Matched by genre)/.test($('#guideGrid').textContent)`));
+    const premiering = (res.shows || []).filter(s => s.premiere && ['series', 'season'].includes(s.premiere.kind));
+    if (premiering.length) {
+      t.check('Guide: For you puts premieres first, under Premiering soon', await b.ev(`(() => {
+        const head = [...document.querySelectorAll('#guideGrid .section-title')].map(h => h.textContent);
+        const first = document.querySelector('#guideGrid .media-card .media-title').textContent;
+        return head[0] === 'Premiering soon' && first === ${JSON.stringify(premiering[0].title)}
+          && /premiere/i.test(document.querySelector('#guideGrid .media-card .art-badge').textContent);
+      })()`));
+    }
+    t.check('Guide: none of them is already recorded', !(res.shows || []).some(s => ['new', 'all'].includes(s.schedule_rule)));
+    await b.ev(`document.querySelector('[data-action="guide-highlight"][data-value=""]').click()`);
+    t.check('Guide: Everything brings the chips back', await b.waitFor(`!$('#guideTypes').classList.contains('hidden')`, 10000));
+  },
+
+  // TV view on a stick with 1 GB (most Fire TV Sticks): Add a channel is still offered, and says why
+  // it can't when pressed, instead of opening the channel list. Nothing is tuned
+  async tvlowmem(b, t) {
+    await b.send('Page.navigate', { url: `${BASE}/tv#/live` });
+    await b.waitFor(`typeof dual !== 'undefined' && state.live`, 30000);
+    await b.ev(`Object.defineProperty(navigator, 'deviceMemory', { value: 1, configurable: true })`);
+    const c = await b.ev(`(liveChannels()[0] || {}).channel_id || null`);
+    if (!c) return t.skip('TV: Add a channel on a 1 GB TV', 'no channels');
+    await b.ev(`player.s = { kind: 'live', id: ${JSON.stringify(c)}, channel: liveChannels()[0] }; $('#player').classList.remove('hidden'); player.showControls()`);
+    t.check('TV (1 GB): OK still offers Add a channel', await b.ev(`player.controlList.some(([v]) => v === 'second')`));
+    await b.ev(`player.controlIndex = player.controlList.findIndex(([v]) => v === 'second'); player.pressControl()`); await sleep(300);
+    t.check('TV (1 GB): pressing it says there isn’t enough memory, no channel list', await b.ev(`!dual.picking && $('#chPicker').classList.contains('hidden') && /enough memory/.test($('#player .chan-banner').textContent) && !$('#player .chan-banner').classList.contains('hidden')`));
+    await b.ev(`player.s = {}; player.hideControls && player.hideControls()`);
+  },
+
   // TV view: two channels at once, with the remote's keys. Streaming channels, so no antenna tuner
   // is taken; still plays for real, so only with TABLOVIEW_ALLOW_TUNE=1
   async tvdual(b, t) {

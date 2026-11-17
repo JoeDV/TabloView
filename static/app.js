@@ -699,7 +699,7 @@ function nextAiringText(g) {
 function guideCard(g) {
   const genres = Array.isArray(g.genres) ? g.genres.slice(0, 2).join(', ') : '';
   let badge = '';
-  if (g.has_premiere) badge = '<span class="art-badge art-badge-left" style="background:var(--warn);color:#1d1400">Premiere</span>';
+  if (g.has_premiere) badge = `<span class="art-badge art-badge-left" style="background:var(--warn);color:#1d1400">${(g.premiere && PREMIERE_LABEL[g.premiere.kind]) || 'Premiere'}</span>`;
   else if (g.has_primetime_new) badge = '<span class="art-badge art-badge-left">New episodes</span>';
   return `
     <div class="media-card" data-action="open-series" data-path="${esc(g.path)}" title="${esc(g.title)}">
@@ -707,6 +707,7 @@ function guideCard(g) {
       <div class="media-meta">
         <div class="media-title">${esc(g.title)}</div>
         <div class="media-sub">${nextAiringText(g) || (['new', 'all'].includes(g.schedule_rule) ? 'Waiting for new episodes' : esc(genres)) || '&nbsp;'}</div>
+        ${g.why || (g.because && g.because.length) ? `<div class="media-why">${esc(g.why || `Like ${g.because.join(' and ')}`)}</div>` : ''}
         <div class="media-foot">${recButton(g)}</div>
       </div>
     </div>`;
@@ -1914,11 +1915,14 @@ function guideTypeChips() {
 function guideHighlightButtons() {
   const G = state.guide, h = G.highlights || {};
   const b = (value, label, count) => `<button data-action="guide-highlight" data-value="${value}" class="${G.highlight === value ? 'active' : ''}">${label}${count !== undefined ? ` <span class="count">${count}</span>` : ''}</button>`;
-  return b('', 'Everything') + b('premieres', 'Premieres', h.premieres) + b('primetime_new', 'New in primetime', h.primetime_new);
+  return b('', 'Everything') + b('foryou', 'For you') + b('premieres', 'Premieres', h.premieres) + b('primetime_new', 'New in primetime', h.primetime_new);
 }
 
 async function loadGuide(token, append = false) {
   const G = state.guide;
+  const types = $('#guideTypes');
+  if (types) types.classList.toggle('hidden', G.highlight === 'foryou');
+  if (G.highlight === 'foryou') return loadForYou(token);
   const params = new URLSearchParams({ sort: G.sort, limit: String(GUIDE_PAGE), offset: String(append ? G.offset : 0) });
   if (G.q.trim()) params.set('search', G.q.trim());
   if (G.highlight) params.set('highlight', G.highlight);
@@ -2001,6 +2005,57 @@ function sportsGrid(items) {
 }
 
 const reloadGuide = debounce(() => loadGuide(routeToken), 220);
+
+// Guide → For you: shows to try, from the series being recorded (app/recommend.py). Claude picks them
+// when there's a key; asked again only when the recorded series change, after a week, or New picks
+const PREMIERE_LABEL = { series: 'Series premiere', season: 'Season premiere' };
+
+async function loadForYou(token, refresh = false) {
+  const grid = $('#guideGrid');
+  if (!grid) return;
+  const hl = $('#guideHighlights');
+  if (hl) hl.innerHTML = guideHighlightButtons();
+  grid.innerHTML = `<p class="section-sub" style="margin:0 0 14px">Picking shows for you…</p>${skeletonGrid(8)}`;
+  let res;
+  try {
+    res = await api(`/api/guide/recommendations${refresh ? '?refresh=1' : ''}`);
+  } catch (err) {
+    if (token !== undefined && stale(token)) return;
+    grid.innerHTML = errorState(err, 'guide-reload');
+    hydrateIcons(grid);
+    return;
+  }
+  if (token !== undefined && stale(token)) return;
+  if (!res.recorded) {
+    grid.innerHTML = emptyState('Nothing to go by yet', 'Set a few series to record, and For you suggests others on your channels that you might like.');
+    return;
+  }
+  const shows = cacheGuide(res.shows || []);
+  const premiering = shows.filter(g => g.premiere && PREMIERE_LABEL[g.premiere.kind]);
+  const rest = shows.filter(g => !premiering.includes(g));
+  const card = g => {
+    const p = g.premiere && PREMIERE_LABEL[g.premiere.kind];
+    // The premiere's own date, not just the next airing
+    return guideCard(p ? { ...g, has_premiere: true, next_airing: { ...(g.next_airing || {}), datetime: g.premiere.datetime } } : g);
+  };
+  const how = res.by === 'claude'
+    ? `Picked by Claude from the ${plural(res.recorded, 'series', 'series')} you record · <button class="link-btn" data-action="foryou-refresh">New picks</button>`
+    : `Matched by genre to the ${plural(res.recorded, 'series', 'series')} you record. With a Claude key (Settings → Playback), Claude picks them instead: it knows the shows, not just their genres.`;
+  grid.innerHTML = `
+    <p class="section-sub" style="margin:0 0 18px">${how}</p>
+    ${res.error ? `<p class="section-sub" style="margin:-8px 0 18px;color:var(--warn)">Claude couldn’t be asked just now, so these ${res.by === 'claude' ? 'are its last picks' : 'are by genre'}.</p>` : ''}
+    ${!shows.length ? emptyState('Nothing to suggest', 'Nothing airing in the next two weeks looks like what you record.') : ''}
+    ${premiering.length ? `
+      <div class="section-head" style="margin:0 0 14px">
+        <h2 class="section-title">Premiering soon</h2>
+        <span class="section-sub">The easiest time to start a show</span>
+      </div>
+      <div class="card-grid">${premiering.map(card).join('')}</div>` : ''}
+    ${rest.length ? `
+      ${premiering.length ? `<div class="section-head" style="margin:36px 0 14px"><h2 class="section-title">More to try</h2></div>` : ''}
+      <div class="card-grid">${rest.map(card).join('')}</div>` : ''}`;
+  hydrateIcons(grid);
+}
 
 // ---------------------------------------------------------------------------
 // Guide → Streaming channels: Tablo's online guide for the free streaming channels, by category
@@ -3392,7 +3447,7 @@ PAGES.help = async (r, token) => {
       <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
     let html;
     try {
-      const res = await fetch('/static/help.html?v=20');
+      const res = await fetch('/static/help.html?v=22');
       if (!res.ok) throw new Error(res.status);
       html = await res.text();
     } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
@@ -3603,7 +3658,7 @@ PAGES.settings = async (r, token) => {
     ? `<span class="set-pill ok">On</span>${settings.claude_last_cost != null ? ` <span class="dim">· last recording about $${settings.claude_last_cost.toFixed(2)}</span>` : ''}`
     : '<span class="set-pill">Off</span>';
   const finding = setCard('Finding them', 'In the background, on this PC, while nothing is playing.', `
-      ${setRow(`Find commercials with Claude ${claudeStatus}`, 'More accurate on channels without a logo, such as CBS. With your own Anthropic API key, Claude looks at each recording’s preview pictures (one every 10 seconds), which are sent to Anthropic: about 5 cents per hour of TV, on your Anthropic account. Without a key TabloView finds the breaks itself.',
+      ${setRow(`Find commercials with Claude ${claudeStatus}`, 'More accurate on channels without a logo, such as CBS. With your own Anthropic API key, Claude looks at each recording’s preview pictures (one every 10 seconds), which are sent to Anthropic: about 5 cents per hour of TV, on your Anthropic account. Without a key TabloView finds the breaks itself. The key also lets Claude pick the Guide’s For you shows (about 4 cents a week at most).',
         `<button class="btn btn-sm" data-action="claude-key">${settings.claude_key_set ? 'Change key' : 'Add API key'}</button>
          ${settings.claude_key_set ? '<button class="btn btn-sm btn-ghost" data-action="claude-key-remove">Remove</button>' : ''}`)}
       ${settings.claude_key_set && settings.claude_error ? setNote(`Claude’s last try didn’t work: ${esc(settings.claude_error)}`, true) : ''}
@@ -5970,6 +6025,7 @@ const ACTIONS = {
   'sync-guide': () => syncGuide(),
   'guide-highlight': el => { state.guide.highlight = el.dataset.value; state.guide.sort = el.dataset.value ? 'soonest' : 'primetime'; const s = $('[data-change="guide-sort"]'); if (s) s.value = state.guide.sort; loadGuide(routeToken); },
   'guide-more': el => { el.disabled = true; loadGuide(routeToken, true); },
+  'foryou-refresh': () => loadForYou(routeToken, true),
   'guide-sport': el => { state.guide.sport = el.dataset.value; renderGuideGrid(); },
   'export-cancel': async el => {
     const ok = await confirmDialog({ title: 'Cancel this export?', text: `${el.dataset.name}: the part made so far is deleted, and the next export in the list starts.`, confirm: 'Cancel export', danger: true });

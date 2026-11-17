@@ -172,6 +172,13 @@ async def get_highlights():
     return get_guide_highlight_counts()
 
 
+@router.get("/recommendations")
+async def get_recommendations(refresh: bool = Query(False, description="Ask Claude again even if the last picks are recent")):
+    """For you: shows to try, from the series being recorded (app/recommend.py)."""
+    from .. import recommend
+    return await asyncio.to_thread(recommend.recommendations, refresh)
+
+
 @router.get("/scheduled")
 async def list_scheduled_shows():
     """List all series currently configured with an active recording schedule."""
