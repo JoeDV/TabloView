@@ -37,6 +37,7 @@ DEFAULTS: Dict[str, Any] = {
     "extra_guide_url": "",  # and its XMLTV guide, optional
     "extra_favorites": [],  # playlist channels marked as favorites (by guide id or name), kept by TabloView
     "extra_hidden": [],  # and hidden ones
+    "extra_hidden_groups": [],  # and whole groups of the playlist hidden
     "tailscale_no_pin": False,  # devices connecting straight from a Tailscale address skip the PIN (lanauth)
     "logo_style": "color",  # channel logos: "color" (the station's own) or "white"
     "export_format": "smaller",  # MP4 exports: "smaller" (H.264, graphics chip if available) or "original" (exact copy)

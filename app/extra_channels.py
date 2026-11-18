@@ -13,7 +13,7 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -24,6 +24,13 @@ GUIDE_SECONDS = 12 * 3600  # guide files are rebuilt about once a day (Tubi's li
 GUIDE_HOURS_BEFORE, GUIDE_HOURS_AFTER = 3, 30  # listings kept around now (guide files cover days)
 MAX_DOWNLOAD = 200 * 1024 * 1024
 PREFIX = "x-"  # channel ids: x-<10 hex>, from the stream's address
+# A provider's whole list can run to hundreds of thousands of entries (a forum user's: 386,496), and
+# most of them are movies and series episodes: those are left out (Xtream's /movie/ and /series/
+# addresses, or a video file). Above IN_GUIDE channels the guide gets only the favorites, and the
+# More tab asks for PAGE at a time (page()), searched on the server
+VOD = re.compile(r"/(movie|movies|series)/|\.(mp4|mkv|avi|mov|m4v|wmv|flv|webm|mpg|mpeg)(\?|$)", re.I)
+IN_GUIDE = 3000
+PAGE = 200
 
 _playlist: Dict[str, Any] = {"url": None, "at": 0.0, "channels": [], "error": None}
 _guide: Dict[str, Any] = {"url": None, "at": 0.0, "by_channel": {}, "error": None, "task": None}
@@ -36,8 +43,9 @@ def is_extra(channel_id: Optional[str]) -> bool:
     return bool(channel_id) and str(channel_id).startswith(PREFIX)
 
 
-def parse_m3u(text: str) -> List[Dict[str, Any]]:
-    """[{id, name, url, logo, tvg_id, number, group}] in the playlist's order."""
+def parse_m3u(text: str, stats: Optional[Dict[str, int]] = None) -> List[Dict[str, Any]]:
+    """[{id, name, url, logo, tvg_id, number, group}] in the playlist's order (stats["skipped"]: how
+    many movies and series episodes were left out)."""
     out: List[Dict[str, Any]] = []
     info: Optional[Dict[str, Any]] = None
     seen = set()
@@ -56,7 +64,9 @@ def parse_m3u(text: str) -> List[Dict[str, Any]]:
         elif line.startswith("#"):
             continue
         elif info is not None:
-            if not re.match(r"https?://", line, re.I):
+            if not re.match(r"https?://", line, re.I) or VOD.search(line):
+                if stats is not None and VOD.search(line):
+                    stats["skipped"] = stats.get("skipped", 0) + 1
                 info = None
                 continue
             cid = PREFIX + hashlib.sha1(line.encode()).hexdigest()[:10]
@@ -69,6 +79,13 @@ def parse_m3u(text: str) -> List[Dict[str, Any]]:
                             "number": num, "group": a.get("group-title") or ""})
             info = None
     return out
+
+
+def _read_playlist(data: bytes) -> Tuple[List[Dict[str, Any]], int]:
+    if data[:2] == b"\x1f\x8b":
+        data = gzip.decompress(data)
+    stats: Dict[str, int] = {}
+    return parse_m3u(data.decode("utf-8", errors="replace"), stats), stats.get("skipped", 0)
 
 
 def _xmltv_time(s: str) -> Optional[datetime]:
@@ -86,11 +103,10 @@ def parse_xmltv(data: bytes, wanted: set, now: Optional[datetime] = None) -> Dic
     """tvg-id -> airings (Live TV's airing fields) near now, for the channels in `wanted`."""
     now = now or datetime.now(timezone.utc)
     lo, hi = now - timedelta(hours=GUIDE_HOURS_BEFORE), now + timedelta(hours=GUIDE_HOURS_AFTER)
-    if data[:2] == b"\x1f\x8b":
-        data = gzip.decompress(data)
-    by: Dict[str, List[Dict[str, Any]]] = {}
     import io
-    for _, el in ET.iterparse(io.BytesIO(data), events=("end",)):
+    src = gzip.GzipFile(fileobj=io.BytesIO(data)) if data[:2] == b"\x1f\x8b" else io.BytesIO(data)
+    by: Dict[str, List[Dict[str, Any]]] = {}
+    for _, el in ET.iterparse(src, events=("end",)):
         if el.tag != "programme":
             if el.tag == "channel":
                 el.clear()
@@ -151,10 +167,9 @@ async def channels(force: bool = False) -> List[Dict[str, Any]]:
         if force or _playlist["url"] != url or time.time() - _playlist["at"] > PLAYLIST_SECONDS:
             try:
                 data = await _download(url)
-                if data[:2] == b"\x1f\x8b":
-                    data = gzip.decompress(data)
-                found = parse_m3u(data.decode("utf-8", errors="replace"))
-                _playlist.update(url=url, at=time.time(), channels=found,
+                found, skipped = await asyncio.to_thread(_read_playlist, data)
+                del data
+                _playlist.update(url=url, at=time.time(), channels=found, skipped=skipped,
                                  error=None if found else "No channels found in that playlist")
                 print(f"[Extra] {len(found)} channels from the playlist")
             except Exception as e:
@@ -218,7 +233,21 @@ def key(c: Dict[str, Any]) -> str:
 
 def marks() -> Dict[str, set]:
     s = load_settings()
-    return {"favorite": set(s.get("extra_favorites") or []), "hidden": set(s.get("extra_hidden") or [])}
+    return {"favorite": set(s.get("extra_favorites") or []), "hidden": set(s.get("extra_hidden") or []),
+            "groups": set(s.get("extra_hidden_groups") or [])}
+
+
+def is_hidden(c: Dict[str, Any], m: Dict[str, set]) -> bool:
+    return key(c) in m["hidden"] or (bool(c["group"]) and c["group"] in m["groups"])
+
+
+def hide_group(group: str, hidden: bool) -> Dict[str, bool]:
+    """Hide a whole group of the playlist (a provider's list has hundreds: other countries, sports
+    packages...), or show it again."""
+    m = marks()
+    (m["groups"].add if hidden else m["groups"].discard)(group)
+    save_settings({"extra_hidden_groups": sorted(m["groups"])})
+    return {"hidden": group in m["groups"]}
 
 
 def mark(channel_key: str, favorite: Optional[bool] = None, hidden: Optional[bool] = None) -> Dict[str, bool]:
@@ -243,25 +272,74 @@ def channel_dict(c: Dict[str, Any], m: Optional[Dict[str, set]] = None) -> Dict[
     return {"channel_id": c["id"], "identifier": c["id"], "call_sign": c["name"], "major": 0, "minor": 0,
             "number": c["number"], "network": c["group"], "kind": "extra", "name": c["name"],
             "logo_url": c["logo"], "resolution": "HD", "can_record": False,
-            "extra_key": k, "favorite": k in m["favorite"], "hidden": k in m["hidden"]}
+            "extra_key": k, "favorite": k in m["favorite"], "hidden": is_hidden(c, m),
+            "group_hidden": bool(c["group"]) and c["group"] in m["groups"]}
 
 
-async def epg_rows(window_start: datetime, window_end: datetime, start_iso: str, hours: int) -> List[Dict[str, Any]]:
-    """Live TV guide rows for the playlist's channels, in its order."""
+def _row(c: Dict[str, Any], m: Dict[str, set], guide: Dict[str, List[Dict[str, Any]]],
+         window_start: datetime, window_end: datetime, start_iso: str, hours: int) -> Dict[str, Any]:
+    d = channel_dict(c, m)
+    airings = []
+    for a in guide.get(c["tvg_id"], []):
+        s = datetime.fromisoformat(a["air_datetime"].replace("Z", "+00:00"))
+        if s < window_end and s + timedelta(seconds=a["duration"]) > window_start:
+            airings.append(a)
+    d["airings"] = airings or [_live_placeholder(c, start_iso, hours)]
+    return d
+
+
+async def epg_rows(window_start: datetime, window_end: datetime, start_iso: str,
+                   hours: int) -> Tuple[List[Dict[str, Any]], int]:
+    """Live TV guide rows for the playlist's channels, in its order, and how many were left out: a
+    playlist of more than IN_GUIDE gives only its favorites (the More tab pages through the rest)."""
     chans = await channels()
     guide = guide_for(chans)
     m = marks()
-    rows = []
+    picked = chans if len(chans) <= IN_GUIDE else [c for c in chans if key(c) in m["favorite"]]
+    return [_row(c, m, guide, window_start, window_end, start_iso, hours) for c in picked], len(chans) - len(picked)
+
+
+def _matches(c: Dict[str, Any], words: List[str], guide: Dict[str, List[Dict[str, Any]]]) -> bool:
+    text = f"{c['name']} {c['group']}".lower()
+    if all(w in text for w in words):
+        return True
+    shows = " ".join(a.get("title") or "" for a in guide.get(c["tvg_id"], [])).lower() if c["tvg_id"] else ""
+    return bool(shows) and all(w in f"{text} {shows}" for w in words)
+
+
+def groups(chans: List[Dict[str, Any]], m: Dict[str, set]) -> List[Dict[str, Any]]:
+    """The playlist's groups in its order: [{name, count, hidden}]."""
+    count: Dict[str, int] = {}
     for c in chans:
-        d = channel_dict(c, m)
-        airings = []
-        for a in guide.get(c["tvg_id"], []):
-            s = datetime.fromisoformat(a["air_datetime"].replace("Z", "+00:00"))
-            if s < window_end and s + timedelta(seconds=a["duration"]) > window_start:
-                airings.append(a)
-        d["airings"] = airings or [_live_placeholder(c, start_iso, hours)]
-        rows.append(d)
-    return rows
+        count[c["group"]] = count.get(c["group"], 0) + 1
+    return [{"name": g, "count": n, "hidden": g in m["groups"]} for g, n in count.items()]
+
+
+async def page(window_start: datetime, window_end: datetime, start_iso: str, hours: int, q: str = "",
+               offset: int = 0, limit: int = PAGE, with_hidden: bool = False, group: Optional[str] = None) -> Dict[str, Any]:
+    """The More tab for a big playlist: the channels matching q (every word, in the name, group or
+    the shows in its guide), in one group if asked (a hidden group shows when it's picked),
+    PAGE at a time, how many match in all, and the playlist's groups."""
+    chans = await channels()
+    guide = guide_for(chans)
+    m = marks()
+
+    def pick():
+        words = q.lower().split()
+
+        def shown(c):
+            if group is not None:
+                return c["group"] == group and (with_hidden or key(c) not in m["hidden"])
+            return with_hidden or not is_hidden(c, m)
+        found = [c for c in chans if shown(c) and (not words or _matches(c, words, guide))]
+        hidden = sum(1 for c in chans if (group is None or c["group"] == group) and key(c) in m["hidden"])
+        return found, hidden, groups(chans, m)
+    found, hidden, gs = await asyncio.to_thread(pick)
+    res = {"rows": [_row(c, m, guide, window_start, window_end, start_iso, hours) for c in found[offset:offset + limit]],
+           "total": len(found), "hidden": hidden}
+    if not offset:  # (the list of groups comes with the first page only: a provider's can run to thousands)
+        res["groups"] = gs
+    return res
 
 
 def status() -> Dict[str, Any]:
@@ -269,5 +347,6 @@ def status() -> Dict[str, Any]:
     return {"channels": len(_playlist["channels"]), "playlist_error": _playlist["error"],
             # A guide is matched by each channel's tvg-id: a playlist without them can't use one
             "with_guide_ids": sum(1 for c in _playlist["channels"] if c["tvg_id"]),
+            "skipped": _playlist.get("skipped", 0),
             "guide_channels": len(_guide["by_channel"]), "guide_error": _guide["error"],
             "guide_loading": bool(_guide.get("task") and not _guide["task"].done())}

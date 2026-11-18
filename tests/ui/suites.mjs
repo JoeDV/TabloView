@@ -451,6 +451,66 @@ export const SUITES = {
     t.check('Guide: Everything brings the chips back', await b.waitFor(`!$('#guideTypes').classList.contains('hidden')`, 10000));
   },
 
+  // Live TV with a provider's playlist of 386,496 channels (a forum user's: 1.3.7 hung the page). The
+  // guide gets the favorites only, and More asks for 200 at a time, searched and grouped on the server
+  async bigplaylist(b, t) {
+    await b.open('#/');
+    await b.ev(`(() => {
+      const groups = Array.from({ length: 12000 }, (_, i) => ({ name: 'US| GROUP ' + i, count: 32, hidden: i === 5 }));
+      const ch = (i, g) => ({ channel_id: 'x-' + String(i).padStart(10, '0'), identifier: 'x-' + i, call_sign: 'Channel ' + i, major: 0, minor: 0,
+        number: '', network: g, kind: 'extra', name: 'Channel ' + i, logo_url: null, resolution: 'HD', can_record: false,
+        extra_key: 'k' + i, favorite: i === 7, hidden: false, group_hidden: false, categories: [],
+        airings: [{ path: '/channel/x/live', title: 'Channel ' + i, show_title: 'Channel ' + i, episode_title: 'Live',
+          air_datetime: new Date(Date.now() - 1800000).toISOString(), duration: 6 * 3600, qualifiers: [] }] });
+      window.__gets = [];
+      const f = window.fetch;
+      window.fetch = (u, o) => { if (!o || !o.method || o.method === 'GET') window.__gets.push(String(u)); return f(u, o); };
+      window.__fake['/api/live/epg'] = real => ({ ...real, channels: [...real.channels.filter(c => c.kind !== 'extra'), ch(7, 'US| GROUP 0')], extra_left_out: 386495 });
+      window.__fake['/api/live/extra/rows'] = { rows: Array.from({ length: 200 }, (_, i) => ch(i, 'US| GROUP 0')), total: 386496, hidden: 0, groups };
+    })()`);
+    await b.go('#/live', `document.querySelector('.epg-cell')`, 30000);
+    t.check('Live TV opens on Antenna without the playlist', await b.ev(`state.epg.channels.filter(c => c.kind === 'extra').length === 1`));
+    t.check('More is offered for a playlist this big', await b.ev(`!!document.querySelector('[data-action="epg-cat"][data-value="extra"]')`));
+    const t0 = Date.now();
+    await b.ev(`document.querySelector('[data-action="epg-cat"][data-value="extra"]').click()`);
+    const drawn = await b.waitFor(`document.querySelectorAll('#epgScroll .epg-row').length === 200`, 20000);
+    t.check(`More draws a page of 200 channels (${Date.now() - t0} ms)`, drawn && Date.now() - t0 < 5000);
+    t.check('More says how many and to search', await b.ev(`/Showing 200 of 386,496 channels: search to find one/.test($('#epgScroll').textContent)`));
+    t.check('More offers the playlist’s groups, hidden ones apart', await b.ev(`document.querySelectorAll('[data-change="extra-group"] option').length === 12001
+      && document.querySelectorAll('[data-change="extra-group"] optgroup option').length === 1`));
+    await b.ev(`document.querySelector('[data-action="extra-more"]').click()`);
+    t.check('Show more asks for the next 200', await b.waitFor(`window.__gets.some(u => u.includes('/api/live/extra/rows') && u.includes('offset=200'))`, 10000)
+      && await b.waitFor(`document.querySelectorAll('#epgScroll .epg-row').length === 400`, 10000));
+    await b.ev(`(() => { const i = document.querySelector('[data-input="epg-q"]'); i.value = 'ESPN'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    t.check('Search asks the server', await b.waitFor(`window.__gets.some(u => u.includes('/api/live/extra/rows') && u.includes('q=espn') && u.includes('offset=0'))`, 10000));
+    await b.ev(`(() => { const i = document.querySelector('[data-input="epg-q"]'); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await b.waitFor(`document.querySelector('[data-change="extra-group"]')`, 10000);
+    await b.ev(`(() => { const s = document.querySelector('[data-change="extra-group"]'); s.value = 'US| GROUP 3'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    t.check('Picking a group asks for that group', await b.waitFor(`window.__gets.some(u => u.includes('group=US%7C%20GROUP%203'))`, 10000));
+    t.check('A picked group can be hidden', await b.waitFor(`/Hide this group/.test(document.querySelector('[data-action="extra-group-hide"]')?.textContent || '')`, 10000));
+    await b.ev(`document.querySelector('[data-action="epg-cat"][data-value="ota"]').click()`);
+  },
+
+  // TV view → Live TV → More: the playlist's groups first, then a group's channels (a big playlist's
+  // from the server), and ‹ Groups back. Nothing is tuned
+  async tvgroups(b, t) {
+    await b.send('Page.navigate', { url: `${BASE}/tv#/live` });
+    await b.waitFor(`typeof showLive === 'function' && state.live`, 30000);
+    if (!(await b.ev(`state.live.channels.some(c => c.kind === 'extra') || !!state.live.extra_left_out`))) return t.skip('TV: playlist groups', 'no playlist');
+    await b.ev(`document.querySelector('[data-act="live-tab"][data-tab="extra"]').click()`);
+    const many = await b.waitFor(`document.querySelectorAll('[data-act="tv-group"]').length > 1`, 20000);
+    if (!many) return t.skip('TV: playlist groups', 'the playlist has one group');
+    t.check('TV: More lists the playlist’s groups', true);
+    const name = await b.ev(`[...document.querySelectorAll('[data-act="tv-group"]')].find(x => !x.dataset.group.startsWith('\\u0001')).dataset.group`);
+    await b.ev(`[...document.querySelectorAll('[data-act="tv-group"]')].find(x => x.dataset.group === ${JSON.stringify(name)}).click()`);
+    t.check('TV: picking a group lists its channels, and nothing else', await b.waitFor(`document.querySelectorAll('[data-act="tune"]').length > 0`, 20000)
+      && await b.ev(`liveChannels().every(c => c.network === ${JSON.stringify(name)}) && !document.querySelector('[data-act="tv-group"]')`));
+    t.check('TV: a group’s channel can be found to tune', await b.ev(`!!allChannels().find(c => c.channel_id === document.querySelector('[data-act="tune"]').dataset.id)`));
+    await b.ev(`document.querySelector('[data-act="tv-groups"]').click()`);
+    t.check('TV: ‹ Groups goes back to the groups', await b.waitFor(`document.querySelectorAll('[data-act="tv-group"]').length > 1`, 10000));
+    await b.ev(`document.querySelector('[data-act="live-tab"][data-tab="ota"]').click()`);
+  },
+
   // TV view on a stick with 1 GB (most Fire TV Sticks): Add a channel is still offered, and says why
   // it can't when pressed, instead of opening the channel list. Nothing is tuned
   async tvlowmem(b, t) {

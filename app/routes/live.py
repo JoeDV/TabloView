@@ -522,10 +522,38 @@ async def extra_status():
     return extra_channels.status()
 
 
+@router.get("/extra/rows")
+async def extra_rows(hours: int = Query(6, ge=1, le=24), start_iso: Optional[str] = Query(None),
+                     q: str = Query("", max_length=200), offset: int = Query(0, ge=0),
+                     limit: int = Query(200, ge=1, le=500), with_hidden: bool = False,
+                     group: Optional[str] = Query(None, max_length=300)):
+    """Live TV's More tab for a playlist too big to send whole: a page of its channels as guide rows."""
+    from .. import extra_channels
+    epg = get_epg_schedule(hours=hours, start_iso=start_iso)
+    ws = datetime.fromisoformat(epg["window_start"].replace("Z", "+00:00"))
+    we = datetime.fromisoformat(epg["window_end"].replace("Z", "+00:00"))
+    res = await extra_channels.page(ws, we, epg["window_start"], hours, q=q, offset=offset, limit=limit, with_hidden=with_hidden, group=group)
+    for row in res["rows"]:
+        row["categories"] = channel_categories(row)
+    return res
+
+
 class ExtraMark(BaseModel):
     key: str = Field(max_length=300)
     favorite: Optional[bool] = None
     hidden: Optional[bool] = None
+
+
+class ExtraGroup(BaseModel):
+    group: str = Field(max_length=300)
+    hidden: bool
+
+
+@router.post("/extra/group")
+async def extra_group(req: ExtraGroup):
+    """Hide one of the playlist's groups, or show it again (Live TV's More tab)."""
+    from .. import extra_channels
+    return extra_channels.hide_group(req.group, req.hidden)
 
 
 @router.post("/extra/mark")
@@ -747,10 +775,11 @@ async def get_live_epg(
         return (1, 0, c["call_sign"])
 
     channel_rows.sort(key=sort_key)
+    extra_left_out = 0
     if kind in ("all", "extra"):
         # Channels from the user's own playlist (Settings → Live TV), after the Tablo's, in its order
         from .. import extra_channels
-        extra_rows = await extra_channels.epg_rows(window_start_dt, window_end_dt, epg_data["window_start"], hours)
+        extra_rows, extra_left_out = await extra_channels.epg_rows(window_start_dt, window_end_dt, epg_data["window_start"], hours)
         for row in extra_rows:
             row["categories"] = channel_categories(row)  # News, Sports... from their guide, as for the Tablo's
         channel_rows += extra_rows
@@ -761,7 +790,9 @@ async def get_live_epg(
         "hours": epg_data["hours"],
         "slots": epg_data["slots"],
         "count": len(channel_rows),
-        "channels": channel_rows
+        "channels": channel_rows,
+        # A big playlist: only its favorites are above; the More tab asks /extra/rows for the rest
+        "extra_left_out": extra_left_out,
     }
 
 

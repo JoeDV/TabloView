@@ -238,6 +238,7 @@ const state = {
   reminders: new Map(),  // Remind me (More channels): id -> reminder
   epgOffset: 0,
   epgQuery: '',
+  epgGroup: '',  // Live TV → More: one of the playlist's groups, or '' for all
   epgItems: {},
   isSyncing: false,
   activeExports: 0,
@@ -2755,11 +2756,15 @@ async function checkReminders() {
 
 // Star or hide a More channel (kept by TabloView), and redraw the guide where it was
 async function markExtra(key, what) {
-  const c = ((state.epg && state.epg.channels) || []).find(x => x.extra_key === key);
+  const pageRows = (state.extraPage && state.extraPage.rows) || [];
+  const c = [...((state.epg && state.epg.channels) || []), ...pageRows].find(x => x.extra_key === key);
   if (!c) return;
   try {
     const res = await api('/api/live/extra/mark', { method: 'POST', body: JSON.stringify({ key, [what]: !c[what] }) });
-    for (const x of state.epg.channels) if (x.extra_key === key) Object.assign(x, res);
+    for (const x of [...state.epg.channels, ...pageRows]) if (x.extra_key === key) Object.assign(x, res);
+    // A big playlist's guide holds only the favorites: a new one joins it (Favorites, On now)
+    if (res.favorite && !state.epg.channels.some(x => x.extra_key === key)) state.epg.channels.push({ ...c, ...res });
+    if (what === 'hidden' && state.extraPage) state.extraPage.hidden += res.hidden ? 1 : -1;
     toast(what === 'favorite' ? (res.favorite ? `${c.name} added to your favorites` : `${c.name} removed from your favorites`)
       : (res.hidden ? `${c.name} hidden` : `${c.name} shown again`));
     const cats = $('#epgCats');
@@ -2783,7 +2788,8 @@ async function showExtraStatus() {
   try {
     const s = await api('/api/live/extra');
     if (!$('#extraStatus')) return;
-    const parts = [s.playlist_error ? `Playlist: ${s.playlist_error}` : `${plural(s.channels, 'channel')}`];
+    const parts = [s.playlist_error ? `Playlist: ${s.playlist_error}`
+      : `${s.channels === 1 ? '1 channel' : `${s.channels.toLocaleString()} channels`}${s.skipped ? ` (${s.skipped.toLocaleString()} movies and series episodes left out: TabloView shows live channels only)` : ''}`];
     if ($('#extraGuide').value.trim()) {
       parts.push(s.channels && !s.with_guide_ids ? 'no guide: this playlist’s channels have no guide IDs (tvg-id), so a guide can’t be matched to them'
         : s.guide_loading ? 'reading the guide…' : s.guide_error ? `guide: ${s.guide_error}` : `listings for ${s.guide_channels}`);
@@ -2796,27 +2802,86 @@ async function showExtraStatus() {
 function epgCatButtons() {
   let cats = hasFavorites() ? [['favorites', 'Favorites'], ...EPG_CATS] : EPG_CATS;
   // Channels from the playlist in Settings → Live TV
-  if (((state.epg && state.epg.channels) || []).some(c => c.kind === 'extra')) {
+  if (((state.epg && state.epg.channels) || []).some(c => c.kind === 'extra') || bigPlaylist()) {
     const i = cats.findIndex(([k]) => k === 'all');
     cats = [...cats.slice(0, i), ['extra', 'More'], ...cats.slice(i)];
   }
   return cats.map(([k, label]) => `<button data-action="epg-cat" data-value="${k}" class="${state.epgCategory === k ? 'active' : ''}">${label}</button>`).join('');
 }
 
-async function loadEpg(token, scrollToNow = false) {
-  let startIso = '';
-  if (state.epgOffset) {
-    // Pages line up with the Now view (which starts at the half hour before now), so the column
-    // times stay put however often the arrows are pressed
-    const d = new Date();
-    d.setMinutes(d.getMinutes() >= 30 ? 30 : 0, 0, 0);
-    d.setMinutes(d.getMinutes() - 30 + state.epgOffset * 60);
-    startIso = `&start_iso=${encodeURIComponent(d.toISOString())}`;
-  }
+// A playlist too big to send whole (over 3,000 channels): the guide has only its favorites, and
+// the More tab asks for a page at a time, searched on the server
+const bigPlaylist = () => !!(state.epg && state.epg.extra_left_out);
+const bigMore = () => state.epgCategory === 'extra' && bigPlaylist();
+
+async function loadExtraPage(more = false) {
+  const page = state.extraPage;
+  if (state.extraLoading || (page && !more)) return;
+  state.extraLoading = true;
+  const offset = more && page ? page.rows.length : 0;
+  const q = state.epgQuery;
   try {
-    const res = await api(`/api/live/epg?hours=${EPG.HOURS}${startIso}`);
+    const res = await api(`/api/live/extra/rows?hours=${EPG.HOURS}${epgStartParam()}&q=${encodeURIComponent(q)}&offset=${offset}&with_hidden=${state.epgShowHidden ? 'true' : 'false'}${state.epgGroup ? `&group=${encodeURIComponent(state.epgGroup)}` : ''}`);
+    state.extraPage = more && page ? { ...res, rows: [...page.rows, ...res.rows], groups: page.groups } : res;
+  } catch (err) {
+    state.extraPage = { rows: [], total: 0, hidden: 0, error: err.message };
+  } finally { state.extraLoading = false; }
+  if (q !== state.epgQuery) state.extraPage = null;  // (typed on while it looked)
+  if (bigMore()) more ? renderEpgKeepingPlace() : renderEpg();
+}
+
+// The playlist's groups (group-title: a provider's list has hundreds) to pick one, or hide it
+function extraGroupBar(page, channels) {
+  let groups = page ? page.groups || [] : [];
+  if (!page) {
+    const by = new Map();
+    for (const c of channels) {
+      if (c.kind !== 'extra') continue;
+      const g = by.get(c.network) || { name: c.network, count: 0, hidden: c.group_hidden };
+      g.count++;
+      by.set(c.network, g);
+    }
+    groups = [...by.values()];
+  }
+  groups = groups.filter(g => g.name);
+  if (groups.length < 2 && !state.epgGroup) return '';
+  const opt = g => `<option value="${esc(g.name)}" ${g.name === state.epgGroup ? 'selected' : ''}>${esc(g.name)} (${g.count.toLocaleString()})</option>`;
+  const shown = groups.filter(g => !g.hidden), hidden = groups.filter(g => g.hidden);
+  const picked = groups.find(g => g.name === state.epgGroup);
+  return `<div class="row" style="gap:10px;padding:0 12px 8px;align-items:center;flex-wrap:wrap">
+      <select class="select select-sm" data-change="extra-group" title="Show one of the playlist's groups">
+        <option value="">All groups (${plural(shown.length, 'group')})</option>${shown.map(opt).join('')}
+        ${hidden.length ? `<optgroup label="Hidden groups">${hidden.map(opt).join('')}</optgroup>` : ''}
+      </select>
+      ${picked ? `<a href="#" data-action="extra-group-hide" data-group="${esc(picked.name)}" data-hidden="${picked.hidden ? '1' : ''}">${picked.hidden ? 'Show this group again' : 'Hide this group'}</a>` : ''}
+    </div>`;
+}
+
+async function hideExtraGroup(group, hidden) {
+  try {
+    await api('/api/live/extra/group', { method: 'POST', body: JSON.stringify({ group, hidden }) });
+    toast(hidden ? `${group} hidden: it’s under Hidden groups if you want it back` : `${group} shown again`);
+    if (hidden) state.epgGroup = '';
+    loadEpg();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+function epgStartParam() {
+  if (!state.epgOffset) return '';
+  // Pages line up with the Now view (which starts at the half hour before now), so the column
+  // times stay put however often the arrows are pressed
+  const d = new Date();
+  d.setMinutes(d.getMinutes() >= 30 ? 30 : 0, 0, 0);
+  d.setMinutes(d.getMinutes() - 30 + state.epgOffset * 60);
+  return `&start_iso=${encodeURIComponent(d.toISOString())}`;
+}
+
+async function loadEpg(token, scrollToNow = false) {
+  try {
+    const res = await api(`/api/live/epg?hours=${EPG.HOURS}${epgStartParam()}`);
     if (token !== undefined && stale(token)) return;
     state.epg = res;
+    state.extraPage = null;  // (a new time window: the More tab's page is asked for again)
     if (state.epgCategory === 'favorites' && !hasFavorites()) state.epgCategory = 'ota';
     const cats = $('#epgCats');
     if (cats) cats.innerHTML = epgCatButtons();
@@ -2829,7 +2894,9 @@ async function loadEpg(token, scrollToNow = false) {
 
 function epgFilter(c) {
   const cat = state.epgCategory;
-  if (c.hidden && !(cat === 'extra' && state.epgShowHidden)) return false;
+  // (a hidden group's channels show when that group is picked)
+  if (c.hidden && !(cat === 'extra' && (state.epgShowHidden || (c.group_hidden && state.epgGroup === c.network)))) return false;
+  if (cat === 'extra' && state.epgGroup && c.network !== state.epgGroup) return false;
   if (cat === 'favorites' && !c.favorite) return false;
   if (cat === 'ota' && c.kind !== 'ota') return false;
   if (cat === 'fast' && c.kind !== 'fast') return false;
@@ -2875,9 +2942,17 @@ function renderEpg(scrollToNow = false) {
   const dateEl = $('#epgDate');
   if (dateEl) dateEl.textContent = state.epgOffset ? `${fmt.dayLabel(window_start)} · ${fmt.time(window_start)}` : '';
 
-  const list = channels.filter(epgFilter);
-  if (!list.length) {
-    scroll.innerHTML = emptyState('No channels match', 'Try another category or clear the search.');
+  const big = bigMore();
+  const page = big ? state.extraPage : null;
+  if (big && !page) {
+    scroll.innerHTML = '<div class="page"><span class="spinner"></span> Finding channels…</div>';
+    loadExtraPage();
+    return;
+  }
+  const list = big ? page.rows.filter(c => !c.hidden || state.epgShowHidden || (c.group_hidden && state.epgGroup)) : channels.filter(epgFilter);
+  if (!list.length && !state.epgGroup) {
+    scroll.innerHTML = page && page.error ? `<div class="page">${errorState(new Error(page.error))}</div>`
+      : emptyState('No channels match', 'Try another category or clear the search.');
     return;
   }
 
@@ -2919,11 +2994,16 @@ function renderEpg(scrollToNow = false) {
   }).join('');
 
   const head = `<div class="epg-head"><div class="epg-head-ch" style="width:${EPG.CH_W}px"></div>${slots.map(s => `<div class="epg-slot" style="width:${slotW}px">${esc(fmt.time(s.iso))}</div>`).join('')}</div>`;
-  const hiddenN = channels.filter(c => c.kind === 'extra' && c.hidden).length;
+  const hiddenN = page ? page.hidden : channels.filter(c => c.kind === 'extra' && c.hidden).length;
+  const shown = !page ? '' : state.epgQuery ? `${page.total === 1 ? '1 channel' : `${page.total.toLocaleString()} channels`} found. `
+    : `${page.total > page.rows.length ? `Showing ${page.rows.length.toLocaleString()} of ` : ''}${page.total.toLocaleString()} channels: search to find one. `;
   const extraNote = state.epgCategory === 'extra'
-    ? `<div class="dim" style="padding:8px 12px;font-size:13px">Channels from your playlist (Settings → Live TV). They <b>don’t use a Tablo tuner</b>, and they’re <b>watch only</b>: they can’t be recorded.
+    ? `<div class="dim" style="padding:8px 12px;font-size:13px">${shown}Channels from your playlist (Settings → Live TV). They <b>don’t use a Tablo tuner</b>, and they’re <b>watch only</b>: they can’t be recorded.
         Point at a channel to star it (Favorites and On now) or hide it.${hiddenN ? ` <a href="#" data-action="extra-show-hidden">${state.epgShowHidden ? 'Leave out' : 'Show'} the ${plural(hiddenN, 'hidden channel')}</a>` : ''}</div>` : '';
-  scroll.innerHTML = `${extraNote}<div class="epg-board" id="epgBoard">${head}${rows}<div class="epg-now hidden" id="epgNow"></div></div>`;
+  const groupBar = state.epgCategory === 'extra' ? extraGroupBar(page, channels) : '';
+  const more = page && page.total > page.rows.length
+    ? `<div style="padding:12px"><button class="btn" data-action="extra-more">Show ${Math.min(200, page.total - page.rows.length)} more</button></div>` : '';
+  scroll.innerHTML = `${extraNote}${groupBar}<div class="epg-board" id="epgBoard">${head}${rows}<div class="epg-now hidden" id="epgNow"></div></div>${more}`;
   hydrateIcons(scroll);
   positionNowLine();
 
@@ -3447,7 +3527,7 @@ PAGES.help = async (r, token) => {
       <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
     let html;
     try {
-      const res = await fetch('/static/help.html?v=22');
+      const res = await fetch('/static/help.html?v=25');
       if (!res.ok) throw new Error(res.status);
       html = await res.text();
     } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
@@ -4970,6 +5050,8 @@ const player = {
   // Surf within the Live TV page's current filter, unless the channel being watched isn't in it
   liveChannels() {
     const all = (state.epg && state.epg.channels) || [];
+    const page = bigMore() && state.extraPage ? state.extraPage.rows.filter(c => !c.hidden) : [];
+    if (page.some(c => c.channel_id === state.stream.channelId)) return page;
     const list = all.filter(epgFilter);
     return list.some(c => c.channel_id === state.stream.channelId) ? list : all;
   },
@@ -6195,7 +6277,13 @@ const ACTIONS = {
   'extra-show-hidden': (el, e) => {
     if (e) e.preventDefault();
     state.epgShowHidden = !state.epgShowHidden;
+    if (bigMore()) { state.extraPage = null; renderEpg(); return; }
     renderEpgKeepingPlace();
+  },
+  'extra-more': el => { el.disabled = true; loadExtraPage(true); },
+  'extra-group-hide': (el, e) => {
+    if (e) e.preventDefault();
+    hideExtraGroup(el.dataset.group, !el.dataset.hidden);
   },
   'extra-preset': el => {
     [$('#extraPlaylist').value, $('#extraGuide').value] = EXTRA_PRESETS[el.dataset.preset];
@@ -6328,10 +6416,21 @@ const INPUTS = {
   'guide-q': el => { state.guide.q = el.value; reloadGuide(); },
   'fast-q': el => { state.fast.q = el.value; reloadStreaming(); },
   'scheduled-q': el => { state.scheduled.q = el.value; renderScheduledList(); },
-  'epg-q': debounce(el => { state.epgQuery = el.value.trim().toLowerCase(); renderEpg(); }, 180),
+  'epg-q': debounce(el => {
+    state.epgQuery = el.value.trim().toLowerCase();
+    if (bigPlaylist()) state.extraPage = null;  // (searched on the server)
+    renderEpg();
+  }, 250),
 };
 
 const CHANGES = {
+  'extra-group': el => {
+    state.epgGroup = el.value;
+    if (bigPlaylist()) state.extraPage = null;
+    renderEpg();
+    const scroll = $('#epgScroll');
+    if (scroll) scroll.scrollTop = 0;
+  },
   // Antenna helper: picking another channel while measuring switches to it
   'ant-channel': el => {
     const c = antenna.channels().find(x => x.channel_id === el.value);

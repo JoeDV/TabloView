@@ -472,7 +472,57 @@ async function loadLive() {
 }
 
 function liveChannels() {
+  if (state.liveTab === 'extra' && state.tvGroup) {
+    const g = state.tvGroup;
+    if (g.rows) return g.rows.filter(c => !c.hidden || c.group_hidden);
+    const extra = ((state.live && state.live.channels) || []).filter(c => c.kind === 'extra' && !c.hidden);
+    return g.name === STARRED ? extra.filter(c => c.favorite) : g.name === ALL ? extra : extra.filter(c => c.network === g.name);
+  }
   return ((state.live && state.live.channels) || []).filter(c => !c.hidden && c.kind === (state.liveTab === 'fast' ? 'fast' : state.liveTab === 'extra' ? 'extra' : 'ota'));
+}
+
+// Every channel the TV knows of: the guide's, and those of a big playlist's group being looked at
+function allChannels() {
+  return [...((state.live && state.live.channels) || []), ...((state.tvGroup && state.tvGroup.rows) || [])];
+}
+
+// More (a playlist): its groups first, as on the computer. A big playlist's (over 3,000 channels)
+// come from the server, and a group's channels too, up to 500 of them
+const STARRED = '\u0001starred', ALL = '\u0001all';
+const bigPlaylist = () => !!(state.live && state.live.extra_left_out);
+
+async function playlistGroups() {
+  if (bigPlaylist()) {
+    if (!state.tvGroups) state.tvGroups = (await api(`/api/live/extra/rows?hours=${GUIDE_HOURS + 1}&limit=1`)).groups || [];
+    return state.tvGroups.filter(g => !g.hidden);
+  }
+  const by = new Map();
+  for (const c of (state.live && state.live.channels) || []) {
+    if (c.kind !== 'extra' || c.hidden) continue;
+    by.set(c.network, (by.get(c.network) || 0) + 1);
+  }
+  return [...by].map(([name, count]) => ({ name, count }));
+}
+
+async function pickGroup(name) {
+  if (!bigPlaylist() || name === STARRED) { state.tvGroup = { name }; return; }
+  const res = await api(`/api/live/extra/rows?hours=${GUIDE_HOURS + 1}&limit=500&group=${encodeURIComponent(name)}`);
+  state.tvGroup = { name, rows: res.rows, total: res.total };
+}
+
+function groupList(groups) {
+  const starred = ((state.live && state.live.channels) || []).filter(c => c.kind === 'extra' && c.favorite && !c.hidden).length;
+  const named = groups.filter(g => g.name);
+  const shown = named.slice(0, 1000);
+  const row = (name, label, meta, i) => `<button class="row f" data-act="tv-group" data-group="${esc(name)}" data-key="grp-${i}">
+      <div class="body"><div class="name">${esc(label)}</div><div class="meta">${esc(meta)}</div></div></button>`;
+  const rows = [
+    starred ? row(STARRED, '★ Starred channels', `${starred} channel${starred === 1 ? '' : 's'}`, 's') : '',
+    bigPlaylist() ? '' : row(ALL, 'All channels', `${groups.reduce((n, g) => n + g.count, 0)} channels`, 'a'),
+    ...shown.map((g, i) => row(g.name, g.name, `${g.count.toLocaleString()} channel${g.count === 1 ? '' : 's'}`, i)),
+  ].join('');
+  const more = named.length > shown.length ? `<div class="dim" style="margin:1vw 0">And ${(named.length - shown.length).toLocaleString()} more groups: hide the ones you don’t watch in Live TV → More on your computer.</div>` : '';
+  return `<div class="rows">${rows}</div>${more}`;
 }
 
 // Live TV as a list (what's on now, and next) or as the Guide (the next GUIDE_HOURS, a row per channel)
@@ -482,15 +532,27 @@ const liveView = () => (stored('tv_live_view', 'list') === 'guide' ? 'guide' : '
 
 async function showLive() {
   loading('#/live');
-  try { await loadLive(); } catch (err) { return failed(err, '#/live'); }
+  let groups = null;
+  try {
+    await loadLive();
+    // More: the playlist's groups to pick from (straight to the channels when it has just one)
+    if (state.liveTab === 'extra' && !state.tvGroup) {
+      groups = await playlistGroups();
+      if (groups.filter(g => g.name).length < 2 && !bigPlaylist()) { state.tvGroup = { name: ALL }; groups = null; }
+    }
+  } catch (err) { return failed(err, '#/live'); }
   const view = liveView();
+  const g = state.liveTab === 'extra' && state.tvGroup;
+  const groupLabel = g ? (g.name === STARRED ? '★ Starred channels' : g.name === ALL ? 'All channels' : g.name) : '';
   const tab = (act, key, value, label, on) => `<button class="btn f ${on ? 'primary' : ''}" data-act="${act}" data-${key}="${value}" data-key="${act}-${value}">${label}</button>`;
   setScreen(`<div class="subtabs">
-      ${tab('live-tab', 'tab', 'ota', 'Antenna', state.liveTab === 'ota')}${tab('live-tab', 'tab', 'fast', 'Streaming', state.liveTab === 'fast')}${((state.live && state.live.channels) || []).some(c => c.kind === 'extra') ? tab('live-tab', 'tab', 'extra', 'More', state.liveTab === 'extra') : ''}<span class="gap"></span>
+      ${tab('live-tab', 'tab', 'ota', 'Antenna', state.liveTab === 'ota')}${tab('live-tab', 'tab', 'fast', 'Streaming', state.liveTab === 'fast')}${((state.live && state.live.channels) || []).some(c => c.kind === 'extra') || (state.live && state.live.extra_left_out) ? tab('live-tab', 'tab', 'extra', 'More', state.liveTab === 'extra') : ''}<span class="gap"></span>
       ${tab('live-view', 'view', 'list', 'On now', view === 'list')}${tab('live-view', 'view', 'guide', 'Guide', view === 'guide')}
     </div>
-    ${state.liveTab === 'extra' ? '<div class="dim" style="margin:0 0 1vw">Channels from your playlist. They don’t use a Tablo tuner, and they’re watch only: they can’t be recorded.</div>' : ''}
-    ${!liveChannels().length ? '<div class="empty">No channels here.</div>' : view === 'guide' ? guideGrid() : liveList()}`, '#/live');
+    ${state.liveTab === 'extra' ? `<div class="dim" style="margin:0 0 1vw">Channels from your playlist. They don’t use a Tablo tuner, and they’re watch only: they can’t be recorded.</div>` : ''}
+    ${g && state.tvGroupsShown ? `<div class="subtabs"><button class="btn f" data-act="tv-groups" data-key="tv-groups">‹ Groups</button><span class="gap"></span><span class="dim">${esc(groupLabel)}${g.total > (g.rows || []).length ? ` · the first ${g.rows.length} of ${g.total.toLocaleString()}` : ''}</span></div>` : ''}
+    ${groups ? groupList(groups) : !liveChannels().length ? '<div class="empty">No channels here.</div>' : view === 'guide' ? guideGrid() : liveList()}`, '#/live');
+  if (groups) state.tvGroupsShown = true;
 }
 
 function liveList() {
@@ -561,7 +623,7 @@ function guideMove(cur, dir) {
 
 // OK on a listing: on now, watch it; later, record it (or not, if it's set to record)
 async function guideAiring(chId, i) {
-  const c = ((state.live && state.live.channels) || []).find(x => x.channel_id === chId);
+  const c = allChannels().find(x => x.channel_id === chId);
   const a = c && (c.airings || [])[i];
   if (!a) return;
   const aStart = new Date(a.air_datetime).getTime(), aEnd = aStart + (a.duration || 0) * 1000;
@@ -1154,7 +1216,7 @@ const player = {
   },
 
   async tune(channelId) {
-    const c = ((state.live && state.live.channels) || []).find(x => x.channel_id === channelId);
+    const c = allChannels().find(x => x.channel_id === channelId);
     if (!c) return;
     if (c.kind === 'ota' && !this.open) {  // (only antenna channels use the Tablo's tuners)
       let check = null;
@@ -1191,7 +1253,7 @@ const player = {
   // What's on the channel playing, if the Tablo can record it (as the PC player's Record button):
   // streaming channels that allow recording, by the airing's ID; antenna ones with guide data
   liveAiring() {
-    const c = this.s.kind === 'live' && ((state.live && state.live.channels) || []).find(x => x.channel_id === this.s.id);
+    const c = this.s.kind === 'live' && allChannels().find(x => x.channel_id === this.s.id);
     const a = c && nowNext(c).now;
     if (!a) return null;
     if (a.airing_id) return c.can_record ? { c, a } : null;
@@ -1881,7 +1943,17 @@ function onClick(e) {
   else if (act === 'tune') player.tune(el.dataset.id);
   else if (act === 'run') startRun(Number(el.dataset.from), el.dataset.how);
   else if (act === 'run-from') startRun(Number(el.dataset.from));
-  else if (act === 'live-tab') { state.liveTab = el.dataset.tab; state.focus['#/live'] = el.dataset.key; showLive(); }
+  else if (act === 'live-tab') {
+    state.liveTab = el.dataset.tab; state.focus['#/live'] = el.dataset.key;
+    state.tvGroup = null; state.tvGroups = null; state.tvGroupsShown = false;
+    showLive();
+  }
+  else if (act === 'tv-group') {
+    const key = el.dataset.key;
+    pickGroup(el.dataset.group).then(() => { state.tvGroupFocus = key; state.focus['#/live'] = null; showLive(); },
+      err => failed(err, '#/live'));
+  }
+  else if (act === 'tv-groups') { state.tvGroup = null; state.focus['#/live'] = state.tvGroupFocus || null; showLive(); }
   else if (act === 'live-view') {
     try { localStorage.setItem('tv_live_view', el.dataset.view); } catch { /* this visit only */ }
     state.focus['#/live'] = el.dataset.key;
