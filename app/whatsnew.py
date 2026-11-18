@@ -13,6 +13,15 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.3.8": [
+        "Guide → For you: shows coming up on your antenna channels that you aren't recording yet, picked to suit the series you do record, each with a line on why. New series and new seasons are listed first, under Premiering soon. With a Claude key, Claude picks them; without one, they're matched by genre.",
+        "Live TV → More: pick one of your playlist's groups from the list above the channels, or hide a whole group you never watch. On a TV, More opens on the groups.",
+        "Big playlists work: a provider's list of hundreds of thousands of entries no longer freezes Live TV. More shows 200 channels at a time, and search looks through the whole list. Only the channels you star go into Favorites and On now.",
+        "Movies and series episodes in a playlist are left out, so Live TV lists live channels only. Settings → Live TV says how many were left out.",
+        "On a TV, Add a channel is always there in live TV. If the TV doesn't have enough memory for two pictures, pressing it says so.",
+        "Fixed: a station's box that stays on screen the whole time, like a weather box with the time and temperature, was taken for the network logo, and no commercial breaks were found.",
+        "Fixed: with a Claude key, a scene where the channel's logo stays on (a daydream or flashback, for example) could be taken for a commercial break.",
+    ],
     "1.3.7": [
         "Settings has a new look: its sections are listed on the left, and each setting is one row, with what it does on the left and its switch or button on the right. Search settings finds any setting from every section. Help is laid out the same way, with its own search.",
         "Two channels at once on your TV: in live TV, press OK, then Add a channel. ◀ ▶ choose which one you hear, ▲ ▼ change it, and Back closes the other. If the TV can't keep up with two pictures, TabloView closes one by itself.",
