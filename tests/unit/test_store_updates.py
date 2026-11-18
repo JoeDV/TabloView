@@ -37,6 +37,22 @@ class StoreUpdateTests(unittest.TestCase):
         self.assertFalse(u["update_available"])
         self.assertEqual(u["published"], "99.0.0")
 
+    def test_waiting_for_the_store_asks_again_sooner(self):
+        # While a released version isn't in the Store yet, it's asked again after half an hour, not 6 hours
+        store = mock.AsyncMock(return_value=None)
+        with mock.patch.object(updates, "store_update_version", new=store), \
+             mock.patch.object(updates, "published_version", new=mock.AsyncMock(return_value="99.0.0")), \
+             mock.patch.object(updates.time, "time", return_value=1_000_000.0) as now:
+            self.check()
+            now.return_value += 20 * 60
+            asyncio.run(updates.check_for_update())
+            self.assertEqual(store.await_count, 1)
+            now.return_value += 11 * 60
+            store.return_value = "99.0.0"
+            u = asyncio.run(updates.check_for_update())
+        self.assertEqual(store.await_count, 2)
+        self.assertTrue(u["update_available"])
+
     def test_nothing_newer_released(self):
         with mock.patch.object(updates, "store_update_version", new=mock.AsyncMock(return_value=None)),              mock.patch.object(updates, "published_version", new=mock.AsyncMock(return_value=updates.APP_VERSION)):
             u = self.check()

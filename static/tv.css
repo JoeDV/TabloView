@@ -220,6 +220,7 @@ h2 { font-size: 1.7vw; margin: 2.4vw 0 1.2vw; color: var(--dim); font-weight: 60
 .ch-picker.hidden { display: none; }
 .pick-title { font-size: 2vw; font-weight: 700; }
 .pick-hint { color: var(--dim); margin-bottom: 0.8vw; }
+.pick-sec { color: var(--dim); font-size: 1.1vw; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; padding: 0.8vw 1.4vw 0.2vw; }
 .pick-row { display: flex; gap: 1.4vw; align-items: baseline; padding: 0.9vw 1.4vw; border-radius: var(--radius); text-align: left; background: transparent; color: inherit; font: inherit; border: 0; }
 .pick-row b { white-space: nowrap; }
 .pick-row span { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

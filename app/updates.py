@@ -24,6 +24,7 @@ def trusted_download(url) -> str:
     return url if url.startswith(TRUSTED_DOWNLOADS) and not any(c in url for c in "\"'<> ") else RELEASE_DOWNLOAD_URL
 
 CHECK_EVERY_SECONDS = 6 * 3600
+WAITING_CHECK_SECONDS = 30 * 60
 _cache: Dict[str, Any] = {"checked": 0.0, "result": None}
 
 
@@ -89,7 +90,10 @@ async def check_for_update(force: bool = False) -> Dict[str, Any]:
                             "enabled": bool(url) or IS_STORE, "store": IS_STORE}
     if not base["enabled"]:
         return base
-    if not force and _cache["result"] and time.time() - _cache["checked"] < CHECK_EVERY_SECONDS:
+    # Waiting for the Store to offer a released version: ask again sooner, as approval can come any
+    # time (a user saw "will offer it once Microsoft has approved it" with 1.3.8 already in the Store)
+    every = WAITING_CHECK_SECONDS if _cache["result"] and _cache["result"].get("published") else CHECK_EVERY_SECONDS
+    if not force and _cache["result"] and time.time() - _cache["checked"] < every:
         return _cache["result"]
 
     result = dict(base)

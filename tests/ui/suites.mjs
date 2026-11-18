@@ -511,6 +511,60 @@ export const SUITES = {
     await b.ev(`document.querySelector('[data-act="live-tab"][data-tab="ota"]').click()`);
   },
 
+  // Add a channel offers every channel, not only the first one's list: watching a playlist group's
+  // channel, antenna channels and favorites of every kind are there too (a forum user couldn't add
+  // an antenna channel to one from a group). Nothing is tuned
+  async pickany(b, t) {
+    const fake = (id, kind, extra = {}) => ({ channel_id: id, call_sign: id, name: id, major: 0, minor: 0, network: 'G1', kind, hidden: false, favorite: false, categories: [], airings: [], ...extra });
+    const chans = JSON.stringify([fake('ota-a', 'ota', { major: 2, minor: 1 }), fake('ota-fav', 'ota', { major: 4, minor: 1, favorite: true }),
+      fake('fast-a', 'fast', { network: 'Pluto' }), fake('x-1', 'extra'), fake('x-2', 'extra'), fake('x-other', 'extra', { network: 'G2' })]);
+    // Computer
+    await b.open('#/');
+    await b.ev(`(() => {
+      window.__keep = { epg: state.epg, cat: state.epgCategory, group: state.epgGroup, stream: state.stream };
+      state.epg = { window_end: new Date(Date.now() + 6 * 3600000).toISOString(), channels: ${chans} };
+      state.epgCategory = 'extra'; state.epgGroup = 'G1'; state.stream = { channelId: 'x-1' };
+    })()`);
+    const pc = await b.ev(`player.pickSections().map(([label, list]) => label + ':' + list.map(c => c.channel_id).join(','))`);
+    t.check(`Computer: a second channel can come from any list (${pc.join(' | ')})`,
+      pc.join('|') === 'Favorites:ota-fav|G1:x-2|Antenna:ota-a|Streaming:fast-a|More:x-other');
+    await b.ev(`dual.picking = true; $('#chanPanel').classList.remove('hidden'); player.renderChannels()`);
+    t.check('Computer: the picker shows each list under its name', await b.ev(`document.querySelectorAll('#chanPanel .chan-sec').length === 5 && document.querySelectorAll('#chanPanel .chan-row').length === 5`));
+    await b.ev(`dual.picking = false; $('#chanPanel').classList.add('hidden');
+      state.epg = __keep.epg; state.epgCategory = __keep.cat; state.epgGroup = __keep.group; state.stream = __keep.stream`);
+    // TV view
+    await b.send('Page.navigate', { url: `${BASE}/tv#/live` });
+    await b.waitFor(`typeof dual !== 'undefined' && state.live`, 30000);
+    await b.ev(`state.live = { ...state.live, channels: ${chans} }; state.liveTab = 'extra'; state.tvGroup = { name: 'G1' };
+      player.s = { kind: 'live', id: 'x-1' }; dual.list = dual.pickList(); dual.index = 0; dual.picking = true; dual.renderPicker()`);
+    const tv = await b.ev(`dual.list.map(e => e.sec + ':' + e.c.channel_id).join('|')`);
+    t.check(`TV: a second channel can come from any list (${tv})`, tv === 'Favorites:ota-fav|G1:x-2|Antenna:ota-a|Streaming:fast-a|More:x-other');
+    t.check('TV: the picker shows each list under its name', await b.ev(`document.querySelectorAll('#chPicker .pick-sec').length === 5`));
+    const key = k => b.ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true }))`);
+    await b.ev(`$('#player').classList.remove('hidden'); player.open = true`);
+    await key('ArrowRight'); await key('ArrowRight');
+    t.check('TV: ▶ jumps a list at a time', await b.ev(`dual.picking && dual.list[dual.index].c.channel_id === 'ota-a'`));
+    await key('ArrowLeft'); await key('ArrowLeft'); await key('ArrowLeft');
+    t.check('TV: ◀ jumps back, round to the last list', await b.ev(`dual.picking && dual.list[dual.index].c.channel_id === 'x-other'`));
+    await key('Escape');
+    t.check('TV: Back closes the picker', await b.ev(`!dual.picking && $('#chPicker').classList.contains('hidden')`));
+    await b.ev(`player.open = false; player.s = {}; $('#player').classList.add('hidden')`);
+  },
+
+  // Captions after a second stream in the same player (a jump, a resume, the next recording): hls.js
+  // adds a new track each time and old ones can't be removed, so the newest is shown (a forum user
+  // lost captions after scrubbing until the page was reloaded). Nothing is played
+  async cctrack(b, t) {
+    const probe = `(() => { const v = document.createElement('video');
+      const a = v.addTextTrack('captions', 'English', 'en'), es = v.addTextTrack('captions', 'Spanish', 'es'), c = v.addTextTrack('captions', 'English', 'en');
+      return captionTrack(v) === c; })()`;
+    await b.open('#/');
+    t.check('Computer: captions come from the newest stream’s track', await b.ev(probe));
+    await b.send('Page.navigate', { url: `${BASE}/tv#/live` });
+    await b.waitFor(`typeof captionTrack === 'function'`, 30000);
+    t.check('TV: captions come from the newest stream’s track', await b.ev(probe));
+  },
+
   // TV view on a stick with 1 GB (most Fire TV Sticks): Add a channel is still offered, and says why
   // it can't when pressed, instead of opening the channel list. Nothing is tuned
   async tvlowmem(b, t) {
@@ -541,7 +595,7 @@ export const SUITES = {
     await key('Enter'); await sleep(300);
     t.check('TV: OK offers Add a channel', await b.ev(`player.controlList.some(([v]) => v === 'second')`));
     await b.ev(`player.controlIndex = player.controlList.findIndex(([v]) => v === 'second'); player.pressControl()`); await sleep(300);
-    t.check('TV: the channel list opens, without the one playing', await b.ev(`dual.picking && !$('#chPicker').classList.contains('hidden') && !dual.list.some(c => c.channel_id === player.s.id)`));
+    t.check('TV: the channel list opens, without the one playing', await b.ev(`dual.picking && !$('#chPicker').classList.contains('hidden') && !dual.list.some(e => e.c.channel_id === player.s.id)`));
     await key('ArrowDown'); await key('ArrowUp');
     await key('Enter');
     t.check('TV: both play, side by side, the first one heard', await b.waitFor(`dual.on && dual.video().currentTime > 2 && !player.video().paused && $('#player').classList.contains('dual-side')`, 60000)

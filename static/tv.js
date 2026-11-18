@@ -824,8 +824,11 @@ function showPin(code) {
 // A broadcast can carry captions in two languages (CC1, and CC3: usually Spanish), and hls.js makes a
 // track of each. Only one is shown: CC1, the main one (hls.js calls it 'en' whatever its language).
 // Both shown were drawn over each other (a forum report, 2026-11-09: English and Spanish ghosting)
+// Each stream adds tracks of its own (hls.js never reuses a captions track, and a video's tracks
+// can't be removed): the newest is the one in use. The first, picked before, was an earlier stream's,
+// so captions stopped after a jump, a resume or the next recording (a forum user, 2026-11-18)
 function captionTrack(video) {
-  const ts = [...video.textTracks];
+  const ts = [...video.textTracks].reverse();
   return ts.find(t => t.language === 'en') || ts[0] || null;
 }
 
@@ -1549,20 +1552,44 @@ const dual = {
     if (stored('tv_dual_struggled', '0') === '1'
       && !await choose('Two channels at once?', 'Last time this TV couldn’t keep up with two channels, so one was closed.',
         [{ label: 'Try anyway', value: 1 }, { label: 'Cancel', value: 0 }])) return;
-    this.list = liveChannels().filter(c => c.channel_id !== player.s.id);
+    this.list = this.pickList();
     if (!this.list.length) { player.banner('No other channels to add'); return; }
     this.index = 0;
     this.picking = true;
     this.renderPicker();
   },
 
+  // Any channel, not only those of the list the first came from (a playlist group's, say): favorites
+  // of every kind first, then that list, then the rest by kind. Each is { c, sec }.
+  pickList() {
+    const all = ((state.live && state.live.channels) || []).filter(c => !c.hidden);
+    const seen = new Set([player.s.id]);
+    const g = state.liveTab === 'extra' && state.tvGroup;
+    const here = g ? (g.name === STARRED ? 'Starred' : g.name === ALL ? 'More' : g.name)
+      : state.liveTab === 'fast' ? 'Streaming' : state.liveTab === 'extra' ? 'More' : 'Antenna';
+    const out = [];
+    for (const [sec, list] of [
+      ['Favorites', all.filter(c => c.favorite)],
+      [here, liveChannels()],
+      ['Antenna', all.filter(c => c.kind === 'ota')],
+      ['Streaming', all.filter(c => c.kind === 'fast')],
+      ['More', all.filter(c => c.kind === 'extra')],
+    ]) {
+      for (const c of list) if (!seen.has(c.channel_id)) { seen.add(c.channel_id); out.push({ c, sec }); }
+    }
+    return out;
+  },
+
   renderPicker() {
     const box = $('#chPicker');
     const from = Math.max(0, Math.min(this.index - 3, this.list.length - 7));
-    box.innerHTML = '<div class="pick-title">Add a channel</div><div class="pick-hint">▲ ▼ to choose · OK to add · Back to cancel</div>'
-      + this.list.slice(from, from + 7).map((c, n) => {
+    const many = new Set(this.list.map(e => e.sec)).size > 1;
+    box.innerHTML = `<div class="pick-title">Add a channel</div><div class="pick-hint">▲ ▼ to choose${many ? ' · ◀ ▶ to jump a list' : ''} · OK to add · Back to cancel</div>`
+      + this.list.slice(from, from + 7).map(({ c, sec }, n) => {
+        const i = from + n;
         const on = nowNext(c).now;
-        return `<button class="pick-row ${from + n === this.index ? 'on' : ''}" data-pick="${from + n}"><b>${esc(chLabel(c))}</b><span>${esc(on ? on.title : '')}</span></button>`;
+        const head = many && (n === 0 || this.list[i - 1].sec !== sec) ? `<div class="pick-sec">${esc(sec)}</div>` : '';
+        return `${head}<button class="pick-row ${i === this.index ? 'on' : ''}" data-pick="${i}"><b>${esc(chLabel(c))}</b><span>${esc(on ? on.title : '')}</span></button>`;
       }).join('');
     box.classList.remove('hidden');
   },
@@ -1572,15 +1599,23 @@ const dual = {
     this.renderPicker();
   },
 
+  // ◀ ▶: the first channel of the previous or next list
+  jumpPick(dir) {
+    const starts = this.list.map((e, i) => (i === 0 || this.list[i - 1].sec !== e.sec ? i : -1)).filter(i => i >= 0);
+    const cur = starts.filter(i => i <= this.index).length - 1;
+    this.index = starts[(cur + dir + starts.length) % starts.length];
+    this.renderPicker();
+  },
+
   cancelPick() {
     this.picking = false;
     $('#chPicker').classList.add('hidden');
   },
 
   async choosePick(i = this.index) {
-    const c = this.list[i];
+    const e = this.list[i];
     this.cancelPick();
-    if (c) await this.start(c);
+    if (e) await this.start(e.c);
   },
 
   // A tuner for an antenna channel: the same check as tuning one
@@ -1843,12 +1878,13 @@ function onKey(e) {
   if (dialogDone && isBack(e)) { e.preventDefault(); dialogDone(null); return; }
 
   if (player.open && $('#dialog').classList.contains('hidden')) {
-    // Picking a second channel: ▲ ▼ through the list, OK adds it, Back (or ◀) cancels
+    // Picking a second channel: ▲ ▼ through the list, ◀ ▶ a list at a time, OK adds it, Back cancels
     if (dual.picking) {
       e.preventDefault();
       if (k === 'ArrowUp' || k === 'ArrowDown') dual.movePick(k === 'ArrowUp' ? -1 : 1);
+      else if (k === 'ArrowLeft' || k === 'ArrowRight') dual.jumpPick(k === 'ArrowLeft' ? -1 : 1);
       else if (k === 'Enter' || k === ' ') dual.choosePick();
-      else if (isBack(e) || k === 'ArrowLeft') dual.cancelPick();
+      else if (isBack(e)) dual.cancelPick();
       return;
     }
     if (player.upNext && (k === 'Enter' || k === ' ')) { e.preventDefault(); player.playNext(); return; }

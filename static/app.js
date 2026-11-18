@@ -2831,7 +2831,7 @@ async function loadExtraPage(more = false) {
 }
 
 // The playlist's groups (group-title: a provider's list has hundreds) to pick one, or hide it
-function extraGroupBar(page, channels) {
+function extraGroupBar(page, channels, hiddenLink = '') {
   let groups = page ? page.groups || [] : [];
   if (!page) {
     const by = new Map();
@@ -2844,17 +2844,17 @@ function extraGroupBar(page, channels) {
     groups = [...by.values()];
   }
   groups = groups.filter(g => g.name);
-  if (groups.length < 2 && !state.epgGroup) return '';
+  const bar = inner => `<div class="row" style="gap:16px;padding:0 12px 8px;align-items:center;flex-wrap:wrap">${inner}${hiddenLink}</div>`;
+  if (groups.length < 2 && !state.epgGroup) return hiddenLink ? bar('') : '';
   const opt = g => `<option value="${esc(g.name)}" ${g.name === state.epgGroup ? 'selected' : ''}>${esc(g.name)} (${g.count.toLocaleString()})</option>`;
   const shown = groups.filter(g => !g.hidden), hidden = groups.filter(g => g.hidden);
   const picked = groups.find(g => g.name === state.epgGroup);
-  return `<div class="row" style="gap:10px;padding:0 12px 8px;align-items:center;flex-wrap:wrap">
+  return bar(`
       <select class="select select-sm" data-change="extra-group" title="Show one of the playlist's groups">
         <option value="">All groups (${plural(shown.length, 'group')})</option>${shown.map(opt).join('')}
         ${hidden.length ? `<optgroup label="Hidden groups">${hidden.map(opt).join('')}</optgroup>` : ''}
       </select>
-      ${picked ? `<a href="#" data-action="extra-group-hide" data-group="${esc(picked.name)}" data-hidden="${picked.hidden ? '1' : ''}">${picked.hidden ? 'Show this group again' : 'Hide this group'}</a>` : ''}
-    </div>`;
+      ${picked ? `<a href="#" data-action="extra-group-hide" data-group="${esc(picked.name)}" data-hidden="${picked.hidden ? '1' : ''}">${picked.hidden ? 'Show this group again' : 'Hide this group'}</a>` : ''}`);
 }
 
 async function hideExtraGroup(group, hidden) {
@@ -2985,9 +2985,9 @@ function renderEpg(scrollToNow = false) {
       <div class="epg-ch" style="width:${EPG.CH_W}px" data-action="watch-live" data-id="${esc(c.channel_id)}" data-name="${esc(name)}" data-kind="${esc(c.kind)}" title="Watch ${esc(name)} live">
         ${c.logo_url ? `<img class="epg-ch-logo" src="${esc(c.logo_url)}" alt="" loading="lazy">` : `<div class="epg-ch-logo-fallback">${esc((c.call_sign || 'TV').slice(0, 6))}</div>`}
         <div class="epg-ch-info"><div class="epg-ch-num">${num ? `<b>${esc(num)}</b>` : ''}${esc(name)}${c.favorite ? `<span class="epg-fav" title="Favorite">${icon('star', 11)}</span>` : ''}</div>${sub ? `<div class="epg-ch-sub">${esc(sub)}</div>` : ''}</div>
-        ${c.kind === 'extra' ? `<span class="icon-btn ch-mark ${c.favorite ? 'on' : ''}" data-action="extra-fav" data-key="${esc(c.extra_key)}" title="${c.favorite ? 'Remove from favorites' : 'Add to favorites (they show under Favorites and in On now)'}">${icon('star', 12)}</span>
+        <span class="epg-ch-acts">${c.kind === 'extra' ? `<span class="icon-btn ch-mark ${c.favorite ? 'on' : ''}" data-action="extra-fav" data-key="${esc(c.extra_key)}" title="${c.favorite ? 'Remove from favorites' : 'Add to favorites (they show under Favorites and in On now)'}">${icon('star', 12)}</span>
           <span class="icon-btn ch-mark" data-action="extra-hide" data-key="${esc(c.extra_key)}" title="${c.hidden ? 'Show this channel again' : 'Hide this channel'}">${icon(c.hidden ? 'plus' : 'x', 12)}</span>` : ''}
-        <span class="icon-btn play">${icon('play', 12)}</span>
+        <span class="icon-btn play">${icon('play', 12)}</span></span>
       </div>
       <div class="epg-track" style="width:${trackW}px">${cells}</div>
     </div>`;
@@ -2999,11 +2999,13 @@ function renderEpg(scrollToNow = false) {
     : `${page.total > page.rows.length ? `Showing ${page.rows.length.toLocaleString()} of ` : ''}${page.total.toLocaleString()} channels: search to find one. `;
   const extraNote = state.epgCategory === 'extra'
     ? `<div class="dim" style="padding:8px 12px;font-size:13px">${shown}Channels from your playlist (Settings → Live TV). They <b>don’t use a Tablo tuner</b>, and they’re <b>watch only</b>: they can’t be recorded.
-        Point at a channel to star it (Favorites and On now) or hide it.${hiddenN ? ` <a href="#" data-action="extra-show-hidden">${state.epgShowHidden ? 'Leave out' : 'Show'} the ${plural(hiddenN, 'hidden channel')}</a>` : ''}</div>` : '';
-  const groupBar = state.epgCategory === 'extra' ? extraGroupBar(page, channels) : '';
+        Point at a channel to star it (Favorites and On now) or hide it.</div>` : '';
+  // (beside the group picker, like Hide this group: a user missed it at the end of the note above)
+  const hiddenLink = hiddenN ? `<a href="#" data-action="extra-show-hidden">${state.epgShowHidden ? 'Leave out' : 'Show'} the ${plural(hiddenN, 'hidden channel')}</a>` : '';
+  const groupBar = state.epgCategory === 'extra' ? extraGroupBar(page, channels, hiddenLink) : '';
   const more = page && page.total > page.rows.length
     ? `<div style="padding:12px"><button class="btn" data-action="extra-more">Show ${Math.min(200, page.total - page.rows.length)} more</button></div>` : '';
-  scroll.innerHTML = `${extraNote}${groupBar}<div class="epg-board" id="epgBoard">${head}${rows}<div class="epg-now hidden" id="epgNow"></div></div>${more}`;
+  scroll.innerHTML = `${extraNote || groupBar ? `<div class="epg-top">${extraNote}${groupBar}</div>` : ''}<div class="epg-board" id="epgBoard">${head}${rows}<div class="epg-now hidden" id="epgNow"></div></div>${more}`;
   hydrateIcons(scroll);
   positionNowLine();
 
@@ -3527,7 +3529,7 @@ PAGES.help = async (r, token) => {
       <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
     let html;
     try {
-      const res = await fetch('/static/help.html?v=25');
+      const res = await fetch('/static/help.html?v=26');
       if (!res.ok) throw new Error(res.status);
       html = await res.text();
     } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
@@ -4222,7 +4224,7 @@ async function deleteWatchedForShow(el) {
 
 // A Store copy: a version released that the Store doesn't offer yet (it waits for Microsoft's approval)
 function storeWaitText(u) {
-  return `TabloView ${u.published} is out (you have ${u.current}). The Microsoft Store will offer it once Microsoft has approved it, usually within a day or two. If it still doesn't after that, open the Store → Library → Get updates.`;
+  return `TabloView ${u.published} is out (you have ${u.current}). The Microsoft Store offers it once Microsoft has approved it, usually within a day or two, and it may already be there: open the Store → Library → Get updates to check.`;
 }
 
 function updateStatusHtml() {
@@ -4385,8 +4387,12 @@ const pictureShape = {
 // A broadcast can carry captions in two languages (CC1, and CC3: usually Spanish), and hls.js makes a
 // track of each. Only one is shown: CC1, the main one (hls.js calls it 'en' whatever its language).
 // Both shown were drawn over each other (a forum report, 2026-11-09: English and Spanish ghosting)
+// Each stream adds tracks of its own (hls.js never reuses a captions track, and a video's tracks
+// can't be removed): the newest is the one in use. The first, picked before, was an earlier stream's,
+// so captions stopped after a jump past what's converted, a resume, or the next recording, until
+// the page was reloaded (a forum user, NCIS: Origins, 2026-11-18)
 function captionTrack(video) {
-  const ts = [...video.textTracks];
+  const ts = [...video.textTracks].reverse();
   return ts.find(t => t.language === 'en') || ts[0] || null;
 }
 
@@ -5056,6 +5062,26 @@ const player = {
     return list.some(c => c.channel_id === state.stream.channelId) ? list : all;
   },
 
+  // Picking a second channel: any channel, not only those of the list the first came from (a
+  // playlist group's, say): favorites of every kind first, then that list, then the rest by kind
+  pickSections() {
+    const guide = (state.epg && state.epg.channels) || [];
+    const all = guide.filter(c => !c.hidden);
+    const seen = new Set([state.stream.channelId]);
+    const take = list => list.filter(c => !seen.has(c.channel_id) && seen.add(c.channel_id));
+    const mine = this.liveChannels();
+    const cat = state.epgCategory;
+    const named = [['favorites', 'Favorites'], ['extra', 'More'], ...EPG_CATS].find(([k]) => k === cat);
+    const here = mine === guide ? 'All channels' : cat === 'extra' && state.epgGroup ? state.epgGroup : named ? named[1] : 'Channels';
+    return [
+      ['Favorites', take(all.filter(c => c.favorite))],
+      [here, take(mine)],
+      ['Antenna', take(all.filter(c => c.kind === 'ota'))],
+      ['Streaming', take(all.filter(c => c.kind === 'fast'))],
+      ['More', take(all.filter(c => c.kind === 'extra'))],
+    ].filter(([, list]) => list.length);
+  },
+
   async toggleChannels(show) {
     const panel = $('#chanPanel');
     show = show === undefined ? panel.classList.contains('hidden') : show;
@@ -5075,7 +5101,7 @@ const player = {
   renderChannels() {
     const panel = $('#chanPanel');
     if (panel.classList.contains('hidden')) return;
-    const list = this.liveChannels();
+    const sections = dual.picking ? this.pickSections() : [['', this.liveChannels()]];
     const now = Date.now();
     const scroll = panel.querySelector('.chan-list');
     const top = scroll ? scroll.scrollTop : null;
@@ -5089,7 +5115,7 @@ const player = {
         <span>${dual.picking ? 'Pick a second channel' : dual.on ? `Change ${esc(dual.active === 'second' ? dual.s.name : state.stream.channelName)}` : 'Channels'}</span>${surfButtons}
         <button class="pb-btn" data-action="pb-channels" title="Close (C)">${icon('x', 16)}</button>
       </div>
-      <div class="chan-list">${list.length ? list.map(c => {
+      <div class="chan-list">${sections.length ? sections.map(([label, list]) => (label ? `<div class="chan-sec">${esc(label)}</div>` : '') + list.map(c => {
         const { num, name } = channelName(c);
         const { now: on, next } = nowNext(c, now);
         const start = on ? new Date(on.air_datetime).getTime() : 0;
@@ -5103,7 +5129,7 @@ const player = {
             ${next ? `<span class="chan-next">${esc(fmt.time(next.air_datetime))} ${esc(next.title)}</span>` : ''}
           </span>
         </button>`;
-      }).join('') : '<div class="dim" style="padding:20px">No channels in the guide yet.</div>'}</div>`;
+      }).join('')).join('') : '<div class="dim" style="padding:20px">No channels in the guide yet.</div>'}</div>`;
     hydrateIcons(panel);
     if (top !== null) panel.querySelector('.chan-list').scrollTop = top;
     if (focusedId) {
