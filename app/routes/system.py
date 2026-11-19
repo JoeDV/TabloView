@@ -45,6 +45,8 @@ class SettingsUpdate(BaseModel):
     export_format: Optional[Literal["smaller", "original"]] = None
     export_show_folders: Optional[bool] = None
     export_nfo: Optional[bool] = None
+    export_cut_breaks: Optional[bool] = None
+    tuner_enabled: Optional[bool] = None
     rerecord_failed: Optional[bool] = None
     skip_commercials: Optional[bool] = None
     skip_dropouts: Optional[bool] = None
@@ -494,8 +496,8 @@ async def update_settings(update: SettingsUpdate, request: Request):
     # Turning network access off from another device would lock every device out
     if "allow_lan" in changes and changes["allow_lan"] != load_settings().get("allow_lan"):
         _only_this_pc(request)
-    if "tailscale_no_pin" in changes:
-        _only_this_pc(request)  # who needs the PIN is decided on this PC only
+    if "tailscale_no_pin" in changes or "tuner_enabled" in changes:
+        _only_this_pc(request)  # who needs the PIN, and what answers without one, decided on this PC only
     for key in ("extra_playlist_url", "extra_guide_url"):
         if key in changes:
             # TabloView fetches these addresses itself: set on this PC only, and only web addresses
@@ -505,6 +507,9 @@ async def update_settings(update: SettingsUpdate, request: Request):
                 raise HTTPException(status_code=400, detail="That isn't a web address (it should start with http:// or https://).")
     needs_restart = "allow_lan" in changes and changes["allow_lan"] != load_settings().get("allow_lan")
     saved = save_settings(changes)
+    if "tuner_enabled" in changes:
+        from .. import tuner
+        await (tuner.start() if changes["tuner_enabled"] else tuner.stop())
     if "logo_style" in changes:
         from .live import _logo_style_cache
         _logo_style_cache["at"] = 0.0  # the next channel list uses the new logos
@@ -514,6 +519,16 @@ async def update_settings(update: SettingsUpdate, request: Request):
         asyncio.get_running_loop().call_later(0.5, restart)
     saved = {k: v for k, v in saved.items() if k not in PRIVATE_SETTINGS}
     return {**saved, "restarting": bool(restart), "restart_required": needs_restart and not restart}
+
+
+@router.get("/tuner")
+async def tuner_status():
+    """Settings → Live TV: the tuner for Plex and the others, and the addresses to give them."""
+    from .. import tuner
+    st = tuner.status()
+    ip = _lan_ip()
+    st["address"] = f"http://{ip}:{st['port']}" if ip else None
+    return st
 
 
 @router.get("/storage")

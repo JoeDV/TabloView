@@ -66,10 +66,13 @@ async def lifespan(app: FastAPI):
     unused_streams = asyncio.create_task(transcode_manager.abandoned_loop())
     from . import reminders
     reminder_check = asyncio.create_task(reminders.worker_loop())
+    from . import tuner
+    await tuner.start()  # the HDHomeRun-style tuner for Plex and the others, if turned on
 
     yield
 
     reminder_check.cancel()
+    await tuner.stop()
 
     auto_sync.cancel()
     ad_finder.cancel()

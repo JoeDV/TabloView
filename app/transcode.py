@@ -863,7 +863,8 @@ class TranscodeManager:
 
     @staticmethod
     def export_cmd(playlist_url: str, part_path: Path, enc: Optional[Dict[str, Any]],
-                   readrate: Optional[float] = EXPORT_READRATE, surround: bool = False) -> List[str]:
+                   readrate: Optional[float] = EXPORT_READRATE, surround: bool = False,
+                   cuts: Optional[List[Dict[str, float]]] = None) -> List[str]:
         """enc None: copy the broadcast video as is (largest, exact). Otherwise convert to H.264
         (deinterlaced, like playback), which is usually much smaller.
 
@@ -873,9 +874,32 @@ class TranscodeManager:
 
         Written as MPEG-TS first (part_path), then re-packaged as the MP4 (remux_cmd): an MP4 is only
         playable once FFmpeg closes it, and FFmpeg can't when the Tablo stops sending partway (an
-        export on Ubuntu sat at 97% for 47 minutes); a .ts is good up to wherever it stopped."""
-        video = (["-c:v", "copy"] if enc is None else
-                 ["-vf", "bwdif=mode=send_frame:deint=interlaced", *enc["args"], "-pix_fmt", enc["pix_fmt"]])
+        export on Ubuntu sat at 97% for 47 minutes); a .ts is good up to wherever it stopped.
+
+        cuts: commercial breaks to leave out while converting (enc only): the pieces between them are
+        joined before the encoder sees them, so every join starts cleanly, with any encoder. Cutting
+        the converted file afterwards left the first second after each break blocky (x264's forced
+        keyframe still let the next frames refer back past it; Jeopardy!, 2026-11-18)."""
+        deint = "bwdif=mode=send_frame:deint=interlaced"
+        mix = "aresample=async=1:ochl=5.1(side)" if surround else "aresample=async=1:ochl=stereo:clev=1.0:slev=0.6"
+        if enc is None:
+            video, audio_filter = ["-c:v", "copy"], ["-af", mix]
+        elif cuts:
+            pieces = TranscodeManager.kept_pieces(cuts)
+            n = len(pieces)
+            graph = [f"[0:v]{deint},split={n}" + "".join(f"[vs{i}]" for i in range(n)),
+                     f"[0:a]{mix},asplit={n}" + "".join(f"[as{i}]" for i in range(n))]
+            for i, (a, b) in enumerate(pieces):
+                span = f"start={a:.3f}" + (f":end={b:.3f}" if b is not None else "")
+                graph += [f"[vs{i}]trim={span},setpts=PTS-STARTPTS[v{i}]",
+                          f"[as{i}]atrim={span},asetpts=PTS-STARTPTS[a{i}]"]
+            graph.append("".join(f"[v{i}][a{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=1[v][a]")
+            video = ["-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[a]",
+                     *enc["args"], "-pix_fmt", enc["pix_fmt"]]
+            audio_filter = []
+        else:
+            video = ["-vf", deint, *enc["args"], "-pix_fmt", enc["pix_fmt"]]
+            audio_filter = ["-af", mix]
         return [
             FFMPEG_PATH,
             "-y",
@@ -885,8 +909,8 @@ class TranscodeManager:
             *(["-readrate", f"{readrate:g}"] if readrate else []),
             "-i", playlist_url,
             *video,
-            *(["-af", "aresample=async=1:ochl=5.1(side)", "-c:a", "aac", "-b:a", "384k", "-ac", "6"] if surround else
-              ["-af", "aresample=async=1:ochl=stereo:clev=1.0:slev=0.6", "-c:a", "aac", "-b:a", "192k", "-ac", "2"]),
+            *audio_filter,
+            *(["-c:a", "aac", "-b:a", "384k", "-ac", "6"] if surround else ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]),
             "-ar", "48000",
             "-f", "mpegts",
             str(part_path)
@@ -905,16 +929,80 @@ class TranscodeManager:
         return output_path.with_name(output_path.stem + ".part.ts")
 
     @staticmethod
-    def remux_cmd(part_path: Path, output_path: Path, tags: Optional[List[str]] = None) -> List[str]:
+    def export_breaks(episode: Optional[Dict[str, Any]]) -> List[Dict[str, float]]:
+        """The commercial breaks to leave out of this export: those TabloView found (less any the viewer
+        said were the show), when Settings asks for it. Otherwise none."""
+        if not episode or not load_settings().get("export_cut_breaks"):
+            return []
+        from .database import get_commercials
+        found = get_commercials([episode["id"]]).get(episode["id"]) or {}
+        if found.get("status") not in ("done", "unreliable"):
+            return []
+        return sorted((b for b in found.get("breaks") or [] if b["end"] - b["start"] >= 5), key=lambda b: b["start"])
+
+    @staticmethod
+    def kept_pieces(breaks: List[Dict[str, float]], length: float = 0) -> List[Tuple[float, Optional[float]]]:
+        """The parts of the recording between the breaks: (from, to) seconds; to is None for the rest."""
+        pieces: List[Tuple[float, Optional[float]]] = []
+        at = 0.0
+        for b in breaks:
+            if b["start"] - at >= 1:
+                pieces.append((at, b["start"]))
+            at = max(at, b["end"])
+        if not length or length - at >= 1:
+            pieces.append((at, None))
+        return pieces
+
+    @staticmethod
+    def cut_list(part_path: Path, pieces: List[Tuple[float, Optional[float]]], start_time: float) -> str:
+        """FFmpeg's concat list for the pieces of the .ts to keep. Its times are the file's own, which
+        start a little after 0 (start_time)."""
+        name = str(part_path).replace("'", "'\\''")
+        lines: List[str] = []
+        for a, b in pieces:
+            lines += [f"file '{name}'", f"inpoint {start_time + a:.3f}"]
+            if b is not None:
+                lines.append(f"outpoint {start_time + b:.3f}")
+        return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def remux_cmd(part_path: Path, output_path: Path, tags: Optional[List[str]] = None,
+                  cut_list_path: Optional[Path] = None) -> List[str]:
         """The finished (or salvaged) .ts as the MP4, without converting anything again, with the
         episode's details written in (export_tags)."""
-        return [FFMPEG_PATH, "-y", "-fflags", "+genpts", "-i", str(part_path), "-map", "0:v", "-map", "0:a?",
+        source = (["-f", "concat", "-safe", "0", "-i", str(cut_list_path)] if cut_list_path
+                  else ["-fflags", "+genpts", "-i", str(part_path)])
+        return [FFMPEG_PATH, "-y", *source, "-map", "0:v", "-map", "0:a?",
                 "-c", "copy", *(tags or []), "-movflags", "+faststart", str(output_path)]
 
-    async def _remux(self, part_path: Path, output_path: Path, tags: Optional[List[str]] = None) -> Optional[str]:
-        """Re-package the .ts as the MP4; None if it worked, otherwise why not."""
+    @staticmethod
+    def ts_start_time(path: Path) -> float:
+        """Where a .ts file's timestamps start (FFmpeg's own start at about 1.4 s)."""
+        try:
+            err = subprocess.run([FFMPEG_PATH, "-hide_banner", "-i", str(path)], capture_output=True, text=True,
+                                 timeout=30, creationflags=NO_WINDOW).stderr
+        except Exception:
+            return 0.0
+        m = re.search(r"start: (-?\d+(?:\.\d+)?)", err)
+        return float(m.group(1)) if m else 0.0
+
+    async def _remux(self, part_path: Path, output_path: Path, tags: Optional[List[str]] = None,
+                     breaks: Optional[List[Dict[str, float]]] = None, length: float = 0) -> Optional[str]:
+        """Re-package the .ts as the MP4, without the breaks if given; None if it worked, otherwise why not."""
         def run() -> Optional[str]:
-            proc = subprocess.Popen(self.remux_cmd(part_path, output_path, tags), stdout=subprocess.DEVNULL,
+            cut_path = None
+            if breaks:
+                cut_path = part_path.with_name(part_path.stem + ".cuts.txt")
+                cut_path.write_text(self.cut_list(part_path, self.kept_pieces(breaks, length),
+                                                  self.ts_start_time(part_path)), encoding="utf-8")
+            try:
+                return run_remux(cut_path)
+            finally:
+                if cut_path:
+                    cut_path.unlink(missing_ok=True)
+
+        def run_remux(cut_path: Optional[Path]) -> Optional[str]:
+            proc = subprocess.Popen(self.remux_cmd(part_path, output_path, tags, cut_path), stdout=subprocess.DEVNULL,
                                     stderr=subprocess.PIPE, creationflags=NO_WINDOW, **childproc.popen_kwargs())
             childproc.tie_to_app(proc)
             _, err = proc.communicate()
@@ -960,10 +1048,17 @@ class TranscodeManager:
         from . import export_pace
         surround = await self.export_surround(playlist_url)
         relay = export_pace.open_relay(playlist_url)  # TabloView paces it; or directly at EXPORT_READRATE
+        # Commercial breaks to leave out: while converting (enc), or from the copy once it's saved (below)
+        cut_now = self.export_breaks(episode) if enc else []
         cmd = self.export_cmd(relay.url if relay else playlist_url, part_path, enc, None if relay else EXPORT_READRATE,
-                              surround=surround)
+                              surround=surround, cuts=cut_now)
+        if cut_now:
+            # FFmpeg's time= counts what's written: the recording without its breaks
+            left_out = sum(max(0.0, min(b["end"], expected_duration or b["end"]) - b["start"]) for b in cut_now)
+            expected_duration = max(60, int(expected_duration - left_out)) if expected_duration else 0
         print(f"[ExportWorker] Starting export {job_id} -> {output_path.name} "
-              f"({enc['label'] if enc else 'original video'}, {'5.1' if surround else 'stereo'} sound)")
+              f"({enc['label'] if enc else 'original video'}, {'5.1' if surround else 'stereo'} sound"
+              f"{f', leaving out {len(cut_now)} commercial breaks' if cut_now else ''})")
         save_export_job({"job_id": job_id, "status": "downloading", "progress": 0.0, "error": None})
         # Send FFmpeg's chatty stderr to a log file instead of an unread pipe,
         # which would fill up and stall long exports
@@ -1037,7 +1132,14 @@ class TranscodeManager:
                     output_path = self.free_export_path(output_path.parent, output_path.name)
                     save_export_job({"job_id": job_id, "status": "downloading", "progress": 99.0,
                                      "filename": output_path.name, "filepath": str(output_path)})
-                remux_error = await self._remux(part_path, output_path, self.export_tags(episode) if episode else None)
+                # Original video: the breaks are cut from the saved copy here, at the broadcast's own full
+                # pictures (a converted export left them out already)
+                cuts = [] if enc else self.export_breaks(episode)
+                if cuts:
+                    print(f"[ExportWorker] Export {job_id}: leaving out {len(cuts)} commercial breaks "
+                          f"({round(sum(b['end'] - b['start'] for b in cuts))} s)")
+                remux_error = await self._remux(part_path, output_path, self.export_tags(episode) if episode else None,
+                                                cuts, expected_duration)
                 if remux_error:
                     print(f"[ExportWorker] Export {job_id}: couldn't make the MP4: {remux_error}")
                     output_path.unlink(missing_ok=True)

@@ -17,7 +17,8 @@ import asyncio
 import shutil
 from typing import Dict, List
 
-from .database import get_auto_exports, get_episodes_by_show, get_export_job, save_auto_export
+from . import commercials
+from .database import get_auto_exports, get_commercials, get_episodes_by_show, get_export_job, save_auto_export
 from .settings import exports_dir, load_settings, save_settings
 
 TRIES = 3
@@ -105,10 +106,17 @@ async def run_once() -> None:
     if not shows or _low_space():
         return
     known = get_auto_exports(shows)
+    # Exports without the commercials: wait until TabloView has looked for this recording's breaks
+    # (it does once a recording has finished, for shows with Skip commercials on)
+    cutting = load_settings().get("export_cut_breaks")
+    finding = set(commercials.enabled_shows()) if cutting else set()
     for show_id in shows:
+        looked = get_commercials([ep["id"] for ep in get_episodes_by_show(show_id)]) if show_id in finding else {}
         for ep in get_episodes_by_show(show_id):
             r = known.get(ep["id"])
             if ep.get("recording_state") != "finished" or (r and r["state"] != "pending"):
+                continue
+            if show_id in finding and ep["id"] not in looked:
                 continue
             job = await transcode_manager.start_mp4_export(ep, tablo_manager.playlist_getter(ep["path"]))
             save_auto_export(ep["id"], show_id, "queued", job, tries=(r["tries"] if r else 0) + 1)

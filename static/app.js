@@ -2781,6 +2781,31 @@ function renderEpgKeepingPlace() {
 }
 
 // Settings → Live TV: what the playlist and guide gave
+// Settings → Live TV: the addresses to give Plex, Jellyfin, Emby and Channels DVR, once it's on
+async function showTuner() {
+  const el = $('#hdhrPanel');
+  if (!el) return;
+  let t;
+  try { t = await api('/api/tuner'); } catch (err) { el.innerHTML = `<div class="set-sub">${esc(err.message)}</div>`; return; }
+  if (!t.enabled) { el.innerHTML = ''; return; }
+  if (t.error) { el.innerHTML = `<div class="set-sub" style="color:var(--rec)">${esc(t.error)}</div>`; return; }
+  const a = t.address || `http://<this PC's address>:${t.port}`;
+  const code = s => `<code class="path-box">${esc(s)}</code>`;
+  const watching = (t.streams || []).length
+    ? `<div class="set-sub">In use now: ${t.streams.map(s => `${esc(s.channel)} (${esc(s.client)})`).join(', ')}</div>` : '';
+  el.innerHTML = `
+    <div class="set-row set-row-stack"><div class="set-text">
+      <div class="set-label">Plex <span class="dim">(Live TV & DVR needs Plex Pass)</span></div>
+      <div class="set-desc">Settings → Live TV & DVR → Set up Plex DVR. When it looks for a tuner, choose to enter its address yourself: ${code(a.replace(/^http:\/\//, ''))}. For the guide, choose to use an XMLTV guide and enter ${code(`${a}/xmltv.xml`)}.</div></div></div>
+    <div class="set-row set-row-stack"><div class="set-text">
+      <div class="set-label">Jellyfin or Emby</div>
+      <div class="set-desc">Dashboard → Live TV → add a tuner device, type HDHomeRun: ${code(a)}. Then add a TV guide provider, type XMLTV: ${code(`${a}/xmltv.xml`)}.</div></div></div>
+    <div class="set-row set-row-stack"><div class="set-text">
+      <div class="set-label">Channels DVR, TiviMate and other playlist apps</div>
+      <div class="set-desc">Add an M3U source: ${code(`${a}/lineup.m3u`)} (its guide is listed inside it, or use ${code(`${a}/xmltv.xml`)}).</div></div></div>
+    ${watching}`;
+}
+
 async function showExtraStatus() {
   const el = $('#extraStatus');
   if (!el || !$('#extraPlaylist').value.trim()) { if (el) el.textContent = ''; return; }
@@ -3529,7 +3554,7 @@ PAGES.help = async (r, token) => {
       <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
     let html;
     try {
-      const res = await fetch('/static/help.html?v=26');
+      const res = await fetch('/static/help.html?v=28');
       if (!res.ok) throw new Error(res.status);
       html = await res.text();
     } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
@@ -3770,6 +3795,11 @@ PAGES.settings = async (r, token) => {
         </div>
       </div>`);
 
+  // Your Tablo as a tuner in Plex, Jellyfin, Emby or Channels DVR (app/tuner.py)
+  const tunerCard = setCard('Use your Tablo in Plex, Jellyfin or Channels DVR', 'TabloView answers like an HDHomeRun tuner, so those apps can show and record your antenna channels.', `
+      ${setSwitch('Share your antenna channels with other apps', 'Only this PC and devices on your home network can use it. Each channel they watch or record uses one of your Tablo’s tuners, and this PC must be on with TabloView running.', 'tuner-enabled', settings.tuner_enabled)}
+      <div id="hdhrPanel"></div>`);
+
   // ---- Storage & exports
   const exports = setCard('Exports', 'Recordings saved as MP4 files: Export MP4 in a recording’s ⋯ menu. They’re listed under Downloads.', `
       ${setRow('Format', 'Smaller is H.264, about 2.2 GB per hour of HD, and plays almost anywhere. Original is the broadcast exactly as recorded, about 3.2 GB per hour.',
@@ -3785,6 +3815,7 @@ PAGES.settings = async (r, token) => {
         </div>
       </div>
       ${setSwitch('Sort into show and season folders', 'Show\\Season 01\\Show - S01E02 - Title.mp4, the layout Plex, Jellyfin and Kodi expect. Every export also carries its title, episode, description and air date.', 'export-show-folders', settings.export_show_folders)}
+      ${setSwitch('Leave out commercial breaks', 'Exports skip the breaks TabloView found, for shows with Skip commercials on. Your original recording stays on the Tablo, untouched, so if a break was found wrong you can export it again in full.', 'export-cut', settings.export_cut_breaks)}
       ${setSwitch('Save an .nfo file with each export', 'Details beside the video for Jellyfin, Emby and Kodi (Plex doesn’t read them).', 'export-nfo', settings.export_nfo)}`);
 
   const drives = setCard('Your Tablo’s storage', storage.connected ? `${fmt.size(storage.used_gb)} of ${fmt.size(storage.total_gb)} used` : 'Unavailable', (storage.almost_full
@@ -3851,7 +3882,7 @@ PAGES.settings = async (r, token) => {
     general: ['General', 'Your Tablo, keeping the library up to date, and how TabloView looks.', tablo + library + appearance],
     playback: ['Playback', 'Picture and what happens as you watch.', picture + watching],
     commercials: ['Commercials & dropouts', 'Finding and skipping commercial breaks, and parts a weak signal broke up.', skipping + finding],
-    live: ['Live TV', 'Channels beyond your Tablo’s.', more],
+    live: ['Live TV', 'Channels beyond your Tablo’s, and your Tablo’s in other apps.', more + tunerCard],
     storage: ['Storage & exports', 'Saving recordings as MP4 files, and what’s using your Tablo’s space.', exports + drives + spaceByShowPanel(space, storage.connected ? storage.used_gb : 0)],
     plex: ['Plex', 'Exports showing up in Plex right away.', '<section class="set-card" id="plexPanel"><header class="set-card-head"><h3>Plex</h3><p><span class="spinner"></span></p></header></section>'],
     desktop: ['Desktop & network', 'This PC, your network, and other devices using TabloView.', thisPc + networkPanel() + access],
@@ -3889,7 +3920,7 @@ PAGES.settings = async (r, token) => {
   const loaders = {
     plex: () => loadPlex(token),
     desktop: () => Promise.all([loadNetwork(token), loadLanActivity(token), info.listening_on_network ? loadLanAccess(token, info) : null]),
-    live: () => showExtraStatus(),
+    live: () => Promise.all([showExtraStatus(), showTuner()]),
   };
   const loaded = new Set();
   const load = sid => {
@@ -6654,6 +6685,19 @@ const CHANGES = {
     try {
       await api('/api/settings', { method: 'POST', body: JSON.stringify({ tailscale_no_pin: el.checked }) });
       toast(el.checked ? 'Devices on your Tailscale won’t be asked for the PIN' : 'Devices on your Tailscale need the PIN again');
+    } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
+  },
+  'tuner-enabled': async el => {
+    try {
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ tuner_enabled: el.checked }) });
+      toast(el.checked ? 'Your antenna channels are shared with Plex and other apps on your network' : 'Your antenna channels are no longer shared');
+      showTuner();
+    } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
+  },
+  'export-cut': async el => {
+    try {
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ export_cut_breaks: el.checked }) });
+      toast(el.checked ? 'New exports will leave out the commercial breaks' : 'New exports will keep the commercial breaks');
     } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
   },
   'export-nfo': async el => {

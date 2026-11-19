@@ -44,6 +44,10 @@ DEFAULTS: Dict[str, Any] = {
     "export_folder": None,  # where MP4 exports go; None = DOWNLOADS_DIR (Downloads\TabloView)
     "export_show_folders": False,  # exports go in Show\Season 01\ folders (the layout Plex, Jellyfin and Kodi expect)
     "export_nfo": False,  # a Kodi-style .nfo file beside each export (Jellyfin, Emby, Kodi read them)
+    "tuner_enabled": False,  # answer as an HDHomeRun for Plex, Jellyfin, Emby, Channels DVR (app/tuner.py)
+    "tuner_port": 5004,
+    "tuner_device_id": "",  # made once (tuner.device_id)
+    "export_cut_breaks": False,  # exports leave out the commercial breaks TabloView found (the recording keeps them)
     "plex_client_id": None,  # TabloView's id with Plex (app/plex.py)
     "plex_token": None,  # the Plex account's token, from Plex's sign-in (never shown or logged)
     "plex_server": None,  # {id, name, uri, token}: the Plex server new exports are scanned in

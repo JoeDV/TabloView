@@ -87,6 +87,15 @@
     <li><b>Signal meter:</b> on antenna channels, a badge beside the channel name shows how much of the picture is arriving intact. Click it for the last 5 minutes.</li>
   </ul>
   <p><b>Two channels at once:</b> press <kbd>2</kbd> (or the two-rectangles button) and pick a second channel from any list: your favorites, the list you're watching from, antenna, streaming and More. <kbd>Tab</kbd> switches which one you hear, and <kbd>V</kbd> changes the layout: side by side, big and small, or one full screen. Each channel has its own <b>CC</b> button on its picture: the silent one shows captions unless you turn them off (handy when they cover a game's score). Each channel uses its own tuner.</p>
+
+  <h3>Your Tablo in Plex, Jellyfin, Emby or Channels DVR</h3>
+  <p>Those apps can't use a 4th Gen Tablo by themselves. Turn on <a href="#/settings?tab=live">Settings → Live TV</a> → <b>Share your antenna channels with other apps</b>, and TabloView answers like an HDHomeRun tuner: the apps can then show your antenna channels and record them to their own storage. Settings shows the exact addresses to enter in each app.</p>
+  <ul>
+    <li><b>Plex</b> (Live TV &amp; DVR needs Plex Pass): set up Plex DVR, enter the tuner's address yourself (this PC's address and <code>:5004</code>), then use an XMLTV guide at that address plus <code>/xmltv.xml</code>. If Plex won't take the web address, save the guide as a file on the Plex server and give it that file.</li>
+    <li><b>Jellyfin or Emby</b>: add an HDHomeRun tuner with the address, and an XMLTV guide provider.</li>
+    <li><b>Channels DVR, TiviMate and other playlist apps</b>: add the M3U playlist at the address plus <code>/lineup.m3u</code>.</li>
+  </ul>
+  <p>Each channel the apps watch or record uses one of your Tablo's tuners, as live TV in TabloView does, and the picture is passed on exactly as the Tablo sends it. The guide is your Tablo's own, about two weeks ahead. Only this PC and devices on your home network get an answer; this PC needs to be on with TabloView running.</p>
 </section>
 
 <section id="help-recording">
@@ -191,6 +200,7 @@
       <tr><td>Format</td><td><b>Smaller</b>: H.264, about 2.2 GB per hour of HD, plays almost anywhere. <b>Original</b>: the broadcast exactly as recorded, about 3.2 GB per hour</td></tr>
       <tr><td>Save exports to</td><td>Downloads\TabloView, or a folder you choose with <b>Change…</b></td></tr>
       <tr><td>Show and season folders</td><td>Off: every export in one folder. On: <code>Show\Season 01\Show - S01E02 - Title.mp4</code>, the layout Plex, Jellyfin and Kodi expect</td></tr>
+      <tr><td>Leave out commercial breaks</td><td>Off: the whole recording. On: the MP4 skips the breaks TabloView found (shows with Skip commercials on). If a break was found wrong, that part of the show is left out too, but the recording on your Tablo is never changed: turn this off and export again for the full version. Automatic exports wait until the breaks have been found</td></tr>
       <tr><td>.nfo files</td><td>A small file beside each export with its details, for Jellyfin, Emby and Kodi (Plex doesn't use them)</td></tr>
     </tbody>
   </table>
