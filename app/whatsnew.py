@@ -13,6 +13,14 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.3.9": [
+        "Use your Tablo in Plex, Jellyfin, Emby or Channels DVR: turn on Settings → Live TV → Share your antenna channels with other apps, and TabloView answers like an HDHomeRun tuner, with your Tablo's guide. Settings shows the address to enter in each app. Each channel they watch or record uses one of your Tablo's tuners.",
+        "Exports without the commercials: turn on Settings → Storage & exports → Leave out commercial breaks, and MP4 exports skip the breaks TabloView found. Your recording on the Tablo isn't changed, so you can always export it again in full.",
+        "Two channels at once: Add a channel now lists every channel, your favorites first, then the list you're watching from, then the rest. On a TV, ◀ ▶ jump a list at a time.",
+        "Live TV → More: channel names have about three times the room, and Show the hidden channels sits beside the group picker.",
+        "Microsoft Store copies check every half hour for an update that's waiting on Microsoft, and Settings → About & diagnostics shows where your settings really are.",
+        "Fixed: captions stopped after jumping ahead, resuming later or going back into a recording, until the page was reloaded.",
+    ],
     "1.3.8": [
         "Guide → For you: shows coming up on your antenna channels that you aren't recording yet, picked to suit the series you do record, each with a line on why. New series and new seasons are listed first, under Premiering soon. With a Claude key, Claude picks them; without one, they're matched by genre.",
         "Live TV → More: pick one of your playlist's groups from the list above the channels, or hide a whole group you never watch. On a TV, More opens on the groups.",
