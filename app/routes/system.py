@@ -16,7 +16,7 @@ from typing import List, Literal, Optional
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from ..config import APP_NAME, APP_VERSION, IS_PACKAGED, IS_STORE, FFMPEG_PATH, HOME_DIR, DOWNLOADS_DIR
+from ..config import APP_NAME, APP_VERSION, IS_PACKAGED, IS_STORE, FFMPEG_PATH, HOME_DIR, DOWNLOADS_DIR, real_home_dir
 from ..settings import load_settings, save_settings, exports_dir
 from ..updates import check_for_update
 from .. import background, backup, commercials, dropouts, encoders, lanauth, netcheck, notifications, presence, startup, whatsnew
@@ -120,7 +120,7 @@ async def system_info(request: Request):
         "listening_on_network": host not in ("127.0.0.1", "localhost") if host else None,
         "network_url": f"http://{lan_ip}:{port}" if lan_ip and port else None,
         "lan_pin_set": lanauth.pin_set(),
-        "data_dir": str(HOME_DIR),
+        "data_dir": str(real_home_dir()),
         "downloads_dir": str(exports_dir()),
         "default_downloads_dir": str(DOWNLOADS_DIR),
         # The page is open on the computer running TabloView (only that one may stop it)

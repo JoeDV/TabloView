@@ -67,6 +67,21 @@ else:
     HOME_DIR = Path(os.getenv("TABLOVIEW_HOME") or BASE_DIR)
     DOWNLOADS_DIR = HOME_DIR / "downloads"
 
+
+def real_home_dir() -> Path:
+    """Where HOME_DIR really is, to show people. A Store copy's writes to its AppData\\Local folder are
+    redirected by Windows to the package's own LocalCache\\Local, so the path TabloView uses doesn't
+    exist in File Explorer (a forum user, Store 1.3.8, looking for settings.json)."""
+    if IS_STORE and IS_PACKAGED and not os.getenv("TABLOVIEW_HOME"):
+        try:
+            redirected = _local / "Packages" / STORE_PACKAGE / "LocalCache" / "Local" / HOME_DIR.relative_to(_local)
+            if redirected.is_dir():
+                return redirected
+        except ValueError:
+            pass
+    return HOME_DIR
+
+
 DATA_DIR = HOME_DIR / "data"
 TRANSCODE_DIR = HOME_DIR / "transcode"
 LOG_DIR = HOME_DIR / "logs"
