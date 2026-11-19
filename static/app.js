@@ -2796,13 +2796,16 @@ async function showTuner() {
   el.innerHTML = `
     <div class="set-row set-row-stack"><div class="set-text">
       <div class="set-label">Plex <span class="dim">(Live TV & DVR needs Plex Pass)</span></div>
-      <div class="set-desc">Settings → Live TV & DVR → Set up Plex DVR. When it looks for a tuner, choose to enter its address yourself: ${code(a.replace(/^http:\/\//, ''))}. For the guide, choose to use an XMLTV guide and enter ${code(`${a}/xmltv.xml`)}.</div></div></div>
+      <div class="set-desc">Settings → Live TV & DVR → Set up Plex DVR. When it looks for a tuner, choose to enter its address yourself: ${code(a.replace(/^http:\/\//, ''))}. For the guide, Plex's own listings for your ZIP code work, or to use your Tablo's, choose an XMLTV guide and enter ${code(`${a}/xmltv.xml`)}.</div></div></div>
     <div class="set-row set-row-stack"><div class="set-text">
       <div class="set-label">Jellyfin or Emby</div>
       <div class="set-desc">Dashboard → Live TV → add a tuner device, type HDHomeRun: ${code(a)}. Then add a TV guide provider, type XMLTV: ${code(`${a}/xmltv.xml`)}.</div></div></div>
     <div class="set-row set-row-stack"><div class="set-text">
       <div class="set-label">Channels DVR, TiviMate and other playlist apps</div>
       <div class="set-desc">Add an M3U source: ${code(`${a}/lineup.m3u`)} (its guide is listed inside it, or use ${code(`${a}/xmltv.xml`)}).</div></div></div>
+    <div class="set-row set-row-stack"><div class="set-text">
+      <div class="set-label">Roku Media Player, VLC, Kodi and smart TVs</div>
+      <div class="set-desc">Nothing to type: look for <b>TabloView</b> among the media servers on your network (in VLC, View → Playlist → Local Network → Universal Plug'n'Play), open Live TV and pick a channel. There's no guide there, just each channel and what's on it now.${t.dlna && t.dlna.error ? ` <span style="color:var(--rec)">Players can't find it right now: ${esc(t.dlna.error)}</span>` : ''}</div></div></div>
     <div class="set-sub">${icon('alert', 14)} These addresses use this PC's network address, which your router can change after a restart, and then the apps lose the tuner. To keep it, reserve this PC's address in your router's settings (often called DHCP reservation or a fixed IP).</div>
     ${watching}`;
 }
@@ -3555,7 +3558,7 @@ PAGES.help = async (r, token) => {
       <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
     let html;
     try {
-      const res = await fetch('/static/help.html?v=29');
+      const res = await fetch('/static/help.html?v=30');
       if (!res.ok) throw new Error(res.status);
       html = await res.text();
     } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
@@ -3797,7 +3800,7 @@ PAGES.settings = async (r, token) => {
       </div>`);
 
   // Your Tablo as a tuner in Plex, Jellyfin, Emby or Channels DVR (app/tuner.py)
-  const tunerCard = setCard('Use your Tablo in Plex, Jellyfin or Channels DVR', 'TabloView answers like an HDHomeRun tuner, so those apps can show and record your antenna channels.', `
+  const tunerCard = setCard('Use your Tablo in Plex, Jellyfin, Roku and other apps', 'TabloView answers like an HDHomeRun tuner and a home media server, so those apps can show your antenna channels, and Plex, Jellyfin and Channels DVR can record them.', `
       ${setSwitch('Share your antenna channels with other apps', 'Only this PC and devices on your home network can use it. Each channel they watch or record uses one of your Tablo’s tuners, and this PC must be on with TabloView running.', 'tuner-enabled', settings.tuner_enabled)}
       <div id="hdhrPanel"></div>`);
 

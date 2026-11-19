@@ -59,6 +59,14 @@ class TunerTests(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("-f") + 1], "mpegts")
         self.assertEqual(cmd[-1], "pipe:1")
 
+    def test_converted_for_players_that_cant_play_mpeg2(self):
+        enc = {"name": "cpu", "label": "CPU", "args": ["-c:v", "libx264"], "pix_fmt": "yuv420p"}
+        cmd = tuner.stream_cmd("http://tablo/pl.m3u8", enc)
+        self.assertEqual(cmd[cmd.index("-c:v") + 1], "libx264")
+        self.assertEqual(cmd[cmd.index("-c:a") + 1], "aac")
+        self.assertNotIn("copy", cmd)
+        self.assertEqual(cmd[-1], "pipe:1")
+
     def test_guide_is_xmltv(self):
         airings = [
             {"show_title": "Jeopardy!", "episode_title": "Tournament <1>", "season_number": 42, "episode_number": 50,

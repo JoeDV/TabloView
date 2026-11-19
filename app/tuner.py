@@ -6,6 +6,7 @@ would, on a port of its own (TUNER_PORT), and hands each channel over as the Tab
   /auto/v<number>       the channel (6.1...) as a plain MPEG-TS stream, copied: no converting
   /xmltv.xml            the guide, from the Tablo's own listings (about 12 days)
   /lineup.m3u           the channels as a playlist (Channels DVR's M3U source, TiviMate...)
+  /dlna/...             the same channels as a DLNA media server (app/dlna.py: Roku Media Player, VLC...)
 
 Off unless turned on (settings "tuner_enabled"). It answers only this PC and the home network:
 those apps can't type TabloView's PIN, and a real HDHomeRun asks for nothing either. Each stream
@@ -20,7 +21,7 @@ import secrets
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from xml.sax.saxutils import escape, quoteattr
 
 from fastapi import FastAPI, HTTPException, Request
@@ -239,15 +240,29 @@ async def image(image_id: str):
     return await get_tablo_image(image_id)
 
 
-def stream_cmd(playlist_url: str) -> List[str]:
-    """The channel as the Tablo sends it, picture and every sound track, re-wrapped as MPEG-TS for
-    the app reading it: nothing converted (captions stay in the picture)."""
-    return [FFMPEG_PATH, "-hide_banner", "-loglevel", "error", "-fflags", "+discardcorrupt",
-            "-i", playlist_url, "-map", "0:v:0", "-map", "0:a?", "-c", "copy", "-f", "mpegts", "pipe:1"]
+def stream_cmd(playlist_url: str, enc: Optional[Dict[str, Any]] = None) -> List[str]:
+    """The channel as the Tablo sends it (MPEG-2 video, AC-3 sound), picture and every sound track,
+    re-wrapped as MPEG-TS for the app reading it: nothing converted (captions stay in the picture).
+    Plex, Jellyfin and the others convert it themselves when a player needs that.
+
+    enc (app/encoders.py): converted instead, to H.264 and stereo AAC, for DLNA players that can't
+    play MPEG-2 (most Rokus), deinterlaced as for playback in TabloView."""
+    head = [FFMPEG_PATH, "-hide_banner", "-loglevel", "error", "-fflags", "+discardcorrupt", "-i", playlist_url]
+    if enc is None:
+        return [*head, "-map", "0:v:0", "-map", "0:a?", "-c", "copy", "-f", "mpegts", "pipe:1"]
+    return [*head, "-map", "0:v:0", "-map", "0:a:0?", "-vf", "bwdif=mode=send_frame:deint=interlaced,fps=30000/1001",
+            *enc["args"], "-pix_fmt", enc["pix_fmt"], "-force_key_frames", "expr:gte(t,n_forced*2)",
+            "-af", "aresample=async=1:ochl=stereo:clev=1.0:slev=0.6", "-c:a", "aac", "-b:a", "192k", "-ac", "2",
+            "-ar", "48000", "-f", "mpegts", "pipe:1"]
 
 
 @app.get("/auto/v{number}")
-async def channel_stream(number: str, request: Request):
+async def auto_stream(number: str, request: Request):
+    return await channel_stream(number, request)
+
+
+async def channel_stream(number: str, request: Request, convert: bool = False):
+    """A channel, tuned on the Tablo, as MPEG-TS: copied, or converted (convert, for DLNA)."""
     from tablo_api import TabloClient
     from .routes.live import all_tuners_busy_message
     from .tablo_client import tablo_manager
@@ -266,12 +281,17 @@ async def channel_stream(number: str, request: Request):
         print(f"[Tuner] Couldn't tune {number} for {request.client.host if request.client else '?'}: {e}")
         busy = await all_tuners_busy_message()
         raise HTTPException(status_code=503, detail=busy or "The Tablo couldn't tune that channel")
-    proc = subprocess.Popen(stream_cmd(watch.playlist_url), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    enc = None
+    if convert:
+        from . import encoders
+        enc = encoders.choose(load_settings().get("video_quality") or "auto")
+    proc = subprocess.Popen(stream_cmd(watch.playlist_url, enc), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                             creationflags=NO_WINDOW, **childproc.popen_kwargs())
     childproc.tie_to_app(proc)
     who = request.client.host if request.client else "?"
     streams[proc.pid] = {"channel": f"{number} {c['name']}", "client": who, "since": time.time()}
-    print(f"[Tuner] {number} {c['name']} to {who}")
+    how = f" (converted, {enc['label']})" if enc else ""
+    print(f"[Tuner] {number} {c['name']} to {who}{how}")
 
     async def body():
         try:
@@ -327,9 +347,11 @@ async def start() -> None:
     await asyncio.sleep(0.5)
     if server.started:
         print(f"[Tuner] Answering as an HDHomeRun on port {port}")
+        await dlna.start(port)  # and as a media server for Roku Media Player, VLC, Kodi...
 
 
 async def stop() -> None:
+    await dlna.stop()
     server, task = _server.get("server"), _server.get("task")
     if server:
         server.should_exit = True
@@ -343,4 +365,7 @@ def status() -> Dict[str, Any]:
     server = _server.get("server")
     return {"enabled": bool(load_settings().get("tuner_enabled")), "running": bool(server and server.started),
             "port": _server.get("port") or int(load_settings().get("tuner_port") or TUNER_PORT),
-            "error": _server.get("error"), "streams": list(streams.values())}
+            "error": _server.get("error"), "streams": list(streams.values()), "dlna": dlna.status()}
+
+
+from . import dlna  # noqa: E402  (its pages are added to this app)
