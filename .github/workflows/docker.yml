@@ -1,0 +1,43 @@
+# Builds the Docker image (Dockerfile, DOCKER.md) on every push, and checks that TabloView starts in
+# it with FFmpeg working. Nothing is published.
+name: Docker image
+
+on:
+  push:
+    branches: [main]
+    paths: [Dockerfile, .dockerignore, requirements.txt, "app/**", "static/**", .github/workflows/docker.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: docker build -t tabloview:test .
+
+      - name: FFmpeg is there
+        run: docker run --rm tabloview:test ffmpeg -hide_banner -version
+
+      - name: TabloView starts
+        run: |
+          docker run -d --name tv -e TABLOVIEW_NETWORK=1 -e TABLOVIEW_PIN=2468 tabloview:test
+          for i in $(seq 30); do
+            if docker exec tv python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7070/api/system/info', timeout=3)"; then
+              echo "Answering after about $((i * 2)) s"; ok=1; break
+            fi
+            sleep 2
+          done
+          docker logs tv
+          # The environment setup ran (network access and the PIN)
+          docker logs tv 2>&1 | grep -q "Network access turned on" && docker logs tv 2>&1 | grep -q "PIN set from TABLOVIEW_PIN"
+          [ "$ok" = 1 ]
+
+      - name: Clean up
+        if: always()
+        run: docker rm -f tv || true
