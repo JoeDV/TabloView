@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response, JSONResponse
 from .config import (
     APP_NAME, APP_VERSION, BASE_DIR, RESOURCE_DIR, STATIC_DIR, TRANSCODE_DIR, DOWNLOADS_DIR, IMAGE_CACHE_DIR, HOST, PORT,
 )
-from . import autoexport, background, commercials, dropouts, encoders, export_pace, lanauth, netcheck, redact, streaming, whatsnew
+from . import autoexport, background, commercials, container, dropouts, encoders, export_pace, lanauth, netcheck, redact, streaming, whatsnew
 from .settings import exports_dir
 from .database import get_export_jobs, fail_interrupted_exports
 from .database import init_db
@@ -40,6 +40,10 @@ async def lifespan(app: FastAPI):
     whatsnew.init()
     # Find out once which graphics-chip video encoder works here, before the first playback
     encoders.detect_in_background()
+
+    # A server without a screen (Docker): sign-in, network access and PIN from environment variables
+    container.apply_settings()
+    await container.sign_in()
 
     # If credentials/device already loaded, kick off an initial library sync in background
     # (sync_library starts the guide sync itself once it finishes)

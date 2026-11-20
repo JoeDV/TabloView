@@ -17,6 +17,7 @@ network access off, other devices get nothing at all, however TabloView was star
 import hashlib
 import hmac
 import ipaddress
+import os
 import json
 import re
 import secrets
@@ -57,6 +58,7 @@ PROXY_HEADERS = ("forwarded", "x-forwarded-for", "x-forwarded-host", "x-real-ip"
 
 
 _own: Dict[str, object] = {"addresses": frozenset(), "at": float("-inf")}
+_TAILSCALE_NETS = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
 
 
 def own_addresses(max_age: float = 60) -> frozenset:
@@ -82,7 +84,26 @@ def is_local(client_host: Optional[str], headers: Optional[Mapping[str, str]] = 
         ip = ipaddress.ip_address(client_host or "")
     except ValueError:
         return False
-    return ip.is_loopback or str(ip) in own_addresses()
+    return ip.is_loopback or str(ip) in own_addresses() or trusted_device(ip)
+
+
+def trusted_device(ip) -> bool:
+    """On a server without a screen (Docker), TABLOVIEW_ADMIN lists the devices that count as this PC
+    (addresses or ranges, comma-separated: "192.168.1.50, 192.168.1.0/24"), so the settings only
+    this PC may change can be changed at all. Home-network addresses only: never Tailscale's or the
+    internet's, whatever the list says."""
+    listed = (os.getenv("TABLOVIEW_ADMIN") or "").strip()
+    if not listed or not (ip.is_private and not ip.is_loopback):
+        return False
+    if any(ip in net for net in _TAILSCALE_NETS if net.version == ip.version):
+        return False
+    for part in listed.split(","):
+        try:
+            if ip in ipaddress.ip_network(part.strip(), strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 def client_address(request) -> Optional[str]:

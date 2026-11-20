@@ -21,7 +21,7 @@ To uninstall, use **Settings → Apps → Installed apps → TabloView**. The in
 
 ### Mac and Linux
 
-There's no Mac or Linux package yet, but TabloView runs from its source code with a start script that sets everything up. Download **`TabloView-<version>-mac.zip`** or **`TabloView-<version>-linux.tar.gz`** from the [latest release](https://github.com/JoeDV/TabloView/releases/latest) (or clone this repository) and follow [MAC.md](MAC.md) or [LINUX.md](LINUX.md).
+There's no Mac or Linux package yet, but TabloView runs from its source code with a start script that sets everything up. Download **`TabloView-<version>-mac.zip`** or **`TabloView-<version>-linux.tar.gz`** from the [latest release](https://github.com/JoeDV/TabloView/releases/latest) (or clone this repository) and follow [MAC.md](MAC.md) or [LINUX.md](LINUX.md). For a home server, there's a Docker setup: see [DOCKER.md](DOCKER.md).
 
 ### Using it from a phone or another computer
 

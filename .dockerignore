@@ -1,0 +1,6 @@
+# Only app/, static/ and requirements.txt go into the image
+*
+!app/
+!static/
+!requirements.txt
+**/__pycache__

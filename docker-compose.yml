@@ -1,0 +1,23 @@
+# TabloView on a home server: see DOCKER.md. Fill in the values below, then:
+#   docker compose up -d --build
+services:
+  tabloview:
+    build: .
+    container_name: tabloview
+    restart: unless-stopped
+    # Required: TabloView finds your Tablo, and TVs and players find TabloView, on the home network
+    network_mode: host
+    environment:
+      TABLO_EMAIL: "you@example.com"     # your Tablo account, used to sign in the first time
+      TABLO_PASSWORD: "your-password"    # (TabloView doesn't save it: remove both lines once it's signed in)
+      # TABLO_DEVICE: "Living Room"      # which Tablo, if your account has more than one
+      TABLOVIEW_NETWORK: "1"             # let other devices at home use it...
+      TABLOVIEW_PIN: "1234"              # ...with this PIN (4 to 6 digits): change it
+      TABLOVIEW_ADMIN: "192.168.1.50"    # your computer's address: it can change every setting (see DOCKER.md)
+      TZ: "America/New_York"             # your time zone, for the guide and exports' dates
+    volumes:
+      - ./tabloview-data:/data           # settings, sign-in and cache
+      - ./exports:/data/downloads        # MP4 exports
+    # Intel graphics for converting (optional, untested): uncomment, and see DOCKER.md
+    # devices:
+    #   - /dev/dri:/dev/dri
