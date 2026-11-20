@@ -37,6 +37,7 @@ class SettingsUpdate(BaseModel):
     notifications: Optional[bool] = None
     video_quality: Optional[Literal["auto", "best", "fastest"]] = None
     smooth_motion: Optional[bool] = None
+    stop_after_search: Optional[bool] = None
     away_picture: Optional[Literal["full", "720", "480"]] = None
     extra_playlist_url: Optional[str] = Field(default=None, max_length=2000)
     extra_guide_url: Optional[str] = Field(default=None, max_length=2000)
@@ -505,6 +506,9 @@ async def update_settings(update: SettingsUpdate, request: Request):
             changes[key] = changes[key].strip()
             if changes[key] and not re.match(r"https?://", changes[key], re.I):
                 raise HTTPException(status_code=400, detail="That isn't a web address (it should start with http:// or https://).")
+    if "extra_playlist_url" in changes and not changes["extra_playlist_url"] and load_settings().get("extra_playlist_url"):
+        from .. import extra_channels
+        extra_channels.stop_using()  # (it stays under Saved playlists, with its favorites)
     needs_restart = "allow_lan" in changes and changes["allow_lan"] != load_settings().get("allow_lan")
     saved = save_settings(changes)
     if "tuner_enabled" in changes:

@@ -4,7 +4,7 @@ import re
 import json
 import time
 import asyncio
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Literal, Optional
 from datetime import date, datetime, timezone, timedelta
 
 import httpx
@@ -554,6 +554,61 @@ async def extra_group(req: ExtraGroup):
     """Hide one of the playlist's groups, or show it again (Live TV's More tab)."""
     from .. import extra_channels
     return extra_channels.hide_group(req.group, req.hidden)
+
+
+class ExtraGroupOrder(BaseModel):
+    order: List[str] = Field(max_length=20000)
+
+
+@router.post("/extra/group_order")
+async def extra_group_order(req: ExtraGroupOrder):
+    """Arrange the playlist's groups (Live TV → More → Arrange groups)."""
+    from .. import extra_channels
+    if any(len(g) > 300 for g in req.order):
+        raise HTTPException(status_code=400, detail="A group name is too long")
+    return {"order": extra_channels.set_group_order(req.order)}
+
+
+class ExtraPlaylistAction(BaseModel):
+    action: Literal["use", "add", "rename", "remove"]
+    id: str = Field(default="", max_length=40)
+    name: str = Field(default="", max_length=100)
+    playlist_url: str = Field(default="", max_length=2000)
+    guide_url: str = Field(default="", max_length=2000)
+
+
+@router.get("/extra/playlists")
+async def extra_playlists():
+    """Settings → Live TV and Live TV → More: the saved playlists, and the one in use."""
+    from .. import extra_channels
+    return extra_channels.playlists()
+
+
+@router.post("/extra/playlists")
+async def extra_playlist_action(req: ExtraPlaylistAction, request: Request):
+    """Switch to a saved playlist (from any device: it was set up on this PC), or add, rename or
+    remove one (this PC only, as for the playlist address: TabloView fetches them itself)."""
+    import re
+    from .. import extra_channels
+    from .. import lanauth
+    if req.action != "use" and not lanauth.from_this_pc(request):
+        raise HTTPException(status_code=403, detail="This can only be changed on the PC running TabloView.")
+    try:
+        if req.action == "use":
+            return extra_channels.use_playlist(req.id)
+        if req.action == "rename":
+            return extra_channels.rename_playlist(req.id, req.name)
+        if req.action == "remove":
+            return extra_channels.remove_playlist(req.id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="That playlist isn't saved")
+    url, guide = req.playlist_url.strip(), req.guide_url.strip()
+    for u in (url, guide):
+        if u and not re.match(r"https?://", u, re.I):
+            raise HTTPException(status_code=400, detail="That isn't a web address (it should start with http:// or https://).")
+    if not url:
+        raise HTTPException(status_code=400, detail="Enter the playlist's address")
+    return extra_channels.add_playlist(req.name, url, guide)
 
 
 @router.post("/extra/mark")

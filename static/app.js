@@ -221,6 +221,9 @@ const save = (k, v) => { try { localStorage.setItem(k, v); } catch { /* storage 
 const START_PAGES = [['home', 'Home'], ['library', 'Library'], ['guide', 'Guide'], ['live', 'Live TV'], ['scheduled', 'Scheduled']];
 
 const state = {
+  extraPlaylists: [],  // saved playlists (Settings → Live TV), for More's picker
+  extraGroups: [],  // Live TV → More's groups, as last listed
+  stopAfterSearch: true,  // Settings → Playback (stop_after_search), read at start
   status: null,
   shows: null,
   guideCache: new Map(),
@@ -2810,6 +2813,65 @@ async function showTuner() {
     ${watching}`;
 }
 
+// Settings → Live TV: the playlists saved (a forum request, 2026-11-20), each with its own
+// favorites, hidden channels and group order; one in use at a time
+async function showSavedPlaylists() {
+  const el = $('#extraSaved');
+  if (!el) return;
+  let res;
+  try { res = await api('/api/live/extra/playlists'); } catch { el.innerHTML = ''; return; }
+  state.extraPlaylists = res.playlists || [];
+  // (one playlist, in use: nothing to switch to, so no list)
+  if (!state.extraPlaylists.length || (state.extraPlaylists.length === 1 && res.active)) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <div class="set-row set-row-stack"><div class="set-text">
+      <div class="set-label">Saved playlists</div>
+      <div class="set-desc">Each keeps its own favorites, hidden channels and group order. Switch here or in Live TV → More.</div></div>
+      <div class="pl-list">${state.extraPlaylists.map(p => `
+        <div class="pl-row${p.active ? ' active' : ''}">
+          <span class="pl-name"><span><b>${esc(p.name)}</b>${p.active ? ' <span class="set-pill ok">In use</span>' : ''}</span><span class="dim pl-url">${esc(p.playlist_url)}</span></span>
+          ${p.active ? '' : `<button class="btn btn-sm btn-primary" data-action="extra-use" data-id="${esc(p.id)}">Use</button>`}
+          <button class="btn btn-sm" data-action="extra-rename" data-id="${esc(p.id)}">Rename</button>
+          <button class="btn btn-sm btn-ghost" data-action="extra-remove" data-id="${esc(p.id)}">Remove</button>
+        </div>`).join('')}</div></div>`;
+}
+
+async function playlistAction(body, done) {
+  try {
+    const res = await api('/api/live/extra/playlists', { method: 'POST', body: JSON.stringify(body) });
+    state.extraPlaylists = res.playlists || [];
+    state.epg = null; state.extraPage = null; state.epgGroup = '';
+    const cur = state.extraPlaylists.find(p => p.active);
+    if (done) toast(done(cur), 'success');
+    if ($('#extraPlaylist')) {
+      $('#extraPlaylist').value = cur ? cur.playlist_url : '';
+      $('#extraGuide').value = cur ? cur.guide_url : '';
+      showExtraStatus(); showSavedPlaylists();
+    } else if ($('#epgScroll')) loadEpg();
+    return res;
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function addPlaylistDialog(preset) {
+  const vals = { name: '', playlist_url: preset ? preset[0] : '', guide_url: preset ? preset[1] : '' };
+  const ok = await openModal(`
+    <div class="dialog-body">
+      <div class="dialog-title">Add another playlist</div>
+      <div class="dialog-text">It’s saved beside the ones you have, and used from now on. You can switch back any time.</div>
+      <div class="set-fields" style="margin-top:14px">
+        <label>Name<input class="input" data-pl="name" placeholder="Twitch, my IPTV…" maxlength="100" data-autofocus></label>
+        <label>Playlist address (M3U)<input class="input" data-pl="playlist_url" placeholder="https://…/playlist.m3u" value="${esc(vals.playlist_url)}"></label>
+        <label>Guide address (XMLTV, optional)<input class="input" data-pl="guide_url" placeholder="https://…/epg.xml.gz" value="${esc(vals.guide_url)}"></label>
+      </div>
+    </div>
+    <div class="dialog-foot">
+      <button class="btn" data-action="modal-cancel">Cancel</button>
+      <button class="btn btn-primary" data-action="modal-ok">Add and use</button>
+    </div>`, { onReady: el => el.addEventListener('input', e => { if (e.target.dataset.pl) vals[e.target.dataset.pl] = e.target.value; }) });
+  if (!ok) return;
+  await playlistAction({ action: 'add', ...vals }, cur => `Now using ${cur ? cur.name : 'the new playlist'}: its channels are in Live TV under More.`);
+}
+
 async function showExtraStatus() {
   const el = $('#extraStatus');
   if (!el || !$('#extraPlaylist').value.trim()) { if (el) el.textContent = ''; return; }
@@ -2873,8 +2935,12 @@ function extraGroupBar(page, channels, hiddenLink = '') {
     groups = [...by.values()];
   }
   groups = groups.filter(g => g.name);
-  const bar = inner => `<div class="row" style="gap:16px;padding:0 12px 8px;align-items:center;flex-wrap:wrap">${inner}${hiddenLink}</div>`;
-  if (groups.length < 2 && !state.epgGroup) return hiddenLink ? bar('') : '';
+  state.extraGroups = groups;  // (for Arrange groups)
+  const lists = state.extraPlaylists || [];
+  const picker = lists.length > 1 ? `<select class="select select-sm" data-change="extra-playlist" title="Switch to another saved playlist">
+      ${lists.map(p => `<option value="${esc(p.id)}" ${p.active ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>` : '';
+  const bar = inner => `<div class="row" style="gap:16px;padding:0 12px 8px;align-items:center;flex-wrap:wrap">${picker}${inner}${hiddenLink}</div>`;
+  if (groups.length < 2 && !state.epgGroup) return hiddenLink || picker ? bar('') : '';
   const opt = g => `<option value="${esc(g.name)}" ${g.name === state.epgGroup ? 'selected' : ''}>${esc(g.name)} (${g.count.toLocaleString()})</option>`;
   const shown = groups.filter(g => !g.hidden), hidden = groups.filter(g => g.hidden);
   const picked = groups.find(g => g.name === state.epgGroup);
@@ -2883,7 +2949,66 @@ function extraGroupBar(page, channels, hiddenLink = '') {
         <option value="">All groups (${plural(shown.length, 'group')})</option>${shown.map(opt).join('')}
         ${hidden.length ? `<optgroup label="Hidden groups">${hidden.map(opt).join('')}</optgroup>` : ''}
       </select>
-      ${picked ? `<a href="#" data-action="extra-group-hide" data-group="${esc(picked.name)}" data-hidden="${picked.hidden ? '1' : ''}">${picked.hidden ? 'Show this group again' : 'Hide this group'}</a>` : ''}`);
+      ${picked ? `<a href="#" data-action="extra-group-hide" data-group="${esc(picked.name)}" data-hidden="${picked.hidden ? '1' : ''}">${picked.hidden ? 'Show this group again' : 'Hide this group'}</a>` : ''}
+      ${groups.length >= 2 ? '<a href="#" data-action="extra-group-arrange">Arrange groups</a>' : ''}`);
+}
+
+// Live TV → More → Arrange groups: the playlist's groups in the order chosen (a forum request,
+// 2026-11-20). Saved by name; groups not moved, and new ones, follow in the playlist's own order.
+async function arrangeGroups() {
+  let list = (state.extraGroups || []).map(g => ({ ...g }));
+  let filter = '';
+  const draw = el => {
+    const words = filter.toLowerCase().split(/\s+/).filter(Boolean);
+    const rows = list.map((g, i) => ({ g, i })).filter(({ g }) => words.every(w => g.name.toLowerCase().includes(w)));
+    el.querySelector('#grpList').innerHTML = rows.length ? rows.map(({ g, i }) => `
+      <div class="grp-row${g.hidden ? ' dim' : ''}">
+        <span class="grp-name">${esc(g.name)} <span class="dim">(${g.count.toLocaleString()}${g.hidden ? ', hidden' : ''})</span></span>
+        <button class="btn btn-sm" data-grp="top" data-i="${i}" ${i ? '' : 'disabled'} title="Move to the top">Top</button>
+        <button class="btn btn-sm" data-grp="up" data-i="${i}" ${i ? '' : 'disabled'} title="Move up" aria-label="Move up">↑</button>
+        <button class="btn btn-sm" data-grp="down" data-i="${i}" ${i < list.length - 1 ? '' : 'disabled'} title="Move down" aria-label="Move down">↓</button>
+      </div>`).join('') : '<div class="dim" style="padding:12px 0">No group matches.</div>';
+  };
+  const ok = await openModal(`
+    <div class="dialog-body">
+      <div class="dialog-title">Arrange groups</div>
+      <div class="dialog-text">The order of the groups in More and in its group picker. Groups added to the playlist later go at the end.</div>
+      ${list.length > 12 ? '<input class="input" id="grpFilter" placeholder="Find a group" style="width:100%;margin-top:12px">' : ''}
+      <div id="grpList" class="grp-list"></div>
+    </div>
+    <div class="dialog-foot">
+      <button class="btn" id="grpReset" style="margin-right:auto" title="The order the playlist lists them in">Playlist order</button>
+      <button class="btn" data-action="modal-cancel">Cancel</button>
+      <button class="btn btn-primary" data-action="modal-ok" data-autofocus>Save</button>
+    </div>`, { onReady: el => {
+      draw(el);
+      el.querySelector('#grpList').addEventListener('click', e => {
+        const b = e.target.closest('[data-grp]');
+        if (!b) return;
+        const i = +b.dataset.i, [g] = list.splice(i, 1);
+        const to = b.dataset.grp === 'top' ? 0 : b.dataset.grp === 'up' ? i - 1 : i + 1;
+        list.splice(to, 0, g);
+        draw(el);
+        const moved = el.querySelector(`[data-grp="${b.dataset.grp}"][data-i="${to}"]`);
+        if (moved && !moved.disabled) moved.focus();
+      });
+      const f = el.querySelector('#grpFilter');
+      if (f) f.addEventListener('input', () => { filter = f.value; draw(el); });
+      el.querySelector('#grpReset').addEventListener('click', async () => {
+        try {
+          await api('/api/live/extra/group_order', { method: 'POST', body: JSON.stringify({ order: [] }) });
+          closeModal(false);
+          toast('Groups back in the playlist’s order');
+          loadEpg();
+        } catch (err) { toast(err.message, 'error'); }
+      });
+    } });
+  if (!ok) return;
+  try {
+    await api('/api/live/extra/group_order', { method: 'POST', body: JSON.stringify({ order: list.map(g => g.name) }) });
+    toast('Groups arranged');
+    loadEpg();
+  } catch (err) { toast(err.message, 'error'); }
 }
 
 async function hideExtraGroup(group, hidden) {
@@ -2911,6 +3036,12 @@ async function loadEpg(token, scrollToNow = false) {
     if (token !== undefined && stale(token)) return;
     state.epg = res;
     state.extraPage = null;  // (a new time window: the More tab's page is asked for again)
+    // Saved playlists, for the More tab's picker (shown with two or more)
+    api('/api/live/extra/playlists').then(p => {
+      const was = JSON.stringify(state.extraPlaylists || []);
+      state.extraPlaylists = p.playlists || [];
+      if (JSON.stringify(state.extraPlaylists) !== was && state.epgCategory === 'extra') renderEpg();
+    }).catch(() => {});
     if (state.epgCategory === 'favorites' && !hasFavorites()) state.epgCategory = 'ota';
     const cats = $('#epgCats');
     if (cats) cats.innerHTML = epgCatButtons();
@@ -3558,7 +3689,7 @@ PAGES.help = async (r, token) => {
       <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
     let html;
     try {
-      const res = await fetch('/static/help.html?v=30');
+      const res = await fetch('/static/help.html?v=32');
       if (!res.ok) throw new Error(res.status);
       html = await res.text();
     } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
@@ -3758,7 +3889,8 @@ PAGES.settings = async (r, token) => {
         setSelect('away-picture', [['full', 'Full picture'], ['720', 'Smaller: 720p'], ['480', 'Smallest: 480p']], settings.away_picture || 'full'))}`);
 
   const watching = setCard('Watching', '', `
-      ${setSwitch('Play the next episode automatically', 'When a show ends, the next unwatched episode starts after a 10-second countdown you can cancel.', 'autoplay', state.autoplay)}`);
+      ${setSwitch('Play the next episode automatically', 'When a show ends, the next unwatched episode starts after a 10-second countdown you can cancel.', 'autoplay', state.autoplay)}
+      ${setSwitch('Stop where I land when searching', 'Skipping ahead or back, or clicking the timeline, in a recording waits there until you press Play (OK on a TV). Off: it plays on straight away. For every device, TV view too.', 'stop-after-search', settings.stop_after_search !== false)}`);
 
   // ---- Commercials & dropouts
   const skipping = setCard('Skipping', 'For shows with Skip commercials turned on, on the show’s page.', `
@@ -3790,12 +3922,13 @@ PAGES.settings = async (r, token) => {
             <b>iptv-org’s list</b><span>About 1,500 free US channels, no guide. Some may be off the air or not from the channel’s owner.</span></button>
         </div>
       </div>
+      <div id="extraSaved"></div>
       <div class="set-row set-row-stack">
-        <div class="set-text"><div class="set-label">Your own playlist</div><div class="set-desc">From Channels DVR, an HDHomeRun or ErsatzTV, for example.</div></div>
+        <div class="set-text"><div class="set-label">Your own playlist</div><div class="set-desc">From Channels DVR, an HDHomeRun or ErsatzTV, for example. These boxes are the playlist in use; <b>Add another playlist</b> keeps this one too.</div></div>
         <div class="set-fields">
           <label>Playlist address (M3U)<input class="input" id="extraPlaylist" placeholder="https://…/playlist.m3u" value="${esc(settings.extra_playlist_url || '')}"></label>
           <label>Guide address (XMLTV, optional)<input class="input" id="extraGuide" placeholder="https://…/epg.xml.gz" value="${esc(settings.extra_guide_url || '')}"></label>
-          <div class="set-inline"><button class="btn btn-sm btn-primary" data-action="extra-save">Save</button><span class="dim" id="extraStatus"></span></div>
+          <div class="set-inline"><button class="btn btn-sm btn-primary" data-action="extra-save">Save</button><button class="btn btn-sm" data-action="extra-add">Add another playlist</button><span class="dim" id="extraStatus"></span></div>
         </div>
       </div>`);
 
@@ -3924,7 +4057,7 @@ PAGES.settings = async (r, token) => {
   const loaders = {
     plex: () => loadPlex(token),
     desktop: () => Promise.all([loadNetwork(token), loadLanActivity(token), info.listening_on_network ? loadLanAccess(token, info) : null]),
-    live: () => Promise.all([showExtraStatus(), showTuner()]),
+    live: () => Promise.all([showExtraStatus(), showSavedPlaylists(), showTuner()]),
   };
   const loaded = new Set();
   const load = sid => {
@@ -4657,8 +4790,10 @@ const player = {
   },
 
   // Searching a recording (◀◀ ▶▶, arrow keys, a click on the timeline): the picture stays stopped
-  // where you land, until Play (or Space). It used to play on at once
+  // where you land, until Play (or Space). It used to play on at once, which some prefer: Settings →
+  // Playback → Stop where I land when searching (a forum user, 2026-11-20)
   hold() {
+    if (!state.stopAfterSearch) return;
     state.stream.held = true;
     this.video().pause();
   },
@@ -6342,13 +6477,41 @@ const ACTIONS = {
     renderEpgKeepingPlace();
   },
   'extra-more': el => { el.disabled = true; loadExtraPage(true); },
+  'extra-group-arrange': (el, e) => {
+    if (e) e.preventDefault();
+    arrangeGroups();
+  },
   'extra-group-hide': (el, e) => {
     if (e) e.preventDefault();
     hideExtraGroup(el.dataset.group, !el.dataset.hidden);
   },
   'extra-preset': el => {
-    [$('#extraPlaylist').value, $('#extraGuide').value] = EXTRA_PRESETS[el.dataset.preset];
-    ACTIONS['extra-save']();
+    // A playlist in use already: this one is saved beside it (or switched to, if it's saved)
+    const [url, guide] = EXTRA_PRESETS[el.dataset.preset];
+    if (!$('#extraPlaylist').value.trim()) {
+      [$('#extraPlaylist').value, $('#extraGuide').value] = [url, guide];
+      return ACTIONS['extra-save']();
+    }
+    playlistAction({ action: 'add', name: el.querySelector('b').textContent, playlist_url: url, guide_url: guide },
+      cur => `Now using ${cur.name}. Your other playlist is still saved.`);
+  },
+  'extra-add': () => addPlaylistDialog(),
+  'extra-use': el => playlistAction({ action: 'use', id: el.dataset.id }, cur => `Now using ${cur.name}`),
+  'extra-rename': async el => {
+    const p = (state.extraPlaylists || []).find(x => x.id === el.dataset.id);
+    if (!p) return;
+    let name = p.name;
+    const ok = await openModal(`
+      <div class="dialog-body"><div class="dialog-title">Rename playlist</div>
+        <input class="input" id="plRename" maxlength="100" value="${esc(p.name)}" data-autofocus style="width:100%;margin-top:14px"></div>
+      <div class="dialog-foot"><button class="btn" data-action="modal-cancel">Cancel</button><button class="btn btn-primary" data-action="modal-ok">Rename</button></div>`,
+      { onReady: d => d.querySelector('#plRename').addEventListener('input', e => { name = e.target.value; }) });
+    if (ok && name.trim()) playlistAction({ action: 'rename', id: p.id, name });
+  },
+  'extra-remove': async el => {
+    const p = (state.extraPlaylists || []).find(x => x.id === el.dataset.id);
+    if (!p || !await confirmDialog({ title: `Remove ${p.name}?`, text: `TabloView forgets this playlist and its favorites, hidden channels and group order. The playlist itself isn’t touched.${p.active ? ' The next saved playlist is used instead.' : ''}`, confirm: 'Remove', danger: true })) return;
+    playlistAction({ action: 'remove', id: p.id }, () => `${p.name} removed`);
   },
   'extra-save': async () => {
     try {
@@ -6485,6 +6648,7 @@ const INPUTS = {
 };
 
 const CHANGES = {
+  'extra-playlist': el => playlistAction({ action: 'use', id: el.value }, cur => `Now showing ${cur.name}`),
   'extra-group': el => {
     state.epgGroup = el.value;
     if (bigPlaylist()) state.extraPage = null;
@@ -6717,6 +6881,12 @@ const CHANGES = {
       toast(el.value === 'white' ? 'Channel logos will be shown in white' : 'Channel logos will be shown in color', 'success');
     } catch (err) { toast(err.message, 'error'); }
   },
+  'stop-after-search': async el => {
+    try {
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ stop_after_search: el.checked }) });
+      state.stopAfterSearch = el.checked;
+    } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
+  },
   'smooth-motion': async el => {
     try {
       await api('/api/settings', { method: 'POST', body: JSON.stringify({ smooth_motion: el.checked }) });
@@ -6944,6 +7114,7 @@ async function init() {
   hydrateIcons();
   wireEvents();
   await loadStatus();
+  api('/api/settings').then(s => { state.stopAfterSearch = s.stop_after_search !== false; }).catch(() => {});
   // Opened without a page in the address (the tray, a bookmark to the site): the chosen start page
   const start = store('tv_start_page', 'home');
   if ((!location.hash || location.hash === '#/' || location.hash === '#') && start !== 'home'

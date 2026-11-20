@@ -636,6 +636,31 @@ export const SUITES = {
 
   // Searching stops on the spot; a break found too long isn't skipped on its own; on a TV, OK in a
   // break brings up the controls with Skip first (PC player, then the TV view)
+  // Live TV → More → Arrange groups (needs a playlist with 2 or more groups in Settings → Live TV).
+  // The saves are caught by the test shim (window.__writes), so the real order isn't changed
+  async grouporder(b, t) {
+    await b.open('#/live');
+    await b.waitFor(`document.querySelector('[data-action="epg-cat"][data-value="extra"]')`, 30000);
+    await b.ev(`document.querySelector('[data-action="epg-cat"][data-value="extra"]').click(), true`);
+    if (!await b.waitFor(`document.querySelector('[data-action="extra-group-arrange"]')`, 60000))
+      return t.skip('Arrange groups', 'needs a playlist with two or more groups');
+    const names = await b.ev(`state.extraGroups.map(g => g.name)`);
+    await b.ev(`document.querySelector('[data-action="extra-group-arrange"]').click(), true`);
+    t.check('The dialog lists every group', await b.waitFor(`document.querySelectorAll('.grp-row').length === ${names.length}`));
+    // The last group to the top, then the (new) second one down a place
+    await b.ev(`[...document.querySelectorAll('[data-grp="top"]')].pop().click(), true`);
+    t.check('Top moves a group first', await b.ev(`document.querySelector('.grp-name').textContent.startsWith(${JSON.stringify(names[names.length - 1])})`));
+    await b.ev(`document.querySelector('[data-grp="down"][data-i="1"]').click(), true`);
+    const want = [names[names.length - 1], names[1], names[0], ...names.slice(2, -1)];
+    await b.ev(`window.__writes = [], document.querySelector('.overlay [data-action="modal-ok"]').click(), true`);
+    const sent = `window.__writes.filter(w => w[1].includes('/api/live/extra/group_order')).map(w => JSON.parse(w[2]).order)`;
+    t.check('Save sends the new order', await b.waitFor(`JSON.stringify(${sent}) === ${JSON.stringify(JSON.stringify([want]))}`, 5000));
+    await b.ev(`document.querySelector('[data-action="extra-group-arrange"]').click(), true`);
+    await b.waitFor(`document.querySelector('#grpReset')`);
+    await b.ev(`window.__writes = [], document.querySelector('#grpReset').click(), true`);
+    t.check('Playlist order sends an empty order', await b.waitFor(`JSON.stringify(${sent}) === '[[]]'`, 5000));
+  },
+
   async seekhold(b, t) {
     const shows = (await api('/api/shows')).shows;
     const eps = (await api(`/api/shows/episodes?show_id=${encodeURIComponent(shows[0].id)}`)).episodes;
@@ -655,6 +680,10 @@ export const SUITES = {
     t.check('PC: ...and does not start on its own', await b.ev(`$('#video').paused`));
     await b.ev(`$('#video').play().catch(() => {}), true`);
     t.check('PC: Play carries on from there', await b.waitFor(`!$('#video').paused && !state.stream.held && player.position() > ${p + 901}`, 20000));
+    // Settings → Playback → Stop where I land when searching, off: plays on as before 1.3.6
+    await b.ev(`state.stopAfterSearch = false, player.skip(30), true`); await sleep(3000);
+    t.check('PC: with the switch off, ▶▶ plays on', await b.ev(`!$('#video').paused && !state.stream.held`));
+    await b.ev(`state.stopAfterSearch = true`);
     p = await b.ev(`player.position()`);
     await b.ev(`Object.assign(state.stream, { autoSkip: true, skippedBreaks: new Set(), breaks: [{ start: ${p}, end: ${p + 600} }] })`); await sleep(2500);
     t.check('PC: a 10-minute "break" is offered, not skipped', await b.ev(`player.position() < ${p + 30} && !$('#skipBreak').classList.contains('hidden')`));

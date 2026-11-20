@@ -144,5 +144,98 @@ class BigPlaylistTests(unittest.TestCase):
         self.assertTrue(all(r["group_hidden"] and r["hidden"] for r in picked["rows"]))
 
 
+
+class GroupOrderTests(unittest.TestCase):
+    """Arrange groups (Live TV → More): chosen groups first, in that order, the rest as listed."""
+
+    def chans(self):
+        return [{"id": f"x-{i}", "group": g, "name": f"{g}{i}"} for i, g in enumerate(["News", "Sports", "Kids", "News", "Music"])]
+
+    def test_chosen_groups_first(self):
+        chans = self.chans()
+        with mock.patch.object(xc, "load_settings", return_value={"extra_group_order": ["Kids", "Sports"]}):
+            out = xc.ordered(chans)
+        self.assertEqual([c["group"] for c in out], ["Kids", "Sports", "News", "News", "Music"])
+        self.assertEqual([c["id"] for c in out if c["group"] == "News"], ["x-0", "x-3"])  # their own order kept
+        self.assertEqual([g["name"] for g in xc.groups(out, {"groups": set()})], ["Kids", "Sports", "News", "Music"])
+
+    def test_no_order_is_the_playlists(self):
+        chans = self.chans()
+        with mock.patch.object(xc, "load_settings", return_value={}):
+            self.assertIs(xc.ordered(chans), chans)
+
+    def test_saved_without_repeats(self):
+        with mock.patch.object(xc, "save_settings") as save:
+            self.assertEqual(xc.set_group_order(["Kids", "", "Kids", "News"]), ["Kids", "News"])
+            save.assert_called_once_with({"extra_group_order": ["Kids", "News"]})
+
+
+
+class SavedPlaylistTests(unittest.TestCase):
+    """Several playlists saved, one in use: each keeps its own favorites, hidden channels and groups."""
+
+    def setUp(self):
+        self.s = {"extra_playlist_url": "https://a.example/list.m3u", "extra_guide_url": "https://a.example/epg.xml",
+                  "extra_favorites": ["fav-a"], "extra_hidden": ["hid-a"], "extra_hidden_groups": [], "extra_group_order": ["G"],
+                  "extra_playlists": [], "extra_active": ""}
+        for p in (mock.patch.object(xc, "load_settings", side_effect=lambda: dict(self.s)),
+                  mock.patch.object(xc, "save_settings", side_effect=lambda u: self.s.update(u))):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_the_playlist_set_before_is_listed(self):
+        got = xc.playlists()
+        self.assertEqual(len(got["playlists"]), 1)
+        p = got["playlists"][0]
+        self.assertEqual((p["name"], p["playlist_url"], p["active"]), ("a.example", "https://a.example/list.m3u", True))
+
+    def test_switching_keeps_each_ones_marks(self):
+        xc.add_playlist("Twitch", "https://b.example/t.m3u")
+        self.assertEqual((self.s["extra_playlist_url"], self.s["extra_favorites"], self.s["extra_guide_url"]),
+                         ("https://b.example/t.m3u", [], ""))
+        self.s["extra_favorites"] = ["fav-b"]
+        first = next(p for p in xc.playlists()["playlists"] if p["name"] == "a.example")
+        xc.use_playlist(first["id"])
+        self.assertEqual((self.s["extra_playlist_url"], self.s["extra_favorites"], self.s["extra_hidden"], self.s["extra_group_order"]),
+                         ("https://a.example/list.m3u", ["fav-a"], ["hid-a"], ["G"]))
+        twitch = next(p for p in xc.playlists()["playlists"] if p["name"] == "Twitch")
+        xc.use_playlist(twitch["id"])
+        self.assertEqual(self.s["extra_favorites"], ["fav-b"])
+
+    def test_adding_one_already_saved_switches_to_it(self):
+        xc.add_playlist("B", "https://b.example/t.m3u")
+        xc.add_playlist("A again", "https://a.example/list.m3u")
+        got = xc.playlists()
+        self.assertEqual(len(got["playlists"]), 2)
+        self.assertEqual(self.s["extra_playlist_url"], "https://a.example/list.m3u")
+
+    def test_removing_the_one_in_use_switches_to_the_next(self):
+        xc.add_playlist("B", "https://b.example/t.m3u")
+        xc.remove_playlist(xc.playlists()["active"])
+        self.assertEqual(self.s["extra_playlist_url"], "https://a.example/list.m3u")
+        xc.remove_playlist(xc.playlists()["active"])
+        self.assertEqual((self.s["extra_playlist_url"], xc.playlists()["playlists"]), ("", []))
+
+    def test_clearing_the_address_keeps_it_saved(self):
+        xc.add_playlist("B", "https://b.example/t.m3u")
+        xc.stop_using()
+        self.s["extra_playlist_url"] = ""
+        got = xc.playlists()
+        self.assertEqual((got["active"], len(got["playlists"])), ("", 2))
+        # A new address typed in then is a new playlist, not the old one changed
+        self.s["extra_playlist_url"] = "https://c.example/c.m3u"
+        self.assertEqual(len(xc.playlists()["playlists"]), 3)
+
+    def test_names_for_playlists_saved_without_one(self):
+        self.assertEqual(xc._short_name("https://iptv-org.github.io/iptv/countries/us.m3u"), "iptv-org’s list")
+        self.assertEqual(xc._short_name("https://raw.githubusercontent.com/x/y/main/kick_live.m3u8"), "kick live")
+        self.assertEqual(xc._short_name("http://www.myiptv.example:8080/get.php?username=u"), "myiptv.example")
+
+    def test_rename(self):
+        pid = xc.playlists()["active"]
+        xc.rename_playlist(pid, "  My IPTV ")
+        self.assertEqual(xc.playlists()["playlists"][0]["name"], "My IPTV")
+
+
 if __name__ == "__main__":
     unittest.main()

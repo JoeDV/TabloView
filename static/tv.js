@@ -52,6 +52,7 @@ const state = {
   live: null,        // /api/live/epg
   liveTab: 'ota',    // Antenna or Streaming channels
   shapes: {},        // picture shapes per channel, chosen on the PC (Settings page player)
+  stopAfterSearch: true,  // searching stops where you land (the PC's Settings → Playback)
   focus: {},         // screen -> data-key focused last, so Back returns to the same tile
   eps: new Map(),    // recordings seen on any screen, by ID: what a recording's page shows
   shows: {},         // show ID -> /api/shows/episodes, for switching seasons without asking again
@@ -1369,6 +1370,7 @@ const player = {
   // Searching a recording: the picture stays stopped where you land (it used to play on as soon as
   // the presses stopped), until OK or Play
   hold() {
+    if (!state.stopAfterSearch) return;
     this.held = true;
     this.video().pause();
   },
@@ -2090,7 +2092,7 @@ function init() {
   setInterval(tickClock, 15000);
   reminders.check();
   setInterval(() => reminders.check(), 30000);
-  api('/api/settings').then(s => { state.shapes = s.picture_shapes || {}; }).catch(() => {});
+  api('/api/settings').then(s => { state.shapes = s.picture_shapes || {}; state.stopAfterSearch = s.stop_after_search !== false; }).catch(() => {});
   if (location.hash === '#/play') location.replace('#/');
   route();
 }

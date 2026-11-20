@@ -1158,3 +1158,16 @@ label.set-row-switch:hover { background: rgba(255, 255, 255, 0.015); }
 .help-page .set-nav-item { white-space: normal; height: auto; min-height: 36px; padding: 8px 12px; line-height: 1.3; }
 .help-page .help td:first-child, .help-page .help th:first-child { width: 1%; white-space: nowrap; padding-right: 28px; }
 @media (max-width: 980px) { .help-page .settings-layout { grid-template-columns: minmax(0, 1fr); } .help-page .set-nav-item { white-space: nowrap; } }
+
+/* Live TV → More → Arrange groups */
+.grp-list { margin-top: 12px; max-height: 52vh; overflow-y: auto; border-top: 1px solid var(--border); }
+.grp-row { display: flex; align-items: center; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.grp-row .grp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grp-row.dim .grp-name { opacity: 0.6; }
+
+/* Settings → Live TV → Saved playlists */
+.pl-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; width: 100%; }
+.pl-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; }
+.pl-row.active { border-color: var(--border-strong); }
+.pl-row .pl-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pl-row .pl-url { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

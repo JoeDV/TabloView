@@ -31,13 +31,19 @@ DEFAULTS: Dict[str, Any] = {
     "auto_sync_minutes": 15,  # recordings sync interval; 0 = off (guide refreshes every GUIDE_SYNC_HOURS)
     "notifications": True,  # tray notifications for failed/short recordings and recording conflicts
     "video_quality": "auto",  # browser playback: auto (graphics chip if available), best, fastest
-    "smooth_motion": False,  # 60 fps from 1080i (opt-in: harder on graphics-chip encoders)
+    "smooth_motion": False,
+    "stop_after_search": True,  # searching a recording stops where you land until Play (1.3.6); off: plays on at once  # 60 fps from 1080i (opt-in: harder on graphics-chip encoders)
     "away_picture": "full",  # watching over Tailscale: "full" (as at home), "720" or "480" (smaller, for slow connections)
     "extra_playlist_url": "",  # channels from outside the Tablo: an M3U playlist's address (app/extra_channels.py)
     "extra_guide_url": "",  # and its XMLTV guide, optional
     "extra_favorites": [],  # playlist channels marked as favorites (by guide id or name), kept by TabloView
     "extra_hidden": [],  # and hidden ones
     "extra_hidden_groups": [],  # and whole groups of the playlist hidden
+    "extra_group_order": [],  # groups put first, in this order (Live TV → More → Arrange groups); the rest follow as listed
+    # Saved playlists (app/extra_channels.py: playlists()): [{id, name, playlist_url, guide_url, and the
+    # marks above}], the one in use named by extra_active. Its address, guide and marks are the keys above.
+    "extra_playlists": [],
+    "extra_active": "",
     "tailscale_no_pin": False,  # devices connecting straight from a Tailscale address skip the PIN (lanauth)
     "logo_style": "color",  # channel logos: "color" (the station's own) or "white"
     "export_format": "smaller",  # MP4 exports: "smaller" (H.264, graphics chip if available) or "original" (exact copy)

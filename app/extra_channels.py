@@ -10,6 +10,7 @@ import asyncio
 import gzip
 import hashlib
 import re
+import secrets
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
@@ -34,6 +35,7 @@ PAGE = 200
 
 _playlist: Dict[str, Any] = {"url": None, "at": 0.0, "channels": [], "error": None}
 _guide: Dict[str, Any] = {"url": None, "at": 0.0, "by_channel": {}, "error": None, "task": None}
+_sorted: Dict[str, Any] = {"of": None, "order": None, "channels": []}
 _lock = asyncio.Lock()
 
 _ATTR = re.compile(r'([\w-]+)="([^"]*)"')
@@ -176,7 +178,138 @@ async def channels(force: bool = False) -> List[Dict[str, Any]]:
                 # Keep what we had; try again in a few minutes
                 _playlist.update(url=url, at=time.time() - PLAYLIST_SECONDS + 300, error=str(e) or type(e).__name__)
                 print(f"[Extra] Couldn't read the playlist: {e!r}")
-    return _playlist["channels"] if _playlist["url"] == url else []
+    return ordered(_playlist["channels"] if _playlist["url"] == url else [])
+
+
+# --- Saved playlists (a forum request, 2026-11-20: switching between sources without typing them in again) ---
+# The one in use keeps living in the settings above (extra_playlist_url, extra_favorites...), so
+# everything else reads it as before; switching puts its marks back in its entry and takes the other's.
+
+MARK_KEYS = {"favorites": "extra_favorites", "hidden": "extra_hidden", "hidden_groups": "extra_hidden_groups",
+             "group_order": "extra_group_order"}
+
+
+KNOWN_NAMES = {  # Settings → Live TV's quick setup lists
+    "https://raw.githubusercontent.com/BuddyChewChew/tubi-scraper/refs/heads/main/tubi_playlist.m3u": "Tubi’s free channels",
+    "https://iptv-org.github.io/iptv/countries/us.m3u": "iptv-org’s list",
+}
+
+
+def _short_name(url: str) -> str:
+    """A name for a playlist saved without one: a known list's, the file's name on a file host
+    (GitHub), else the site's."""
+    from urllib.parse import unquote, urlparse
+    if url in KNOWN_NAMES:
+        return KNOWN_NAMES[url]
+    u = urlparse(url)
+    host = (u.hostname or "").removeprefix("www.")
+    stem = unquote(u.path.rsplit("/", 1)[-1]).rsplit(".", 1)[0].replace("_", " ").strip()
+    if stem and (host.endswith(("githubusercontent.com", "github.io", "gitlab.io")) or not host):
+        return stem
+    return host or "Playlist"
+
+
+def _with_current(s: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], str]:
+    """The saved playlists with the one in use brought up to date (and added, for a playlist set
+    before there were saved ones), and its id."""
+    lists = [dict(p) for p in s.get("extra_playlists") or []]
+    url = (s.get("extra_playlist_url") or "").strip()
+    active = s.get("extra_active") or ""
+    if not url:
+        return lists, ""  # (the address was cleared in Settings: none in use, the saved ones kept)
+    cur = next((p for p in lists if p["id"] == active), None)
+    if not cur:
+        # (a playlist set before there were saved ones, or typed into Settings: saved now, so its id stays)
+        cur = {"id": secrets.token_hex(4), "name": _short_name(url), "playlist_url": url}
+        lists.append(cur)
+        save_settings({"extra_playlists": lists, "extra_active": cur["id"]})
+    cur.update(playlist_url=url, guide_url=(s.get("extra_guide_url") or "").strip(),
+               **{k: list(s.get(sk) or []) for k, sk in MARK_KEYS.items()})
+    return lists, cur["id"]
+
+
+def playlists() -> Dict[str, Any]:
+    lists, active = _with_current(load_settings())
+    return {"active": active, "playlists": [{"id": p["id"], "name": p["name"], "playlist_url": p["playlist_url"],
+                                             "guide_url": p.get("guide_url") or "", "active": p["id"] == active} for p in lists]}
+
+
+def _use(lists: List[Dict[str, Any]], target: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    t = target or {}
+    save_settings({"extra_playlists": lists, "extra_active": t.get("id", ""),
+                   "extra_playlist_url": t.get("playlist_url", ""), "extra_guide_url": t.get("guide_url", ""),
+                   **{sk: list(t.get(k) or []) for k, sk in MARK_KEYS.items()}})
+    return playlists()
+
+
+def use_playlist(pid: str) -> Dict[str, Any]:
+    lists, _ = _with_current(load_settings())
+    target = next((p for p in lists if p["id"] == pid), None)
+    if not target:
+        raise KeyError(pid)
+    return _use(lists, target)
+
+
+def add_playlist(name: str, playlist_url: str, guide_url: str = "") -> Dict[str, Any]:
+    """Save another playlist and switch to it (one already saved with that address: switch to that)."""
+    lists, _ = _with_current(load_settings())
+    same = next((p for p in lists if p["playlist_url"] == playlist_url), None)
+    if same:
+        if guide_url and not same.get("guide_url"):
+            same["guide_url"] = guide_url
+        return _use(lists, same)
+    new = {"id": secrets.token_hex(4), "name": name.strip() or _short_name(playlist_url), "playlist_url": playlist_url,
+           "guide_url": guide_url, **{k: [] for k in MARK_KEYS}}
+    lists.append(new)
+    return _use(lists, new)
+
+
+def stop_using() -> None:
+    """The address was cleared in Settings: keep the playlist (and its marks) saved, none in use."""
+    lists, _ = _with_current(load_settings())
+    _use(lists, None)
+
+
+def rename_playlist(pid: str, name: str) -> Dict[str, Any]:
+    lists, active = _with_current(load_settings())
+    p = next((p for p in lists if p["id"] == pid), None)
+    if not p or not name.strip():
+        raise KeyError(pid)
+    p["name"] = name.strip()
+    save_settings({"extra_playlists": lists, "extra_active": active})
+    return playlists()
+
+
+def remove_playlist(pid: str) -> Dict[str, Any]:
+    """Forget a saved playlist (and its favorites); removing the one in use switches to the next saved one, if any."""
+    lists, active = _with_current(load_settings())
+    if not any(p["id"] == pid for p in lists):
+        raise KeyError(pid)
+    lists = [p for p in lists if p["id"] != pid]
+    if pid != active:
+        save_settings({"extra_playlists": lists, "extra_active": active})
+        return playlists()
+    return _use(lists, lists[0] if lists else None)
+
+
+def ordered(chans: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The channels with the groups arranged in Live TV → More put first, in that order (a forum
+    request, 2026-11-20); the other groups follow in the playlist's order, and each group's channels
+    stay in theirs. Kept until the playlist or the order changes (a provider's list is huge)."""
+    order = tuple(load_settings().get("extra_group_order") or [])
+    if not order or not chans:
+        return chans
+    if _sorted["of"] is not chans or _sorted["order"] != order:
+        rank = {g: i for i, g in enumerate(order)}
+        _sorted.update(of=chans, order=order, channels=sorted(chans, key=lambda c: rank.get(c["group"], len(rank))))
+    return _sorted["channels"]
+
+
+def set_group_order(order: List[str]) -> List[str]:
+    """Save the groups' order (names, first to last); [] goes back to the playlist's own."""
+    clean = list(dict.fromkeys(g for g in order if g))
+    save_settings({"extra_group_order": clean})
+    return clean
 
 
 def _refresh_guide(url: str, wanted: set) -> None:
