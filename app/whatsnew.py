@@ -13,6 +13,12 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.4.2": [
+        "Arrange groups (Live TV → More) has a Bottom button beside Top, and a switch on each group to hide or show it right there.",
+        "Fixed: Customize on Home couldn't save any change in 1.4.1.",
+        "Fixed: some error messages said [object Object] instead of what went wrong.",
+        "Fixed: a long What's new, or any long window like it, ran off the bottom of the screen; the text now scrolls and the buttons stay in view.",
+    ],
     "1.4.1": [
         "Guide alerts: save words to watch for, such as a team, a movie or a special (Guide alerts on Home, or Alerts on the Guide page). Shows in the guide with one in their title appear on Home with a Record button, and a notification says when new ones turn up.",
         "Recordings on your Roku, in VLC or Kodi, or on a smart TV: with your antenna channels shared, Roku Media Player and the others now have a Recordings folder beside Live TV, with a folder for each show. Skipping ahead or back starts the recording again at that point.",
