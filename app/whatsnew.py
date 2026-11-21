@@ -13,6 +13,15 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.4.0": [
+        "Watch your antenna channels on a Roku, in VLC or Kodi, or on a smart TV: with Settings → Live TV → Share your antenna channels with other apps turned on, TabloView shows up on your network as a media server. Open Roku Media Player (or your player's network or media server list), pick TabloView, then Live TV and a channel. No address to type.",
+        "Several playlists in Live TV → More: add more than one playlist and switch between them in Settings → Live TV or with the picker in More. Each keeps its own favorites, hidden channels and group order.",
+        "Arrange groups: in Live TV → More, put your playlist's groups in the order you like.",
+        "A new switch in Settings → Playback: Stop where I land when searching. Turn it off and a recording plays on straight away after you skip or click the timeline, instead of waiting for Play.",
+        "TabloView can run in Docker on a home server (Linux), set up from one file with your Tablo sign-in, PIN and the computers allowed to change its settings. See DOCKER.md on GitHub.",
+        "Settings → Live TV notes that Plex can use its own guide by ZIP code with the TabloView tuner, and suggests keeping this PC's network address fixed so other apps keep finding it.",
+        "Fixed: in Chrome, Edge and other Chromium browsers, the sound could turn slow and garbled after jumping around a recording, until you paused for a while.",
+    ],
     "1.3.9": [
         "Use your Tablo in Plex, Jellyfin, Emby or Channels DVR: turn on Settings → Live TV → Share your antenna channels with other apps, and TabloView answers like an HDHomeRun tuner, with your Tablo's guide. Settings shows the address to enter in each app. Each channel they watch or record uses one of your Tablo's tuners.",
         "Exports without the commercials: turn on Settings → Storage & exports → Leave out commercial breaks, and MP4 exports skip the breaks TabloView found. Your recording on the Tablo isn't changed, so you can always export it again in full.",
