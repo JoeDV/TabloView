@@ -205,6 +205,7 @@
       <tr><td>Show and season folders</td><td>Off: every export in one folder. On: <code>Show\Season 01\Show - S01E02 - Title.mp4</code>, the layout Plex, Jellyfin and Kodi expect</td></tr>
       <tr><td>Leave out commercial breaks</td><td>Off: the whole recording. On: the MP4 skips the breaks TabloView found (shows with Skip commercials on). If a break was found wrong, that part of the show is left out too, but the recording on your Tablo is never changed: turn this off and export again for the full version. Automatic exports wait until the breaks have been found</td></tr>
       <tr><td>Mark commercial breaks as chapters</td><td>On (when breaks aren't left out): the MP4 keeps the whole recording, with each break as a chapter, so Plex, Jellyfin, Kodi and VLC jump past it with Next chapter</td></tr>
+      <tr><td>Save captions as a .srt file</td><td>Off. On: the broadcast's captions go in a .srt file beside each MP4, with the same name, for players that don't read the captions inside the video. Plex, Jellyfin and Kodi find it by themselves. With it on, Smaller exports on a PC with AMD graphics or a Mac are converted by the processor, since their graphics chips leave the captions out</td></tr>
       <tr><td>.nfo files</td><td>A small file beside each export with its details, for Jellyfin, Emby and Kodi (Plex doesn't use them)</td></tr>
     </tbody>
   </table>

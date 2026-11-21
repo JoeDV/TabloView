@@ -54,7 +54,8 @@ DEFAULTS: Dict[str, Any] = {
     "tuner_port": 5004,
     "tuner_device_id": "",  # made once (tuner.device_id)
     "export_cut_breaks": False,  # exports leave out the commercial breaks TabloView found (the recording keeps them)
-    "export_chapters": True,  # otherwise, exports mark the breaks as chapters (Plex, Jellyfin, Kodi, VLC skip by chapter)
+    "export_chapters": True,
+    "export_captions": False,  # a .srt of the broadcast's captions beside each export (Plex, Jellyfin, Kodi)  # otherwise, exports mark the breaks as chapters (Plex, Jellyfin, Kodi, VLC skip by chapter)
     "plex_client_id": None,  # TabloView's id with Plex (app/plex.py)
     "plex_token": None,  # the Plex account's token, from Plex's sign-in (never shown or logged)
     "plex_server": None,  # {id, name, uri, token}: the Plex server new exports are scanned in

@@ -3764,7 +3764,7 @@ PAGES.help = async (r, token) => {
       <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
     let html;
     try {
-      const res = await fetch('/static/help.html?v=37');
+      const res = await fetch('/static/help.html?v=38');
       if (!res.ok) throw new Error(res.status);
       html = await res.text();
     } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
@@ -4029,6 +4029,7 @@ PAGES.settings = async (r, token) => {
       </div>
       ${setSwitch('Sort into show and season folders', 'Show\\Season 01\\Show - S01E02 - Title.mp4, the layout Plex, Jellyfin and Kodi expect. Every export also carries its title, episode, description and air date.', 'export-show-folders', settings.export_show_folders)}
       ${setSwitch('Leave out commercial breaks', 'Exports skip the breaks TabloView found, for shows with Skip commercials on. Your original recording stays on the Tablo, untouched, so if a break was found wrong you can export it again in full.', 'export-cut', settings.export_cut_breaks)}
+      ${setSwitch('Save captions as a .srt file', 'The broadcast’s captions, in a .srt file beside each export, for players that don’t read the captions in the video (Plex, Jellyfin and Kodi pick it up). Takes a minute or two more per export.', 'export-captions', !!settings.export_captions)}
       ${settings.export_cut_breaks ? '' : setSwitch('Mark commercial breaks as chapters', 'Exports keep the breaks, marked as chapters, so Plex, Jellyfin, Kodi and VLC can jump past each one with Next chapter.', 'export-chapters', settings.export_chapters !== false)}
       ${setSwitch('Save an .nfo file with each export', 'Details beside the video for Jellyfin, Emby and Kodi (Plex doesn’t read them).', 'export-nfo', settings.export_nfo)}`);
 
@@ -6954,6 +6955,12 @@ const CHANGES = {
     try {
       await api('/api/settings', { method: 'POST', body: JSON.stringify({ export_cut_breaks: el.checked }) });
       toast(el.checked ? 'New exports will leave out the commercial breaks' : 'New exports will keep the commercial breaks');
+    } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
+  },
+  'export-captions': async el => {
+    try {
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ export_captions: el.checked }) });
+      toast(el.checked ? 'New exports will save their captions as a .srt file' : 'New exports won’t save a .srt file');
     } catch (err) { el.checked = !el.checked; toast(err.message, 'error'); }
   },
   'export-chapters': async el => {

@@ -815,6 +815,9 @@ class TranscodeManager:
                 return
             fmt = load_settings().get("export_format") or "smaller"
             enc = encoders.for_export(encoders.choose("auto")) if fmt == "smaller" else None
+            if enc and load_settings().get("export_captions") and not encoders.keeps_captions(enc):
+                # Saving the captions: an encoder that drops them (AMD's, Apple's) gives way to the CPU
+                enc = encoders.for_export(encoders.cpu_fallback())
             ok = await self._run_ffmpeg_export(job_id, playlist_url, output_path, expected_duration, enc,
                                                last_try=not (enc and enc["hardware"]), episode=episode)
             if not ok and enc and enc["hardware"]:
@@ -1015,6 +1018,64 @@ class TranscodeManager:
                 "-c", "copy", *(tags or []), "-movflags", "+faststart", str(output_path)]
 
     @staticmethod
+    def movie_filter_path(path: Path) -> str:
+        """A file's name as the movie filter's value: escaped for the option (\\ ' :), then for the
+        filtergraph (\\ ' [ ] , ;). Show names have apostrophes and commas; Windows paths a colon."""
+        v = path.as_posix()
+        for ch in "\\':":
+            v = v.replace(ch, "\\" + ch)
+        for ch in "\\'[],;":
+            v = v.replace(ch, "\\" + ch)
+        return v
+
+    @classmethod
+    def captions_cmd(cls, mp4_path: Path, srt_path: Path) -> List[str]:
+        """The broadcast's captions (CEA-608, carried in the video) as a .srt: FFmpeg's subcc reads
+        them while decoding the picture. From the finished MP4, so the times match it (it starts at
+        0, and any breaks left out are left out of the captions too)."""
+        return [FFMPEG_PATH, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+                "-i", f"movie={cls.movie_filter_path(mp4_path)}[out0+subcc]", "-map", "0:s", "-c:s", "srt", str(srt_path)]
+
+    @staticmethod
+    def clean_srt(text: str) -> str:
+        """FFmpeg's caption decoder marks position and spacing for subtitle styling ({\\an7}, \\h,
+        <font face="Monospace">); players show plain lines better. Cues left empty are dropped."""
+        cues = []
+        for block in re.split(r"\r?\n\r?\n", text.strip()):
+            lines = block.splitlines()
+            if len(lines) < 3 or "-->" not in lines[1]:
+                continue
+            body = []
+            for line in lines[2:]:
+                line = re.sub(r"</?font[^>]*>|\{\\[^}]*\}", "", line).replace("\\h", " ")
+                line = " ".join(line.split())
+                if line:
+                    body.append(line)
+            if body:
+                cues.append((lines[1].strip(), body))
+        return "".join(f"{i}\n{times}\n" + "\n".join(body) + "\n\n" for i, (times, body) in enumerate(cues, 1))
+
+    async def save_captions(self, mp4_path: Path) -> bool:
+        """The export's captions as a .srt beside it (Settings → Storage & exports). False when there
+        are none (some graphics-chip encoders leave them out), and then no file is left."""
+        srt = mp4_path.with_suffix(".srt")
+
+        def run() -> bool:
+            try:
+                proc = subprocess.run(self.captions_cmd(mp4_path, srt), capture_output=True, timeout=3 * 3600,
+                                      creationflags=NO_WINDOW)
+                text = srt.read_text(encoding="utf-8", errors="replace") if proc.returncode == 0 and srt.exists() else ""
+                cleaned = self.clean_srt(text)
+                if cleaned:
+                    srt.write_text(cleaned, encoding="utf-8")
+                    return True
+            except Exception as e:
+                print(f"[ExportWorker] Couldn't save the captions of {mp4_path.name}: {e}")
+            srt.unlink(missing_ok=True)
+            return False
+        return await asyncio.to_thread(run)
+
+    @staticmethod
     def ts_start_time(path: Path) -> float:
         """Where a .ts file's timestamps start (FFmpeg's own start at about 1.4 s)."""
         try:
@@ -1196,6 +1257,10 @@ class TranscodeManager:
                                      "error": f"Couldn't finish the MP4: {remux_error[-200:]}",
                                      "completed_at": datetime.now(timezone.utc).isoformat()})
                     return True
+                if load_settings().get("export_captions"):
+                    # (before Plex is told, so its first look finds them)
+                    found = await self.save_captions(output_path)
+                    print(f"[ExportWorker] Export {job_id}: {'captions saved as .srt' if found else 'no captions to save'}")
                 if episode and load_settings().get("export_nfo"):
                     try:
                         output_path.with_suffix(".nfo").write_text(self.export_nfo(episode), encoding="utf-8")

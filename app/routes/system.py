@@ -48,6 +48,7 @@ class SettingsUpdate(BaseModel):
     export_nfo: Optional[bool] = None
     export_cut_breaks: Optional[bool] = None
     export_chapters: Optional[bool] = None
+    export_captions: Optional[bool] = None
     tuner_enabled: Optional[bool] = None
     rerecord_failed: Optional[bool] = None
     skip_commercials: Optional[bool] = None
