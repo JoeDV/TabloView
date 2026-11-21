@@ -937,6 +937,41 @@ class TranscodeManager:
         said were the show), when Settings asks for it. Otherwise none."""
         if not episode or not load_settings().get("export_cut_breaks"):
             return []
+        return TranscodeManager.found_breaks(episode)
+
+    @staticmethod
+    def chapter_breaks(episode: Optional[Dict[str, Any]]) -> List[Dict[str, float]]:
+        """The breaks to mark as chapters in an export that keeps them (Settings → Storage & exports):
+        players that skip by chapter (Plex, Jellyfin, Kodi, VLC) then jump past each one, and the
+        recording stays whole."""
+        s = load_settings()
+        if not episode or s.get("export_cut_breaks") or s.get("export_chapters") is False:
+            return []
+        return TranscodeManager.found_breaks(episode)
+
+    @staticmethod
+    def chapters_metadata(breaks: List[Dict[str, float]], length: float) -> str:
+        """An FFmpeg metadata file of chapters: Part 1, Commercial break, Part 2... An MP4 made from
+        the .ts starts at 0, the same as the recording's times (and the breaks')."""
+        end = max([float(length or 0)] + [b["end"] for b in breaks])
+        marks: List[Tuple[float, float, str]] = []
+        at, part = 0.0, 1
+        for b in breaks:
+            if b["start"] - at >= 1:
+                marks.append((at, b["start"], f"Part {part}"))
+                part += 1
+            marks.append((max(at, b["start"]), b["end"], "Commercial break"))
+            at = max(at, b["end"])
+        if end - at >= 1:
+            marks.append((at, end, f"Part {part}"))
+        lines = [";FFMETADATA1"]
+        for a, b, title in marks:
+            lines += ["[CHAPTER]", "TIMEBASE=1/1000", f"START={round(a * 1000)}", f"END={round(b * 1000)}", f"title={title}"]
+        return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def found_breaks(episode: Dict[str, Any]) -> List[Dict[str, float]]:
+        """The breaks TabloView found in this recording (5 s or longer), earliest first."""
         from .database import get_commercials
         found = get_commercials([episode["id"]]).get(episode["id"]) or {}
         if found.get("status") not in ("done", "unreliable"):
@@ -970,12 +1005,13 @@ class TranscodeManager:
 
     @staticmethod
     def remux_cmd(part_path: Path, output_path: Path, tags: Optional[List[str]] = None,
-                  cut_list_path: Optional[Path] = None) -> List[str]:
+                  cut_list_path: Optional[Path] = None, chapters_path: Optional[Path] = None) -> List[str]:
         """The finished (or salvaged) .ts as the MP4, without converting anything again, with the
-        episode's details written in (export_tags)."""
+        episode's details written in (export_tags), and its breaks as chapters if given."""
         source = (["-f", "concat", "-safe", "0", "-i", str(cut_list_path)] if cut_list_path
                   else ["-fflags", "+genpts", "-i", str(part_path)])
-        return [FFMPEG_PATH, "-y", *source, "-map", "0:v", "-map", "0:a?",
+        chapters = ["-i", str(chapters_path), "-map_chapters", "1"] if chapters_path else []
+        return [FFMPEG_PATH, "-y", *source, *chapters, "-map", "0:v", "-map", "0:a?",
                 "-c", "copy", *(tags or []), "-movflags", "+faststart", str(output_path)]
 
     @staticmethod
@@ -990,22 +1026,28 @@ class TranscodeManager:
         return float(m.group(1)) if m else 0.0
 
     async def _remux(self, part_path: Path, output_path: Path, tags: Optional[List[str]] = None,
-                     breaks: Optional[List[Dict[str, float]]] = None, length: float = 0) -> Optional[str]:
-        """Re-package the .ts as the MP4, without the breaks if given; None if it worked, otherwise why not."""
+                     breaks: Optional[List[Dict[str, float]]] = None, length: float = 0,
+                     chapters: Optional[List[Dict[str, float]]] = None) -> Optional[str]:
+        """Re-package the .ts as the MP4, without the breaks if given, or with chapters at them;
+        None if it worked, otherwise why not."""
         def run() -> Optional[str]:
-            cut_path = None
+            cut_path = chapters_path = None
             if breaks:
                 cut_path = part_path.with_name(part_path.stem + ".cuts.txt")
                 cut_path.write_text(self.cut_list(part_path, self.kept_pieces(breaks, length),
                                                   self.ts_start_time(part_path)), encoding="utf-8")
+            elif chapters:
+                chapters_path = part_path.with_name(part_path.stem + ".chapters.txt")
+                chapters_path.write_text(self.chapters_metadata(chapters, length), encoding="utf-8")
             try:
-                return run_remux(cut_path)
+                return run_remux(cut_path, chapters_path)
             finally:
-                if cut_path:
-                    cut_path.unlink(missing_ok=True)
+                for p in (cut_path, chapters_path):
+                    if p:
+                        p.unlink(missing_ok=True)
 
-        def run_remux(cut_path: Optional[Path]) -> Optional[str]:
-            proc = subprocess.Popen(self.remux_cmd(part_path, output_path, tags, cut_path), stdout=subprocess.DEVNULL,
+        def run_remux(cut_path: Optional[Path], chapters_path: Optional[Path]) -> Optional[str]:
+            proc = subprocess.Popen(self.remux_cmd(part_path, output_path, tags, cut_path, chapters_path), stdout=subprocess.DEVNULL,
                                     stderr=subprocess.PIPE, creationflags=NO_WINDOW, **childproc.popen_kwargs())
             childproc.tie_to_app(proc)
             _, err = proc.communicate()
@@ -1141,8 +1183,12 @@ class TranscodeManager:
                 if cuts:
                     print(f"[ExportWorker] Export {job_id}: leaving out {len(cuts)} commercial breaks "
                           f"({round(sum(b['end'] - b['start'] for b in cuts))} s)")
+                # Breaks kept in: marked as chapters instead (none when they were left out)
+                chapters = [] if cuts or cut_now else self.chapter_breaks(episode)
+                if chapters:
+                    print(f"[ExportWorker] Export {job_id}: {len(chapters)} commercial breaks marked as chapters")
                 remux_error = await self._remux(part_path, output_path, self.export_tags(episode) if episode else None,
-                                                cuts, expected_duration)
+                                                cuts, expected_duration, chapters)
                 if remux_error:
                     print(f"[ExportWorker] Export {job_id}: couldn't make the MP4: {remux_error}")
                     output_path.unlink(missing_ok=True)
