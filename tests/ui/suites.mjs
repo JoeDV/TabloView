@@ -667,10 +667,21 @@ export const SUITES = {
     await b.ev(`[...document.querySelectorAll('[data-grp="top"]')].pop().click(), true`);
     t.check('Top moves a group first', await b.ev(`document.querySelector('.grp-name').textContent.startsWith(${JSON.stringify(names[names.length - 1])})`));
     await b.ev(`document.querySelector('[data-grp="down"][data-i="1"]').click(), true`);
+    // Bottom sends the first group to the end
+    const first = await b.ev(`document.querySelector('.grp-name').firstChild.textContent.trim()`);
+    await b.ev(`document.querySelector('[data-grp="bottom"][data-i="0"]').click(), true`);
+    t.check('Bottom moves a group last', await b.ev(`[...document.querySelectorAll('.grp-name')].pop().textContent.startsWith(${JSON.stringify(first)})`));
+    await b.ev(`document.querySelector('[data-grp="top"][data-i="${names.length - 1}"]').click(), true`);  // (and back)
     const want = [names[names.length - 1], names[1], names[0], ...names.slice(2, -1)];
+    // Hide the second group from here (the switch at the start of its row)
+    const hideName = want[1], wasHidden = await b.ev(`state.extraGroups.find(g => g.name === ${JSON.stringify(hideName)}).hidden`);
+    await b.ev(`(() => { const box = document.querySelector('[data-grp-show="1"]'); box.checked = !box.checked; box.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    t.check('The switch marks a group hidden (or shown)', await b.ev(`document.querySelectorAll('.grp-row')[1].classList.contains('dim') === ${!wasHidden}`));
     await b.ev(`window.__writes = [], document.querySelector('.overlay [data-action="modal-ok"]').click(), true`);
     const sent = `window.__writes.filter(w => w[1].includes('/api/live/extra/group_order')).map(w => JSON.parse(w[2]).order)`;
     t.check('Save sends the new order', await b.waitFor(`JSON.stringify(${sent}) === ${JSON.stringify(JSON.stringify([want]))}`, 5000));
+    const hid = `window.__writes.filter(w => w[1].endsWith('/api/live/extra/group')).map(w => JSON.parse(w[2]))`;
+    t.check('Save hides (or shows) that group', await b.waitFor(`JSON.stringify(${hid}) === ${JSON.stringify(JSON.stringify([{ group: hideName, hidden: !wasHidden }]))}`, 5000));
     await b.ev(`document.querySelector('[data-action="extra-group-arrange"]').click(), true`);
     await b.waitFor(`document.querySelector('#grpReset')`);
     await b.ev(`window.__writes = [], document.querySelector('#grpReset').click(), true`);

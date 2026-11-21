@@ -3041,24 +3041,28 @@ function extraGroupBar(page, channels, hiddenLink = '') {
 
 // Live TV → More → Arrange groups: the playlist's groups in the order chosen (a forum request,
 // 2026-11-20). Saved by name; groups not moved, and new ones, follow in the playlist's own order.
+// Live TV → More → Arrange groups: the order, and which are shown (a forum request, 2026-11-21: hide
+// and show groups here, and a Bottom button beside Top). Both take effect on Save
 async function arrangeGroups() {
-  let list = (state.extraGroups || []).map(g => ({ ...g }));
+  let list = (state.extraGroups || []).map(g => ({ ...g, was: !!g.hidden }));
   let filter = '';
   const draw = el => {
     const words = filter.toLowerCase().split(/\s+/).filter(Boolean);
     const rows = list.map((g, i) => ({ g, i })).filter(({ g }) => words.every(w => g.name.toLowerCase().includes(w)));
     el.querySelector('#grpList').innerHTML = rows.length ? rows.map(({ g, i }) => `
       <div class="grp-row${g.hidden ? ' dim' : ''}">
+        <input type="checkbox" class="switch" data-grp-show="${i}" ${g.hidden ? '' : 'checked'} title="${g.hidden ? 'Hidden: turn on to show it' : 'Shown: turn off to hide it'}" aria-label="Show ${esc(g.name)}">
         <span class="grp-name">${esc(g.name)} <span class="dim">(${g.count.toLocaleString()}${g.hidden ? ', hidden' : ''})</span></span>
         <button class="btn btn-sm" data-grp="top" data-i="${i}" ${i ? '' : 'disabled'} title="Move to the top">Top</button>
         <button class="btn btn-sm" data-grp="up" data-i="${i}" ${i ? '' : 'disabled'} title="Move up" aria-label="Move up">↑</button>
         <button class="btn btn-sm" data-grp="down" data-i="${i}" ${i < list.length - 1 ? '' : 'disabled'} title="Move down" aria-label="Move down">↓</button>
+        <button class="btn btn-sm" data-grp="bottom" data-i="${i}" ${i < list.length - 1 ? '' : 'disabled'} title="Move to the bottom">Bottom</button>
       </div>`).join('') : '<div class="dim" style="padding:12px 0">No group matches.</div>';
   };
   const ok = await openModal(`
     <div class="dialog-body">
       <div class="dialog-title">Arrange groups</div>
-      <div class="dialog-text">The order of the groups in More and in its group picker. Groups added to the playlist later go at the end.</div>
+      <div class="dialog-text">The order of the groups in More and in its group picker, and which ones are shown: turn a group off to hide it. Groups added to the playlist later go at the end.</div>
       ${list.length > 12 ? '<input class="input" id="grpFilter" placeholder="Find a group" style="width:100%;margin-top:12px">' : ''}
       <div id="grpList" class="grp-list"></div>
     </div>
@@ -3072,11 +3076,19 @@ async function arrangeGroups() {
         const b = e.target.closest('[data-grp]');
         if (!b) return;
         const i = +b.dataset.i, [g] = list.splice(i, 1);
-        const to = b.dataset.grp === 'top' ? 0 : b.dataset.grp === 'up' ? i - 1 : i + 1;
+        const to = { top: 0, up: i - 1, down: i + 1, bottom: list.length }[b.dataset.grp];
         list.splice(to, 0, g);
         draw(el);
         const moved = el.querySelector(`[data-grp="${b.dataset.grp}"][data-i="${to}"]`);
         if (moved && !moved.disabled) moved.focus();
+      });
+      el.querySelector('#grpList').addEventListener('change', e => {
+        const box = e.target.closest('[data-grp-show]');
+        if (!box) return;
+        list[+box.dataset.grpShow].hidden = !box.checked;
+        draw(el);
+        const again = el.querySelector(`[data-grp-show="${box.dataset.grpShow}"]`);
+        if (again) again.focus();
       });
       const f = el.querySelector('#grpFilter');
       if (f) f.addEventListener('input', () => { filter = f.value; draw(el); });
@@ -3092,7 +3104,14 @@ async function arrangeGroups() {
   if (!ok) return;
   try {
     await api('/api/live/extra/group_order', { method: 'POST', body: JSON.stringify({ order: list.map(g => g.name) }) });
-    toast('Groups arranged');
+    const changed = list.filter(g => !!g.hidden !== g.was);
+    for (const g of changed) {
+      await api('/api/live/extra/group', { method: 'POST', body: JSON.stringify({ group: g.name, hidden: !!g.hidden }) });
+    }
+    if (changed.some(g => g.hidden && g.name === state.epgGroup)) state.epgGroup = '';  // (the group picked is hidden now)
+    const hid = changed.filter(g => g.hidden).length, shown = changed.length - hid;
+    toast(['Groups arranged', hid ? `${hid === 1 ? '1 group' : `${hid} groups`} hidden` : '', shown ? `${shown === 1 ? '1 group' : `${shown} groups`} shown again` : '']
+      .filter(Boolean).join(' · '));
     loadEpg();
   } catch (err) { toast(err.message, 'error'); }
 }
@@ -3775,7 +3794,7 @@ PAGES.help = async (r, token) => {
       <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
     let html;
     try {
-      const res = await fetch('/static/help.html?v=38');
+      const res = await fetch('/static/help.html?v=39');
       if (!res.ok) throw new Error(res.status);
       html = await res.text();
     } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
