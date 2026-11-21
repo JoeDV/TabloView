@@ -14,10 +14,11 @@ from typing import Any, Dict, List, Optional
 
 
 from . import redact
-from .database import get_connection, get_sync_meta, set_sync_meta
+from .database import get_connection, get_sync_meta, save_cloud_art, set_sync_meta
 
 DAYS = 8  # today and the next 7; the cloud has little beyond that
 REFRESH_SECONDS = 6 * 3600
+CLOUD_ART_VERSION = 1  # raise to load the antenna shows' artwork again at the next start
 WORKER_INTERVAL = 60
 CLOUD_HOST = "https://lighthousetv.ewscloud.com"
 USER_AGENT = "Tablo-FAST/2.0.0 (Mobile; iPhone; iOS 16.6)"
@@ -95,6 +96,26 @@ def _image(airing: Dict[str, Any]) -> str:
     return ""
 
 
+def art_from_grid(grid: List[Dict[str, Any]]) -> Dict[str, Dict[str, Optional[str]]]:
+    """The antenna shows' artwork in one day of the cloud guide grid: {show identifier: {cover_url,
+    backdrop_url}} (the landscape cover with the title, and the backdrop without it, as the Tablo's
+    own cover_image and background_image). See database.cloud_art."""
+    art: Dict[str, Dict[str, Optional[str]]] = {}
+    for item in grid:
+        if (item.get("channel") or {}).get("kind") == "ott":
+            continue
+        for a in item.get("airings") or []:
+            ident = (a.get("show") or {}).get("identifier")
+            if not ident or ident in art:
+                continue
+            by_kind = {i.get("kind"): i.get("url") for i in a.get("images") or [] if i.get("url")}
+            cover = by_kind.get("coverLarge") or by_kind.get("coverSmall")
+            backdrop = by_kind.get("backdropLarge") or by_kind.get("background") or by_kind.get("backdropSmall")
+            if cover or backdrop:
+                art[ident] = {"cover_url": cover, "backdrop_url": backdrop}
+    return art
+
+
 def rows_from_grid(grid: List[Dict[str, Any]]) -> List[tuple]:
     """Streaming channels' airings from one day of the cloud guide grid, as stream_airings rows."""
     rows = []
@@ -151,13 +172,22 @@ async def refresh() -> int:
     status["refreshing"] = True
     try:
         rows: List[tuple] = []
+        art: Dict[str, Dict[str, Optional[str]]] = {}
         today = date.today()
         for n in range(DAYS):
             day = (today + timedelta(days=n)).isoformat()
             grid = await _fetch_day(tablo_manager.device, day)
             rows += rows_from_grid(grid)
+            art = {**art_from_grid(grid), **art}  # (the earliest day's pictures)
             await asyncio.sleep(1)
         await asyncio.to_thread(save, rows)
+        # The antenna shows' artwork from the same days (no extra requests)
+        try:
+            changed = await asyncio.to_thread(save_cloud_art, art)
+            print(f"[Streaming] Artwork for {len(art)} antenna shows from Tablo's cloud guide (on {changed} guide entries and shows)")
+            set_sync_meta("cloud_art_version", str(CLOUD_ART_VERSION))
+        except Exception as e:  # (the streaming listings are saved either way)
+            print(f"[Streaming] Couldn't keep the cloud guide's artwork: {e}")
         set_sync_meta("last_streaming_sync", datetime.now(timezone.utc).isoformat())
         status["error"] = None
         print(f"[Streaming] Saved {len(rows)} streaming airings for the next {DAYS} days")
@@ -176,7 +206,8 @@ def last_refresh() -> Optional[str]:
 
 def due() -> bool:
     last = last_refresh()
-    if not last:
+    # (an update that started keeping the cloud's artwork: right away, not at the next refresh)
+    if not last or get_sync_meta("cloud_art_version") != str(CLOUD_ART_VERSION):
         return True
     try:
         return (datetime.now(timezone.utc) - datetime.fromisoformat(last)).total_seconds() > REFRESH_SECONDS

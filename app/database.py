@@ -179,6 +179,19 @@ def init_db():
             )
         """)
 
+        # Artwork from Tablo's cloud guide, by the show's ID there (the same as the Tablo's own guide's
+        # "identifier"). The Tablo's own guide can keep a stock picture long after the cloud has the
+        # show's real artwork (Eternally Yours, CBS, 2026-11-21: remotes and pretzels), so the cloud's
+        # wins where there is one (as in Tablo's own apps)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS cloud_art (
+                show_identifier TEXT PRIMARY KEY,
+                cover_url TEXT,
+                backdrop_url TEXT,
+                updated_at TEXT
+            )
+        """)
+
         # Recordings to watch one after another, in order (Watch list page)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS watch_list (
@@ -282,10 +295,80 @@ def set_sync_meta(key: str, value: str):
         conn.commit()
 
 
+def _raw_dict(raw: Any) -> Dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    try:
+        d = json.loads(raw or "{}")
+        return d if isinstance(d, dict) else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def _jx(column: str, key: str) -> str:
+    """json_extract that gives NULL for a row whose raw_json isn't JSON (a few guide entries' is empty,
+    and json_extract stops the whole statement with "malformed JSON" on one)."""
+    return f"(CASE WHEN json_valid({column}) THEN json_extract({column}, '$.{key}') END)"
+
+
+def _art_for_identifier(conn, identifier: Optional[str]) -> Optional[Any]:
+    if not identifier:
+        return None
+    return conn.execute("SELECT cover_url, backdrop_url FROM cloud_art WHERE show_identifier = ?", (identifier,)).fetchone()
+
+
+def _art_for_guide_path(conn, guide_path: Optional[str]) -> Optional[Any]:
+    """Cloud artwork for a recorded show, through its guide entry (whose identifier the cloud uses)."""
+    if not guide_path:
+        return None
+    return conn.execute(f"""
+        SELECT c.cover_url, c.backdrop_url FROM guide_shows g
+        JOIN cloud_art c ON c.show_identifier = {_jx('g.raw_json', 'identifier')}
+        WHERE g.path = ?
+    """, (guide_path,)).fetchone()
+
+
+def save_cloud_art(art: Dict[str, Dict[str, Optional[str]]]) -> int:
+    """Keep the cloud guide's artwork ({show identifier: {cover_url, backdrop_url}}) and put it on the
+    guide entries and recorded shows it belongs to. Entries stay when a show stops airing, so a
+    recorded show keeps its artwork. Returns how many guide entries and shows changed."""
+    now = datetime.now(timezone.utc).isoformat()
+    with get_connection() as conn:
+        conn.executemany("""
+            INSERT INTO cloud_art (show_identifier, cover_url, backdrop_url, updated_at) VALUES (?, ?, ?, ?)
+            ON CONFLICT(show_identifier) DO UPDATE SET
+                cover_url = COALESCE(excluded.cover_url, cloud_art.cover_url),
+                backdrop_url = COALESCE(excluded.backdrop_url, cloud_art.backdrop_url),
+                updated_at = excluded.updated_at
+        """, [(i, a.get("cover_url"), a.get("backdrop_url"), now) for i, a in art.items()])
+        changed = conn.execute(f"""
+            UPDATE guide_shows SET
+                cover_url = COALESCE((SELECT c.cover_url FROM cloud_art c WHERE c.show_identifier = {_jx('guide_shows.raw_json', 'identifier')}), cover_url),
+                backdrop_url = COALESCE((SELECT c.backdrop_url FROM cloud_art c WHERE c.show_identifier = {_jx('guide_shows.raw_json', 'identifier')}), backdrop_url)
+            WHERE {_jx('raw_json', 'identifier')} IN (SELECT show_identifier FROM cloud_art)
+        """).rowcount
+        changed += conn.execute(f"""
+            UPDATE shows SET
+                cover_url = COALESCE((SELECT c.cover_url FROM guide_shows g JOIN cloud_art c ON c.show_identifier = {_jx('g.raw_json', 'identifier')}
+                                      WHERE g.path = {_jx('shows.raw_json', 'guide_path')}), cover_url),
+                backdrop_url = COALESCE((SELECT c.backdrop_url FROM guide_shows g JOIN cloud_art c ON c.show_identifier = {_jx('g.raw_json', 'identifier')}
+                                         WHERE g.path = {_jx('shows.raw_json', 'guide_path')}), backdrop_url)
+            WHERE {_jx('raw_json', 'guide_path')} IN (
+                SELECT g.path FROM guide_shows g JOIN cloud_art c ON c.show_identifier = {_jx('g.raw_json', 'identifier')})
+        """).rowcount
+        conn.commit()
+    return changed
+
+
 def upsert_show(show_data: Dict[str, Any]):
     now = datetime.now(timezone.utc).isoformat()
     raw = json.dumps(show_data.get("raw_json", {})) if isinstance(show_data.get("raw_json"), (dict, list)) else show_data.get("raw_json", "")
     with get_connection() as conn:
+        # The cloud guide's artwork wins over the Tablo's own (see cloud_art)
+        art = _art_for_guide_path(conn, _raw_dict(show_data.get("raw_json")).get("guide_path"))
+        if art:
+            show_data = {**show_data, "cover_url": art["cover_url"] or show_data.get("cover_url"),
+                         "backdrop_url": art["backdrop_url"] or show_data.get("backdrop_url")}
         conn.execute("""
             INSERT INTO shows (
                 id, title, category, cover_url, backdrop_url, description,
@@ -884,6 +967,11 @@ def upsert_guide_show(data: Dict[str, Any]):
     raw = json.dumps(data.get("raw_json", {})) if isinstance(data.get("raw_json"), (dict, list)) else data.get("raw_json", "")
     genres_val = json.dumps(data.get("genres", [])) if isinstance(data.get("genres"), list) else str(data.get("genres", "[]"))
     with get_connection() as conn:
+        # The cloud guide's artwork wins over the Tablo's own (see cloud_art)
+        art = _art_for_identifier(conn, _raw_dict(data.get("raw_json")).get("identifier"))
+        if art:
+            data = {**data, "cover_url": art["cover_url"] or data.get("cover_url"),
+                    "backdrop_url": art["backdrop_url"] or data.get("backdrop_url")}
         conn.execute("""
             INSERT INTO guide_shows (
                 path, object_id, title, category, description, cover_url, backdrop_url,
