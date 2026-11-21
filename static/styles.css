@@ -13,7 +13,7 @@
 
   --text: #e9ebf0;
   --text-2: #a5abb9;
-  --text-3: #6f7686;
+  --text-3: #7c8394;  /* 4.8:1 on the cards (#6f7686 was 4.0:1, under the 4.5:1 guideline for small text) */
 
   --accent: #5b8cff;
   --accent-hover: #739dff;
@@ -876,10 +876,13 @@ button.tuner-pill:hover { border-color: var(--border-strong); color: var(--text)
 .upnext-title { font-weight: 650; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .upnext-actions { display: flex; gap: 8px; margin-top: 10px; }
 .tl-time { font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--text-2); min-width: 54px; text-align: center; }
-.tl-track { position: relative; flex: 1; height: 8px; border-radius: 8px; background: rgba(255, 255, 255, 0.14); cursor: pointer; }
+.tl-track { position: relative; flex: 1; height: 8px; border-radius: 8px; background: rgba(255, 255, 255, 0.14); cursor: pointer; transition: height 0.12s; }
+/* A taller invisible area to grab, above and below the bar (easier with a mouse, and on a touchscreen) */
+.tl-track::before { content: ''; position: absolute; left: 0; right: 0; top: -10px; bottom: -10px; }
+.tl-track:hover { height: 11px; }
 .tl-avail { position: absolute; top: 0; bottom: 0; border-radius: 8px; background: rgba(255, 255, 255, 0.28); }
 .tl-played { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 8px; background: var(--accent); }
-.tl-played::after { content: ''; position: absolute; right: -6px; top: -3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; }
+.tl-played::after { content: ''; position: absolute; right: -6px; top: 50%; transform: translateY(-50%); width: 14px; height: 14px; border-radius: 50%; background: #fff; }
 .tl-breaks { position: absolute; inset: 0; pointer-events: none; }
 .tl-breaks span { position: absolute; top: 0; bottom: 0; background: rgba(242, 184, 75, 0.85); border-radius: 2px; }
 .tl-dropouts span { background: rgba(239, 76, 76, 0.9); }  /* signal dropouts: red, beside the yellow breaks */
@@ -1174,3 +1177,26 @@ label.set-row-switch:hover { background: rgba(255, 255, 255, 0.015); }
 .pl-row.active { border-color: var(--border-strong); }
 .pl-row .pl-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .pl-row .pl-url { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Touchscreens (no hover): the guide's star, hide and play buttons stay in the row, beside the
+   channel's name, since a tap on the row plays the channel */
+@media (hover: none) {
+  .epg-ch-acts { display: flex; position: static; transform: none; padding-left: 0; background: none; box-shadow: none; }
+  .pb-btn[data-action="pb-help"] { display: none; }  /* keyboard shortcuts */
+}
+
+/* Narrow windows and phones: the player's controls wrap onto a second row instead of crowding, and
+   the channel list covers the picture rather than squeezing the timeline */
+@media (max-width: 760px) {
+  .pb-controls { flex-wrap: wrap; justify-content: center; row-gap: 4px; }
+  .pb-controls .grow, .pb-volume, .pb-btn[data-action="pb-help"] { display: none; }
+  .chan-panel { width: 100%; }
+  .player.chan-open .player-timeline, .player.chan-open .player-top { right: 0; }
+}
+
+/* Less motion when the system asks for it: no pulsing, shimmering or sliding (loading spinners keep
+   turning, so it's clear something is happening) */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+  .spinner, .spin { animation-duration: 0.9s !important; animation-iteration-count: infinite !important; }
+}

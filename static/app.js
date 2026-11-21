@@ -7046,7 +7046,10 @@ function wireEvents() {
   track.addEventListener('mousemove', e => {
     const hover = $('#tlHover');
     const w = state.stream.channelId && player.liveWindow();
-    const label = w ? `−${fmtClock((1 - fractionAt(e)) * (w.end - w.start))}` : fmtClock(timeAt(e));
+    // Recordings: say what a coloured mark is (its own tooltip can't show: the marks let clicks through)
+    const at = timeAt(e), within = list => (list || []).some(b => at >= b.start && at < b.end);
+    const what = w ? '' : within(state.stream.dropouts) ? 'Signal dropout · ' : within(state.stream.breaks) ? 'Commercial break · ' : '';
+    const label = w ? `−${fmtClock((1 - fractionAt(e)) * (w.end - w.start))}` : what + fmtClock(at);
     // Recordings: a preview frame, once that part has been converted (frames every 5 s, named by position)
     const frame = w ? '' : player.previewUrl(timeAt(e));
     let img = hover.querySelector('img');
