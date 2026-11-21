@@ -13,7 +13,8 @@ async function api(url, options = {}) {
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     if (res.status === 401 && (data.code === 'pin_required' || data.code === 'pin_not_set')) showPin(data.code);
-    throw Object.assign(new Error(data.detail || `${res.status} ${res.statusText}`), { status: res.status, code: data.code });
+    const detail = Array.isArray(data.detail) ? `TabloView couldn't do that (${(data.detail[0] && data.detail[0].msg) || 'not accepted'})` : data.detail;
+    throw Object.assign(new Error(detail || `${res.status} ${res.statusText}`), { status: res.status, code: data.code });
   }
   return res.json();
 }

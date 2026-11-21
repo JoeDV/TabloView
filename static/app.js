@@ -87,12 +87,23 @@ function plural(n, word, pluralWord) {
 // The server rejects state-changing requests without X-TabloView (blocks other websites)
 const API_HEADERS = { 'Content-Type': 'application/json', 'X-TabloView': '1' };
 
+// The server's reason as words: FastAPI sends a list of objects for a request it refuses as
+// malformed (a 422), which showed as "[object Object]"
+function errorText(detail, fallback) {
+  if (typeof detail === 'string' && detail) return detail;
+  if (Array.isArray(detail) && detail.length) {
+    const d = detail[0];
+    return `TabloView couldn't save that (${(d && (d.msg || d.type)) || 'not accepted'}${d && d.loc ? `: ${d.loc.slice(1).join(' ')}` : ''}). Try reloading the page.`;
+  }
+  return fallback;
+}
+
 async function api(url, options = {}) {
   const res = await fetch(url, { headers: API_HEADERS, ...options });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     if (res.status === 401 && (data.code === 'pin_required' || data.code === 'pin_not_set')) askForPin(data.code);
-    throw Object.assign(new Error(data.detail || `${res.status} ${res.statusText}`), { status: res.status });
+    throw Object.assign(new Error(errorText(data.detail, `${res.status} ${res.statusText}`)), { status: res.status });
   }
   return res.json();
 }
