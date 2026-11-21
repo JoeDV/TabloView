@@ -25,6 +25,7 @@ for (const name of names) {
     t.check('suite finished without errors', false, e.message);
   } finally {
     t.check('no JavaScript errors', b.errors.length === 0, b.errors.join(' | ').slice(0, 300));
+    t.check('no saves the server would refuse', b.refused.length === 0, b.refused.join(' | ').slice(0, 400));
     // Always stop playback so a failed check can't leave a stream (and FFmpeg) running
     try { if (await b.ev('player.isOpen()')) { await b.ev('player.close()'); await new Promise(r => setTimeout(r, 1500)); } } catch {}
     b.close();

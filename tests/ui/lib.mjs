@@ -41,6 +41,18 @@ const SHIM = `(() => {
     }
     if (method !== 'GET' && !allowed.some(r => r.test(u.split('?')[0]))) {
       window.__writes.push([method, u, opts.body || '']);
+      // Faked, but first checked: would the server take it? (POST /api/dev/check validates without
+      // running anything). One it would refuse is answered as the server would, and reported to the
+      // test run (1.4.1's Customize on Home sent a section the server didn't know, and every save failed)
+      if (u.startsWith('/api/') || u.startsWith(location.origin + '/api/')) {
+        const check = await realFetch('/api/dev/check', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-TabloView': '1' },
+          body: JSON.stringify({ method, url: u, body: typeof opts.body === 'string' ? opts.body : null }) })
+          .then(r => r.json()).catch(() => ({ ok: true }));
+        if (!check.ok) {
+          try { window.__tvRefused(JSON.stringify([method, u, check.detail])); } catch {}
+          return new Response(JSON.stringify({ detail: check.detail }), { status: check.status || 422, headers: { 'Content-Type': 'application/json' } });
+        }
+      }
       return reply({ success: true, deleted_count: 0, deleted_ids: JSON.parse(opts.body || '{}').episode_ids || [], errors: [], changed_ids: [], session_id: null, stream_url: '' });
     }
     return realFetch(url, opts);
@@ -87,9 +99,11 @@ export async function launch() {
   let id = 0;
   const pending = new Map();
   const errors = [];
+  const refused = [];  // saves the page made that the server would refuse (see the fetch shim)
   ws.addEventListener('message', e => {
     const m = JSON.parse(e.data);
     if (m.method === 'Runtime.exceptionThrown') errors.push(m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text);
+    if (m.method === 'Runtime.bindingCalled' && m.params.name === '__tvRefused') refused.push(m.params.payload);
     if (pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
   });
   const send = (method, params = {}) => new Promise(res => { const i = ++id; pending.set(i, res); ws.send(JSON.stringify({ id: i, method, params })); });
@@ -100,6 +114,7 @@ export async function launch() {
   };
 
   await send('Runtime.enable');
+  await send('Runtime.addBinding', { name: '__tvRefused' });
   await send('Page.enable');
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
   // Install the fetch shim before any page script runs, on every navigation
@@ -125,7 +140,7 @@ export async function launch() {
     try { fs.rmSync(profile, { recursive: true, force: true }); } catch {}
   };
 
-  return { send, ev, waitFor, go, open, close, errors };
+  return { send, ev, waitFor, go, open, close, errors, refused };
 }
 
 export async function api(p) {

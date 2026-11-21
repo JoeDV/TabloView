@@ -12,6 +12,22 @@ async function transcodeSessions() {
 }
 
 export const SUITES = {
+  // Home → Customize: turn a section off and save (1.4.1 couldn't: the server refused every layout,
+  // and the page showed [object Object]). The save is faked, but checked with the server first
+  async homecustomize(b, t) {
+    await b.open('#/');
+    await b.waitFor(`document.querySelector('[data-action="home-customize"]')`, 20000);
+    await b.ev(`document.querySelector('[data-action="home-customize"]').click()`);
+    t.check('Customize opens with every section', await b.waitFor(`document.querySelectorAll('.hs-row').length === HOME_SECTIONS.length`, 10000));
+    await b.ev(`(() => { const box = document.querySelector('.hs-row[data-id="onnow"] input'); box.checked = false; box.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await b.ev(`document.querySelector('.overlay [data-action="modal-ok"]').click()`);
+    await sleep(1500);
+    const saved = await b.ev(`(window.__writes || []).filter(w => w[1].startsWith('/api/settings')).map(w => JSON.parse(w[2]))`);
+    t.check('Saving sends the layout, On now turned off', saved.length === 1 && saved[0].home_hidden.includes('onnow') && saved[0].home_order.length === await b.ev('HOME_SECTIONS.length'),
+      JSON.stringify(saved).slice(0, 200));
+    t.check('No error shown', !(await b.ev(`[...document.querySelectorAll('.toast')].some(x => /couldn|object Object/i.test(x.textContent))`)));
+  },
+
   async pages(b, t) {
     await b.open('#/');
     for (const [hash, ready, label] of [

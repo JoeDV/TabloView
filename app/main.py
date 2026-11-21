@@ -26,7 +26,7 @@ from .transcode import transcode_manager
 
 from .routes import auth, shows, episodes, system, debug, guide, live, watchlist
 from .routes import streaming as streaming_routes
-from .routes import devtools
+from .routes import devcheck, devtools
 from .routes import plex_routes
 
 
@@ -227,6 +227,7 @@ if devtools.ENABLED:  # developer tools (TABLOVIEW_DEV_TOOLS=1): never in the ap
     app.include_router(devtools.router)
 app.include_router(streaming_routes.router)
 app.include_router(plex_routes.router)
+app.include_router(devcheck.router)  # the browser tests' check of a save they fake
 
 
 # ---------------------------------------------------------------------------
