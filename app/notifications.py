@@ -161,5 +161,7 @@ async def check_all(recordings: bool = True, conflicts: bool = True) -> None:
         if conflicts:
             from .routes.live import model_tuner_count
             check_conflicts(await model_tuner_count())
+            from . import alerts
+            alerts.notify_new()  # guide alerts: new matches since the last guide sync
     except Exception as e:
         print(f"[Notify] Check failed: {e}")

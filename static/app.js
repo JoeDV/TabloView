@@ -39,6 +39,7 @@ const ICONS = {
   antenna: '<path d="M12 12 6 2M12 12l6-10"/><circle cx="12" cy="13" r="1.6"/><path d="M12 15v6M8 21h8"/>',
   info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
   copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
   alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/>',
   lock: '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
   pause: '<rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor" stroke="none"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor" stroke="none"/>',
@@ -669,6 +670,66 @@ function showCard(s) {
     </div>`;
 }
 
+// A guide alert's match: when, the show, the word it matched, and Record (or that it's set to)
+function alertRow(a) {
+  const se = fmt.se(a.season_number, a.episode_number);
+  const art = imgUrl(a.cover_url || a.backdrop_url);
+  const live = new Date(a.air_datetime).getTime() <= Date.now();
+  return `
+    <div class="list-row upnext-row alert-row clickable" ${rowOpen(a)}>
+      <div class="upnext-when">${live ? '<span class="tag tag-live">On now</span>' : esc(fmt.time(a.air_datetime))}<span class="dim">${esc(fmt.dayLabel(a.air_datetime))}</span></div>
+      ${art ? `<img class="thumb" src="${esc(art)}" alt="" loading="lazy">` : '<div class="thumb"></div>'}
+      <div style="min-width:0">
+        <div class="row-title">${esc(a.show_title)}</div>
+        <div class="row-sub">${se ? `${se} · ` : ''}${esc(a.episode_title || '')}</div>
+      </div>
+      <div class="row-sub upnext-ch ch-cell">${channelCell(a)}</div>
+      <div class="alert-act"><span class="tag" title="Matched your guide alert">${esc(a.alert)}</span>
+        ${a.scheduled ? '<span class="tag tag-accent">Set to record</span>'
+          : `<button class="btn btn-sm" data-action="alert-record" data-path="${esc(a.path)}">${icon('plus', 14)}Record</button>`}</div>
+    </div>`;
+}
+
+// Guide alerts (app/alerts.py): add and remove the words while the dialog stays open
+async function guideAlertsDialog() {
+  let words = [];
+  try { words = (await api('/api/guide/alerts')).words || []; } catch { /* starts empty */ }
+  const list = () => words.length
+    ? words.map(w => `<span class="alert-word">${esc(w)}<button class="alert-x" data-word="${esc(w)}" title="Remove ${esc(w)}" aria-label="Remove ${esc(w)}">×</button></span>`).join('')
+    : '<span class="dim">None yet.</span>';
+  await openModal(`
+    <div class="dialog-body">
+      <div class="dialog-title">Guide alerts</div>
+      <div class="dialog-text">Words to watch for in the guide, such as a team, a movie or a special. Airings with one in their title show on Home, with a Record button, and a notification says when new ones appear.</div>
+      <div class="alert-words" id="alertWords">${list()}</div>
+      <div class="alert-add">
+        <input class="input" id="alertInput" placeholder="Eagles, Wizard of Oz, Jeopardy! Masters…" maxlength="60" data-autofocus>
+        <button class="btn btn-primary" id="alertAdd">Add</button>
+      </div>
+      <div class="alert-err" id="alertErr"></div>
+    </div>
+    <div class="dialog-foot"><button class="btn btn-primary" data-action="modal-ok">Done</button></div>`, { onReady: el => {
+    const change = async (word, action) => {
+      try {
+        words = (await api('/api/guide/alerts', { method: 'POST', body: JSON.stringify({ word, action }) })).words || [];
+        el.querySelector('#alertWords').innerHTML = list();
+        el.querySelector('#alertErr').textContent = '';
+      } catch (err) { el.querySelector('#alertErr').textContent = err.message; }
+    };
+    const addTyped = () => {
+      const input = el.querySelector('#alertInput');
+      const word = input.value.trim();
+      if (!word) return;
+      input.value = '';
+      change(word, 'add');
+    };
+    el.querySelector('#alertAdd').addEventListener('click', addTyped);
+    el.querySelector('#alertInput').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addTyped(); } });
+    el.addEventListener('click', e => { const x = e.target.closest('.alert-x'); if (x) change(x.dataset.word, 'remove'); });
+  } });
+  if (location.hash === '#/' || location.hash === '' || location.hash.startsWith('#/?')) route();  // Home shows the new matches
+}
+
 function continueCard(ep) {
   const pct = ep.duration ? Math.min(100, Math.round((ep.position / ep.duration) * 100)) : 0;
   const left = fmt.dur((ep.duration || 0) - (ep.position || 0));
@@ -861,6 +922,7 @@ async function pickDevice(sid) {
 // home_order and home_hidden, on the PC, so TV view follows them too)
 const HOME_SECTIONS = [
   ['continue', 'Continue watching'], ['onnow', 'On now'], ['recent', 'Recently recorded'], ['soon', 'Recording soon'],
+  ['alerts', 'Guide alerts'],
   ['back', 'Back for a new season'], ['premieres', 'Season premieres'], ['primetime', 'New in primetime'],
 ];
 
@@ -945,7 +1007,7 @@ async function customizeHome() {
 PAGES.home = async (r, token) => {
   paint(`<div class="page"><div class="page-head"><div><h1 class="page-title">Home</h1><div class="page-sub">&nbsp;</div></div></div>${skeletonGrid(5)}</div>`);
 
-  const [shows, sched, prem, prime, progress, upcomingRes, , back, settings] = await Promise.allSettled([
+  const [shows, sched, prem, prime, progress, upcomingRes, , back, settings, alertsRes] = await Promise.allSettled([
     loadShows(),
     loadScheduled(),
     api('/api/guide/shows?highlight=premieres&sort=soonest&limit=24').then(r => cacheGuide(r.shows)),
@@ -955,6 +1017,7 @@ PAGES.home = async (r, token) => {
     player.ensureEpg(),
     api('/api/guide/returning').then(r => cacheGuide(r.shows)),
     api('/api/settings'),
+    api('/api/guide/alerts'),
   ]);
   if (stale(token)) return;
   state.inProgress = progress.value || [];
@@ -1041,6 +1104,17 @@ PAGES.home = async (r, token) => {
     }));
   }
 
+  // Guide alerts: airings with one of the words to watch for (app/alerts.py), with a Record button
+  const alertList = (alertsRes.value && alertsRes.value.matches) || [];
+  const perWord = {};  // (up to 4 a word on Home: a broad word like Football doesn't fill it)
+  if (alertList.length && shown('alerts')) {
+    blocks.alerts = section({
+      title: 'Guide alerts',
+      sub: `For ${esc(alertsRes.value.words.join(', '))} · <a href="#" data-action="guide-alerts">Change</a>`,
+      body: `<div class="list">${alertList.filter(a => (perWord[a.alert] = (perWord[a.alert] || 0) + 1) <= 4).slice(0, 12).map(alertRow).join('')}</div>`,
+    });
+  }
+
   // Series you recorded before, back with a new season and not set to record
   // (a show is listed in only one of these three, the first shown)
   const backList = shown('back') ? back.value || [] : [];
@@ -1085,7 +1159,7 @@ PAGES.home = async (r, token) => {
 
   paint(`<div class="page">
     <div class="page-head"><div><h1 class="page-title">Home</h1><div class="page-sub">${esc(subBits.join(' · '))}</div></div>
-      <div class="page-head-actions"><button class="btn btn-sm btn-ghost" data-action="home-customize" title="Choose the order of Home's sections, and which ones to show">${icon('settings', 15)}Customize</button></div></div>
+      <div class="page-head-actions"><button class="btn btn-sm btn-ghost" data-action="guide-alerts" title="Words to watch for in the guide: a team, a movie, a special">${icon('bell', 15)}Guide alerts</button><button class="btn btn-sm btn-ghost" data-action="home-customize" title="Choose the order of Home's sections, and which ones to show">${icon('settings', 15)}Customize</button></div></div>
     ${parts.join('')}
   </div>`);
 };
@@ -1884,7 +1958,7 @@ PAGES.guide = async (r, token) => {
   paint(`<div class="page">
     <div class="page-head">
       <div><h1 class="page-title">Guide</h1><div class="page-sub">Shows on your antenna channels over the next two weeks</div></div>
-      <div class="page-head-actions"><button class="btn btn-ghost btn-sm" data-action="sync-guide">${icon('refresh', 15)}Refresh guide</button></div>
+      <div class="page-head-actions"><button class="btn btn-ghost btn-sm" data-action="guide-alerts" title="Words to watch for in the guide: a team, a movie, a special">${icon('bell', 15)}Alerts</button><button class="btn btn-ghost btn-sm" data-action="sync-guide">${icon('refresh', 15)}Refresh guide</button></div>
     </div>
     <div class="toolbar">${guideTabs(false)}</div>
     <div class="toolbar">
@@ -3690,7 +3764,7 @@ PAGES.help = async (r, token) => {
       <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
     let html;
     try {
-      const res = await fetch('/static/help.html?v=35');
+      const res = await fetch('/static/help.html?v=36');
       if (!res.ok) throw new Error(res.status);
       html = await res.text();
     } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
@@ -6580,6 +6654,16 @@ const ACTIONS = {
   'skip-break': () => player.skipBreak(),
   'skip-break-hide': () => player.hideSkipBreak(),
   'rerecord': el => rerecordDialog(el.dataset.id),
+  'guide-alerts': () => guideAlertsDialog(),
+  'alert-record': async el => {
+    el.disabled = true;
+    try {
+      await api('/api/guide/episodes/schedule', { method: 'POST', body: JSON.stringify({ path: el.dataset.path, scheduled: true }) });
+      el.outerHTML = '<span class="tag tag-accent">Set to record</span>';
+      toast('Your Tablo will record it', 'success');
+      loadUpcoming();
+    } catch (err) { el.disabled = false; toast(`Couldn't record it: ${err.message}`, 'error'); }
+  },
   'rerecord-pick': async el => {
     el.disabled = true;
     try {

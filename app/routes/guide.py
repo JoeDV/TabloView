@@ -113,6 +113,31 @@ async def upcoming_recordings():
             "missed_new": sum(1 for r in recordings if r["missed_new"])}
 
 
+class AlertRequest(BaseModel):
+    word: str
+    action: str = "add"  # add or remove
+
+
+@router.get("/alerts")
+async def guide_alerts():
+    """Guide alerts (app/alerts.py): the words, and the airings coming up that match them."""
+    from .live import add_channel_details
+    from .. import alerts
+    found = await asyncio.to_thread(alerts.matches)
+    await add_channel_details(found)
+    return {"words": alerts.words(), "matches": found}
+
+
+@router.post("/alerts")
+async def change_guide_alert(req: AlertRequest):
+    from .. import alerts
+    try:
+        words = alerts.remove(req.word) if req.action == "remove" else alerts.add(req.word)
+    except alerts.AlertError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"words": words}
+
+
 @router.get("/upcoming.ics")
 async def upcoming_calendar():
     """Upcoming recordings as a calendar file to import (Google Calendar, Outlook, Apple Calendar)."""

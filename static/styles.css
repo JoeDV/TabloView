@@ -1200,3 +1200,13 @@ label.set-row-switch:hover { background: rgba(255, 255, 255, 0.015); }
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
   .spinner, .spin { animation-duration: 0.9s !important; animation-iteration-count: infinite !important; }
 }
+
+/* Guide alerts: the words (in their dialog), and the matches on Home */
+.alert-words { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 10px; }
+.alert-word { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; border-radius: 999px; background: var(--surface-3); font-size: 13px; }
+.alert-x { border: 0; background: none; color: var(--text-2); font-size: 16px; line-height: 1; cursor: pointer; padding: 0 5px; border-radius: 50%; }
+.alert-x:hover { color: var(--text); background: rgba(255,255,255,0.08); }
+.alert-add { display: flex; gap: 8px; }
+.alert-add .input { flex: 1; }
+.alert-err { color: var(--rec); font-size: 12.5px; min-height: 16px; margin-top: 6px; }
+.alert-row .alert-act { display: flex; align-items: center; gap: 8px; justify-self: end; }
