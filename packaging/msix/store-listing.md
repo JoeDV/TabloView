@@ -21,6 +21,13 @@ TabloView is a fast desktop interface for your Tablo DVR. Browse and play your r
 Sign in with your own Tablo account. Your password goes only to Tablo's sign-in service and is never saved. TabloView runs only on your PC unless you turn on network access for other devices at home.
 
 ## What's new in this version
+1.4.1:
+• Guide alerts: a team, a movie or a special, on Home with Record
+• Recordings for Roku Media Player, VLC, Kodi and smart TVs
+• Recording now on a show's card, and real artwork for more shows
+• Exports: commercial breaks as chapters, captions as a .srt file
+• An easier timeline, and a better fit on narrow screens
+
 1.4.0:
 • Watch antenna channels on a Roku, in VLC or Kodi, or on a smart TV
 • Several saved playlists, each with its own favorites

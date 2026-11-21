@@ -13,6 +13,16 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.4.1": [
+        "Guide alerts: save words to watch for, such as a team, a movie or a special (Guide alerts on Home, or Alerts on the Guide page). Shows in the guide with one in their title appear on Home with a Record button, and a notification says when new ones turn up.",
+        "Recordings on your Roku, in VLC or Kodi, or on a smart TV: with your antenna channels shared, Roku Media Player and the others now have a Recordings folder beside Live TV, with a folder for each show. Skipping ahead or back starts the recording again at that point.",
+        "Recording now: a show's card says so while its newest recording is still being made, on the PC and in the TV view.",
+        "Real show artwork: shows that only had a stock picture on your Tablo (remotes and pretzels) now get their real poster from Tablo's online guide.",
+        "Exports mark the commercial breaks as chapters, so Plex, Jellyfin, Kodi and VLC can jump past each one, and can save the captions as a .srt file beside the MP4 (both in Settings → Storage & exports).",
+        "The timeline is easier to grab and says Commercial break or Signal dropout when you point at one; the player fits narrow windows and phones better, and lighter grey text is easier to read.",
+        "Safer: backups, the Claude key and Start with Windows can only be changed on the computer running TabloView, and its fonts are part of TabloView now, so pages no longer contact Google.",
+        "Docker: your settings go in tabloview.env, so updating never clashes with them, and an Intel graphics chip converts the video instead of the processor.",
+    ],
     "1.4.0": [
         "Watch your antenna channels on a Roku, in VLC or Kodi, or on a smart TV: with Settings → Live TV → Share your antenna channels with other apps turned on, TabloView shows up on your network as a media server. Open Roku Media Player (or your player's network or media server list), pick TabloView, then Live TV and a channel. No address to type.",
         "Several playlists in Live TV → More: add more than one playlist and switch between them in Settings → Live TV or with the picker in More. Each keeps its own favorites, hidden channels and group order.",
