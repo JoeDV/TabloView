@@ -360,94 +360,127 @@ def save_cloud_art(art: Dict[str, Dict[str, Optional[str]]]) -> int:
     return changed
 
 
-def upsert_show(show_data: Dict[str, Any]):
+def _in_transaction(write, conn=None) -> None:
+    """Run write(conn) on the given connection (a batch: the caller commits), or on a new one."""
+    if conn is not None:
+        write(conn)
+        return
+    with get_connection() as own:
+        write(own)
+        own.commit()
+
+
+def save_library(shows: List[Dict[str, Any]], episodes: List[Dict[str, Any]]) -> None:
+    """A library sync's shows and recordings in one transaction (one commit, not one per row: a big
+    library took seconds, on the server's main loop)."""
+    with get_connection() as conn:
+        for s in shows:
+            upsert_show(s, conn)
+        for e in episodes:
+            upsert_episode(e, conn)
+        conn.commit()
+
+
+def save_guide_shows(items: List[Dict[str, Any]]) -> None:
+    """A guide sync's shows in one transaction."""
+    with get_connection() as conn:
+        for d in items:
+            upsert_guide_show(d, conn)
+        conn.commit()
+
+
+def upsert_show(show_data: Dict[str, Any], conn=None):
+    _in_transaction(lambda c: _upsert_show(c, show_data), conn)
+
+
+def _upsert_show(conn, show_data: Dict[str, Any]):
     now = datetime.now(timezone.utc).isoformat()
     raw = json.dumps(show_data.get("raw_json", {})) if isinstance(show_data.get("raw_json"), (dict, list)) else show_data.get("raw_json", "")
-    with get_connection() as conn:
-        # The cloud guide's artwork wins over the Tablo's own (see cloud_art)
-        art = _art_for_guide_path(conn, _raw_dict(show_data.get("raw_json")).get("guide_path"))
-        if art:
-            show_data = {**show_data, "cover_url": art["cover_url"] or show_data.get("cover_url"),
-                         "backdrop_url": art["backdrop_url"] or show_data.get("backdrop_url")}
-        conn.execute("""
-            INSERT INTO shows (
-                id, title, category, cover_url, backdrop_url, description,
-                episode_count, unwatched_count, latest_recording_date, path, raw_json, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                title = excluded.title,
-                category = excluded.category,
-                cover_url = COALESCE(excluded.cover_url, shows.cover_url),
-                backdrop_url = COALESCE(excluded.backdrop_url, shows.backdrop_url),
-                description = COALESCE(excluded.description, shows.description),
-                episode_count = excluded.episode_count,
-                unwatched_count = excluded.unwatched_count,
-                latest_recording_date = excluded.latest_recording_date,
-                path = excluded.path,
-                raw_json = excluded.raw_json,
-                updated_at = excluded.updated_at
-        """, (
-            show_data["id"],
-            show_data["title"],
-            show_data.get("category", "series"),
-            show_data.get("cover_url"),
-            show_data.get("backdrop_url"),
-            show_data.get("description", ""),
-            show_data.get("episode_count", 0),
-            show_data.get("unwatched_count", 0),
-            show_data.get("latest_recording_date", ""),
-            show_data.get("path", ""),
-            raw,
-            now
-        ))
-        conn.commit()
+    # The cloud guide's artwork wins over the Tablo's own (see cloud_art)
+    art = _art_for_guide_path(conn, _raw_dict(show_data.get("raw_json")).get("guide_path"))
+    if art:
+        show_data = {**show_data, "cover_url": art["cover_url"] or show_data.get("cover_url"),
+                     "backdrop_url": art["backdrop_url"] or show_data.get("backdrop_url")}
+    conn.execute("""
+        INSERT INTO shows (
+            id, title, category, cover_url, backdrop_url, description,
+            episode_count, unwatched_count, latest_recording_date, path, raw_json, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            title = excluded.title,
+            category = excluded.category,
+            cover_url = COALESCE(excluded.cover_url, shows.cover_url),
+            backdrop_url = COALESCE(excluded.backdrop_url, shows.backdrop_url),
+            description = COALESCE(excluded.description, shows.description),
+            episode_count = excluded.episode_count,
+            unwatched_count = excluded.unwatched_count,
+            latest_recording_date = excluded.latest_recording_date,
+            path = excluded.path,
+            raw_json = excluded.raw_json,
+            updated_at = excluded.updated_at
+    """, (
+        show_data["id"],
+        show_data["title"],
+        show_data.get("category", "series"),
+        show_data.get("cover_url"),
+        show_data.get("backdrop_url"),
+        show_data.get("description", ""),
+        show_data.get("episode_count", 0),
+        show_data.get("unwatched_count", 0),
+        show_data.get("latest_recording_date", ""),
+        show_data.get("path", ""),
+        raw,
+        now
+    ))
 
 
-def upsert_episode(ep_data: Dict[str, Any]):
+def upsert_episode(ep_data: Dict[str, Any], conn=None):
+    _in_transaction(lambda c: _upsert_episode(c, ep_data), conn)
+
+
+def _upsert_episode(conn, ep_data: Dict[str, Any]):
     now = datetime.now(timezone.utc).isoformat()
     raw = json.dumps(ep_data.get("raw_json", {})) if isinstance(ep_data.get("raw_json"), (dict, list)) else ep_data.get("raw_json", "")
-    with get_connection() as conn:
-        conn.execute("""
-            INSERT INTO episodes (
-                id, show_id, show_title, path, season_number, episode_number,
-                title, description, air_date, duration, status, network, channel_name, raw_json, updated_at,
-                position
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                position = excluded.position,
-                show_id = excluded.show_id,
-                show_title = excluded.show_title,
-                path = excluded.path,
-                season_number = excluded.season_number,
-                episode_number = excluded.episode_number,
-                title = excluded.title,
-                description = excluded.description,
-                air_date = excluded.air_date,
-                duration = excluded.duration,
-                status = excluded.status,
-                network = excluded.network,
-                channel_name = excluded.channel_name,
-                raw_json = excluded.raw_json,
-                updated_at = excluded.updated_at
-        """, (
-            ep_data["id"],
-            ep_data["show_id"],
-            ep_data["show_title"],
-            ep_data["path"],
-            ep_data.get("season_number", 0),
-            ep_data.get("episode_number", 0),
-            ep_data.get("title", ""),
-            ep_data.get("description", ""),
-            ep_data.get("air_date", ""),
-            ep_data.get("duration", 0),
-            ep_data.get("status", "Unwatched"),
-            ep_data.get("network", ""),
-            ep_data.get("channel_name", ""),
-            raw,
-            now,
-            int(ep_data.get("position") or 0),
-        ))
-        conn.commit()
+    conn.execute("""
+        INSERT INTO episodes (
+            id, show_id, show_title, path, season_number, episode_number,
+            title, description, air_date, duration, status, network, channel_name, raw_json, updated_at,
+            position
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            position = excluded.position,
+            show_id = excluded.show_id,
+            show_title = excluded.show_title,
+            path = excluded.path,
+            season_number = excluded.season_number,
+            episode_number = excluded.episode_number,
+            title = excluded.title,
+            description = excluded.description,
+            air_date = excluded.air_date,
+            duration = excluded.duration,
+            status = excluded.status,
+            network = excluded.network,
+            channel_name = excluded.channel_name,
+            raw_json = excluded.raw_json,
+            updated_at = excluded.updated_at
+    """, (
+        ep_data["id"],
+        ep_data["show_id"],
+        ep_data["show_title"],
+        ep_data["path"],
+        ep_data.get("season_number", 0),
+        ep_data.get("episode_number", 0),
+        ep_data.get("title", ""),
+        ep_data.get("description", ""),
+        ep_data.get("air_date", ""),
+        ep_data.get("duration", 0),
+        ep_data.get("status", "Unwatched"),
+        ep_data.get("network", ""),
+        ep_data.get("channel_name", ""),
+        raw,
+        now,
+        int(ep_data.get("position") or 0),
+    ))
 
 
 def get_shows(
@@ -967,55 +1000,57 @@ def get_export_jobs() -> List[Dict[str, Any]]:
 # Guide Shows Database Functions
 # ---------------------------------------------------------------------------
 
-def upsert_guide_show(data: Dict[str, Any]):
+def upsert_guide_show(data: Dict[str, Any], conn=None):
+    _in_transaction(lambda c: _upsert_guide_show(c, data), conn)
+
+
+def _upsert_guide_show(conn, data: Dict[str, Any]):
     now = datetime.now(timezone.utc).isoformat()
     raw = json.dumps(data.get("raw_json", {})) if isinstance(data.get("raw_json"), (dict, list)) else data.get("raw_json", "")
     genres_val = json.dumps(data.get("genres", [])) if isinstance(data.get("genres"), list) else str(data.get("genres", "[]"))
-    with get_connection() as conn:
-        # The cloud guide's artwork wins over the Tablo's own (see cloud_art)
-        art = _art_for_identifier(conn, _raw_dict(data.get("raw_json")).get("identifier"))
-        if art:
-            data = {**data, "cover_url": art["cover_url"] or data.get("cover_url"),
-                    "backdrop_url": art["backdrop_url"] or data.get("backdrop_url")}
-        conn.execute("""
-            INSERT INTO guide_shows (
-                path, object_id, title, category, description, cover_url, backdrop_url,
-                genres, schedule_rule, airing_count, scheduled_count, orig_air_date,
-                recordings_path, raw_json, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(path) DO UPDATE SET
-                object_id = COALESCE(excluded.object_id, guide_shows.object_id),
-                title = excluded.title,
-                category = excluded.category,
-                description = COALESCE(excluded.description, guide_shows.description),
-                cover_url = COALESCE(excluded.cover_url, guide_shows.cover_url),
-                backdrop_url = COALESCE(excluded.backdrop_url, guide_shows.backdrop_url),
-                genres = excluded.genres,
-                schedule_rule = excluded.schedule_rule,
-                airing_count = excluded.airing_count,
-                scheduled_count = excluded.scheduled_count,
-                orig_air_date = excluded.orig_air_date,
-                recordings_path = excluded.recordings_path,
-                raw_json = excluded.raw_json,
-                updated_at = excluded.updated_at
-        """, (
-            data["path"],
-            data.get("object_id"),
-            data["title"],
-            data.get("category", "series"),
-            data.get("description", ""),
-            data.get("cover_url"),
-            data.get("backdrop_url"),
-            genres_val,
-            data.get("schedule_rule", "none"),
-            data.get("airing_count", 0),
-            data.get("scheduled_count", 0),
-            data.get("orig_air_date", ""),
-            data.get("recordings_path", ""),
-            raw,
-            now
-        ))
-        conn.commit()
+    # The cloud guide's artwork wins over the Tablo's own (see cloud_art)
+    art = _art_for_identifier(conn, _raw_dict(data.get("raw_json")).get("identifier"))
+    if art:
+        data = {**data, "cover_url": art["cover_url"] or data.get("cover_url"),
+                "backdrop_url": art["backdrop_url"] or data.get("backdrop_url")}
+    conn.execute("""
+        INSERT INTO guide_shows (
+            path, object_id, title, category, description, cover_url, backdrop_url,
+            genres, schedule_rule, airing_count, scheduled_count, orig_air_date,
+            recordings_path, raw_json, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(path) DO UPDATE SET
+            object_id = COALESCE(excluded.object_id, guide_shows.object_id),
+            title = excluded.title,
+            category = excluded.category,
+            description = COALESCE(excluded.description, guide_shows.description),
+            cover_url = COALESCE(excluded.cover_url, guide_shows.cover_url),
+            backdrop_url = COALESCE(excluded.backdrop_url, guide_shows.backdrop_url),
+            genres = excluded.genres,
+            schedule_rule = excluded.schedule_rule,
+            airing_count = excluded.airing_count,
+            scheduled_count = excluded.scheduled_count,
+            orig_air_date = excluded.orig_air_date,
+            recordings_path = excluded.recordings_path,
+            raw_json = excluded.raw_json,
+            updated_at = excluded.updated_at
+    """, (
+        data["path"],
+        data.get("object_id"),
+        data["title"],
+        data.get("category", "series"),
+        data.get("description", ""),
+        data.get("cover_url"),
+        data.get("backdrop_url"),
+        genres_val,
+        data.get("schedule_rule", "none"),
+        data.get("airing_count", 0),
+        data.get("scheduled_count", 0),
+        data.get("orig_air_date", ""),
+        data.get("recordings_path", ""),
+        raw,
+        now
+    ))
 
 
 def batch_upsert_guide_airings(airings: List[Dict[str, Any]]):

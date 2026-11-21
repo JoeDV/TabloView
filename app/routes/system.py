@@ -471,9 +471,11 @@ class ClaudeKeyRequest(BaseModel):
 
 
 @router.post("/settings/claude_key")
-async def set_claude_key(body: ClaudeKeyRequest):
+async def set_claude_key(body: ClaudeKeyRequest, request: Request):
     """Save the user's Anthropic API key for finding commercials with Claude (checked with Anthropic
-    first, at no cost), or forget it. Recordings already done are redone once with it."""
+    first, at no cost), or forget it. Recordings already done are redone once with it. On this PC
+    only: the key spends money on the user's Anthropic account."""
+    _only_this_pc(request)
     from .. import claude_ads
     key = (body.key or "").strip()
     if not key:
@@ -554,7 +556,8 @@ async def get_startup():
 
 
 @router.post("/system/startup")
-async def set_startup(update: StartupUpdate):
+async def set_startup(update: StartupUpdate, request: Request):
+    _only_this_pc(request)
     try:
         return await startup.set_enabled(update.enabled)
     except Exception as e:
@@ -604,7 +607,9 @@ async def signal_report():
 @router.post("/backup")
 async def make_backup(request: Request):
     """Everything set up in TabloView, to move it to another PC (app/backup.py). The page sends its
-    browser preferences: {"browser": {...}}."""
+    browser preferences: {"browser": {...}}. On this PC only: it has the playlist addresses, which
+    can carry a provider's sign-in."""
+    _only_this_pc(request)
     try:
         body = await request.json()
     except ValueError:
@@ -615,6 +620,9 @@ async def make_backup(request: Request):
 
 @router.post("/backup/restore")
 async def restore_backup(request: Request):
+    # On this PC only: a backup's settings include ones only this PC may change (who needs the PIN
+    # over Tailscale, sharing the tuner, playlist addresses, where exports go)
+    _only_this_pc(request)
     try:
         data = await request.json()
     except ValueError:

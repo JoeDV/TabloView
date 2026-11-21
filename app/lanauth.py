@@ -283,9 +283,17 @@ def _load_activity() -> Dict:
     return {"events": [], "devices": {}}
 
 
+_activity_lock = threading.Lock()
+
+
 def _save_activity(data: Dict) -> None:
+    """Written whole to a temporary file, then swapped in, so a crash or power cut mid-write can't
+    leave half a file (which would lose the record of devices, sign-ins and lockouts)."""
+    tmp = ACTIVITY_FILE.with_suffix(".json.tmp")
     try:
-        ACTIVITY_FILE.write_text(json.dumps(data, indent=1), encoding="utf-8")
+        with _activity_lock:
+            tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
+            os.replace(tmp, ACTIVITY_FILE)
     except OSError as e:
         print(f"[Network access] Couldn't save the sign-in record: {e}")
 

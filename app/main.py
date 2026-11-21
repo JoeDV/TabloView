@@ -1,6 +1,7 @@
 """Main FastAPI application for TabloView."""
 
 import asyncio
+import mimetypes
 import socket
 import ipaddress
 from pathlib import Path
@@ -89,6 +90,10 @@ async def lifespan(app: FastAPI):
     for sid in list(transcode_manager.sessions.keys()):
         transcode_manager.stop_session(sid)
 
+
+# The bundled fonts (static/vendor/fonts): Python on Windows doesn't know .woff2 and serves them as
+# application/octet-stream
+mimetypes.add_type("font/woff2", ".woff2")
 
 app = FastAPI(
     title=APP_NAME,

@@ -3690,7 +3690,7 @@ PAGES.help = async (r, token) => {
       <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
     let html;
     try {
-      const res = await fetch('/static/help.html?v=33');
+      const res = await fetch('/static/help.html?v=34');
       if (!res.ok) throw new Error(res.status);
       html = await res.text();
     } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
@@ -3903,7 +3903,8 @@ PAGES.settings = async (r, token) => {
     : '<span class="set-pill">Off</span>';
   const finding = setCard('Finding them', 'In the background, on this PC, while nothing is playing.', `
       ${setRow(`Find commercials with Claude ${claudeStatus}`, 'More accurate on channels without a logo, such as CBS. With your own Anthropic API key, Claude looks at each recording’s preview pictures (one every 10 seconds), which are sent to Anthropic: about 5 cents per hour of TV, on your Anthropic account. Without a key TabloView finds the breaks itself. The key also lets Claude pick the Guide’s For you shows (about 4 cents a week at most).',
-        `<button class="btn btn-sm" data-action="claude-key">${settings.claude_key_set ? 'Change key' : 'Add API key'}</button>
+        !info.this_computer ? '<span class="dim">From the computer running it</span>'
+        : `<button class="btn btn-sm" data-action="claude-key">${settings.claude_key_set ? 'Change key' : 'Add API key'}</button>
          ${settings.claude_key_set ? '<button class="btn btn-sm btn-ghost" data-action="claude-key-remove">Remove</button>' : ''}`)}
       ${settings.claude_key_set && settings.claude_error ? setNote(`Claude’s last try didn’t work: ${esc(settings.claude_error)}`, true) : ''}
       ${setSwitch('Check flagged recordings for signal dropouts', 'Recordings your Tablo marks as not clean are read once each, taking about a quarter of their length and most of one CPU core; the status line shows it. Off: recordings already checked keep their marks.', 'find-dropouts', settings.find_dropouts !== false)}`);
@@ -3970,7 +3971,8 @@ PAGES.settings = async (r, token) => {
       ${setRow('Stop TabloView', 'To start it again, run its start script (start-mac.sh on a Mac, start-linux.sh on Linux).',
         info.this_computer ? '<button class="btn btn-sm btn-danger" data-action="stop-app">Stop TabloView</button>' : '<span class="dim">From the computer running it</span>')}`)
     : setCard('Desktop app', 'TabloView runs in the background, in the system tray.', `
-      ${boot.supported ? setSwitch('Start with Windows', boot.locked
+      ${boot.supported && !info.this_computer ? setRow('Start with Windows', boot.enabled ? 'On.' : 'Off.', '<span class="dim">From the computer running it</span>')
+        : boot.supported ? setSwitch('Start with Windows', boot.locked
           ? 'Turned off in Task Manager. To turn it back on: Task Manager → Startup apps → TabloView for TabloTV.'
           : 'Starts quietly in the tray when you sign in; the browser opens only when you click the tray icon.', 'startup', boot.enabled, boot.locked ? 'disabled' : '')
         : setRow('Start with Windows', 'Available in the installed app.')}
@@ -4009,9 +4011,9 @@ PAGES.settings = async (r, token) => {
 
   const moving = setCard('Backup and moving to a new PC', 'Everything you’ve set up in TabloView, in one file. Save it, then restore it on the new PC once you’ve signed in there.', `
       ${setRow('Save a backup', 'Settings, each show’s options, the Watch list, reminders, commercial breaks already found, signal history, and this browser’s player preferences. Not your Tablo, Plex or Claude sign-ins or the PIN, so the file is safe to keep anywhere: set those up again on the new PC.',
-        `<button class="btn btn-sm" data-action="backup-save">${icon('download', 15)}Save backup</button>`)}
+        info.this_computer ? `<button class="btn btn-sm" data-action="backup-save">${icon('download', 15)}Save backup</button>` : '<span class="dim">From the computer running it</span>')}
       ${setRow('Restore from a backup', 'Its settings replace these. Its Watch list, reminders and commercial breaks are added to what’s here.',
-        '<button class="btn btn-sm" data-action="backup-restore">Restore…</button>')}`);
+        info.this_computer ? '<button class="btn btn-sm" data-action="backup-restore">Restore…</button>' : '<span class="dim">From the computer running it</span>')}`);
 
   const signalHtml = signalPanel(signal) || setCard('Signal health', 'How recordings on each channel turned out, and why the Tablo says any failed.',
     setRow('Nothing to show yet', 'This fills in as your Tablo records.'));

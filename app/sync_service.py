@@ -17,9 +17,8 @@ from .tablo_client import tablo_manager
 from .notifications import check_all
 from . import background, cleanup, rerecord, returning, signal_health
 from .database import (
-    upsert_show,
-    upsert_episode,
-    upsert_guide_show,
+    save_guide_shows,
+    save_library,
     recalculate_show_stats,
     set_sync_meta,
     get_sync_meta,
@@ -323,11 +322,8 @@ class LibrarySyncService:
 
             # 5. Commit to database
             print(f"[LibrarySync] Saving {len(shows_map)} shows and {len(episodes_list)} episodes to SQLite...")
-            for s_data in shows_map.values():
-                upsert_show(s_data)
-
-            for ep_data in episodes_list:
-                upsert_episode(ep_data)
+            # (one transaction, off the main loop, so pages and streams aren't held up)
+            await asyncio.to_thread(save_library, list(shows_map.values()), episodes_list)
 
             # Prune obsolete shows and episodes no longer returned by Tablo (not after a partial fetch).
             # No recordings at all: everything was deleted, so the Library empties too (it used to keep
@@ -425,10 +421,11 @@ class LibrarySyncService:
                 except Exception as e:
                     print(f"[GuideSync] Couldn't list scheduled {cat}: {e}")
 
+                batch: List[Dict[str, Any]] = []
                 for p, d in (await fetch_objects(paths, progress=self.guide_progress)).items():
                     info = d.get(cat) or d.get("series") or d.get("movie") or d.get("sport") or {}
                     counts = d.get("show_counts") or {}
-                    upsert_guide_show({
+                    batch.append({
                         "path": p,
                         "object_id": d.get("object_id"),
                         "title": info.get("title") or d.get("title") or "Unknown",
@@ -445,6 +442,8 @@ class LibrarySyncService:
                         "raw_json": d
                     })
                     total_synced += 1
+                # (one transaction, off the main loop)
+                await asyncio.to_thread(save_guide_shows, batch)
                 if scheduled_paths is not None:
                     cleared = clear_stale_schedule_rules(cat, scheduled_paths)
                     if cleared:

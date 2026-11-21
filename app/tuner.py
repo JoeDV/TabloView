@@ -33,6 +33,7 @@ from .netcheck import away_from_home
 from .settings import load_settings, save_settings
 
 TUNER_PORT = 5004  # an HDHomeRun's own stream port
+OTHER_SITES = {"cross-site", "same-site"}  # (same-site: another program's page on this PC)
 LINEUP_SECONDS = 600  # the channel list, kept 10 minutes
 GUIDE_SECONDS = 1800  # the guide, kept half an hour
 GUIDE_DAYS = 14
@@ -57,6 +58,12 @@ def device_id() -> str:
 async def home_network_only(request: Request, call_next):
     if away_from_home(request.client.host if request.client else None):
         return PlainTextResponse("TabloView's tuner answers only this PC and your home network.", status_code=403)
+    # A page on another website, open in a browser here, could otherwise load a channel as a video and
+    # take a tuner (browsers mark such requests; port 7070 turns them away too). Plex, Jellyfin, Emby,
+    # Channels DVR and DLNA players aren't browsers and send no such mark. (No Host check as on 7070:
+    # an app in another container can reach this by a name such as host.docker.internal.)
+    if request.headers.get("sec-fetch-site") in OTHER_SITES:
+        return PlainTextResponse("TabloView's tuner doesn't answer other websites.", status_code=403)
     return await call_next(request)
 
 
