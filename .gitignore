@@ -48,3 +48,9 @@ scratch/
 
 # Notes kept by other AI coding tools (local only)
 .maestro.md
+
+# Docker: each server's own settings and data (see DOCKER.md)
+tabloview.env
+docker-compose.override.yml
+/tabloview-data/
+/exports/

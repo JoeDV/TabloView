@@ -4,3 +4,7 @@
 tools/ export-ignore
 # Recorded test data for the commercial finder: not needed to run TabloView
 tests/data/ export-ignore
+# Docker files are read on Linux: Unix line endings (a stray \r would end up in the settings' values)
+Dockerfile text eol=lf
+docker-compose*.yml text eol=lf
+*.env.example text eol=lf

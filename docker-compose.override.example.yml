@@ -1,0 +1,6 @@
+# Intel graphics for converting video (see DOCKER.md). Copy this file to docker-compose.override.yml:
+# Docker Compose reads it along with docker-compose.yml, and it stays yours when you update.
+services:
+  tabloview:
+    devices:
+      - /dev/dri:/dev/dri
