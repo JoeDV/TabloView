@@ -660,6 +660,7 @@ function showCard(s) {
         ${artImg(s.cover_url || s.backdrop_url, s.title)}
         ${unwatched ? `<span class="art-badge new">${unwatched} unwatched</span>` : `<span class="art-badge">${s.episode_count}</span>`}
         ${s.incomplete_count ? `<span class="art-badge art-badge-left warn" title="${plural(s.incomplete_count, 'recording')} didn’t record completely">${icon('alert', 12)}${s.incomplete_count}</span>` : ''}
+        ${s.recording_now ? '<span class="art-badge rec" title="A recording of this show is still in progress">Recording now</span>' : ''}
       </div>
       <div class="media-meta">
         <div class="media-title">${esc(s.title)}</div>

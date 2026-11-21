@@ -257,7 +257,7 @@ async function showHome() {
 
 function showTile(s, layout, prefix) {
   return `<button class="tile f" data-go="#/show/${encodeURIComponent(s.id)}" data-key="${prefix}-${esc(s.id)}">
-    <div class="art" ${art(layout === 'wide' ? s.backdrop_url || s.cover_url : s.cover_url || s.backdrop_url)}>${s.unwatched_count ? `<span class="badge">${s.unwatched_count}</span>` : ''}</div>
+    <div class="art" ${art(layout === 'wide' ? s.backdrop_url || s.cover_url : s.cover_url || s.backdrop_url)}>${s.unwatched_count ? `<span class="badge">${s.unwatched_count}</span>` : ''}${s.recording_now ? '<span class="badge rec">● Recording now</span>' : ''}</div>
     <div class="label"><div class="name">${esc(s.title)}</div>
       <div class="meta">${s.episode_count === 1 ? '1 recording' : `${s.episode_count} recordings`}</div></div>
   </button>`;

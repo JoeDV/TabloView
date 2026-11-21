@@ -66,6 +66,8 @@ h2 { font-size: 1.7vw; margin: 2.4vw 0 1.2vw; color: var(--dim); font-weight: 60
 .tile .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile .meta { color: var(--dim); font-size: 1.15vw; margin-top: 0.3vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .badge { position: absolute; top: 0.7vw; right: 0.7vw; min-width: 2.2vw; padding: 0.2vw 0.6vw; border-radius: 2vw; background: var(--accent); font-weight: 700; font-size: 1.1vw; text-align: center; }
+/* A show with a recording still in progress: bottom left */
+.badge.rec { top: auto; bottom: 0.7vw; right: auto; left: 0.7vw; margin: 0; background: var(--rec); color: #fff; }
 .progress { position: absolute; left: 0; right: 0; bottom: 0; height: 0.45vw; background: rgba(255,255,255,0.25); }
 .progress div { height: 100%; background: var(--accent); }
 

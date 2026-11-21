@@ -476,11 +476,16 @@ def get_shows(
     with get_connection() as conn:
         shows = [dict(r) for r in conn.execute(query, params).fetchall()]
         incomplete: Dict[str, int] = {}
+        recording: set = set()  # shows with a recording still in progress (a tag on the card)
         for r in conn.execute("SELECT show_id, raw_json FROM episodes").fetchall():
-            if recording_details(r["raw_json"])["incomplete"]:
+            details = recording_details(r["raw_json"])
+            if details["incomplete"]:
                 incomplete[r["show_id"]] = incomplete.get(r["show_id"], 0) + 1
+            if details["recording_state"] == "recording":
+                recording.add(r["show_id"])
     for s in shows:
         s["incomplete_count"] = incomplete.get(s["id"], 0)
+        s["recording_now"] = s["id"] in recording
     return shows
 
 

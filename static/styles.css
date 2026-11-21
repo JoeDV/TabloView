@@ -324,6 +324,9 @@ img { display: block; }
 }
 .art-badge.new { background: var(--accent); }
 .art-badge-left { left: 8px; right: auto; }
+/* A show with a recording still in progress (Library, Home): bottom left, clear of the other tags */
+.art-badge.rec { top: auto; bottom: 8px; left: 8px; right: auto; background: var(--rec); }
+.art-badge.rec::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #fff; animation: pulse 1.6s ease-in-out infinite; }
 .art-play {
   position: absolute; inset: 0; display: grid; place-items: center;
   background: rgba(0,0,0,0.35); opacity: 0; transition: opacity 0.15s;
