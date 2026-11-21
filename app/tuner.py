@@ -27,7 +27,7 @@ from xml.sax.saxutils import escape, quoteattr
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 
-from . import background, childproc
+from . import background, childproc, encoders
 from .config import APP_VERSION, FFMPEG_PATH
 from .netcheck import away_from_home
 from .settings import load_settings, save_settings
@@ -250,8 +250,8 @@ def stream_cmd(playlist_url: str, enc: Optional[Dict[str, Any]] = None) -> List[
     head = [FFMPEG_PATH, "-hide_banner", "-loglevel", "error", "-fflags", "+discardcorrupt", "-i", playlist_url]
     if enc is None:
         return [*head, "-map", "0:v:0", "-map", "0:a?", "-c", "copy", "-f", "mpegts", "pipe:1"]
-    return [*head, "-map", "0:v:0", "-map", "0:a:0?", "-vf", "bwdif=mode=send_frame:deint=interlaced,fps=30000/1001",
-            *enc["args"], "-pix_fmt", enc["pix_fmt"], "-force_key_frames", "expr:gte(t,n_forced*2)",
+    return [*head, "-map", "0:v:0", "-map", "0:a:0?", *encoders.video_args(enc, "bwdif=mode=send_frame:deint=interlaced,fps=30000/1001"),
+            "-force_key_frames", "expr:gte(t,n_forced*2)",
             "-af", "aresample=async=1:ochl=stereo:clev=1.0:slev=0.6", "-c:a", "aac", "-b:a", "192k", "-ac", "2",
             "-ar", "48000", "-f", "mpegts", "pipe:1"]
 
@@ -283,7 +283,6 @@ async def channel_stream(number: str, request: Request, convert: bool = False):
         raise HTTPException(status_code=503, detail=busy or "The Tablo couldn't tune that channel")
     enc = None
     if convert:
-        from . import encoders
         enc = encoders.choose(load_settings().get("video_quality") or "auto")
     proc = subprocess.Popen(stream_cmd(watch.playlist_url, enc), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                             creationflags=NO_WINDOW, **childproc.popen_kwargs())

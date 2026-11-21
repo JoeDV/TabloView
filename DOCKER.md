@@ -50,11 +50,11 @@ Back up `tabloview-data` to keep your settings. Removing the container doesn't t
 
 Turn on **Settings → Live TV → Share your antenna channels with other apps** from a device in `TABLOVIEW_ADMIN`. Settings shows the addresses to give each app (port 5004). Roku Media Player, VLC, Kodi and smart TVs find **TabloView** on the network by themselves.
 
-## Using the graphics chip (optional, untested)
+## Using the graphics chip (optional)
 
-TabloView tries Intel Quick Sync and NVIDIA's encoder before the CPU, and uses whichever works.
+TabloView tries Intel Quick Sync, NVIDIA's encoder and VAAPI before the CPU, and uses whichever works.
 
-- **Intel:** uncomment the `devices: - /dev/dri:/dev/dri` lines in `docker-compose.yml`. Whether it works depends on your chip and on the drivers in the image; if it doesn't, TabloView falls back to the CPU on its own.
+- **Intel:** uncomment the `devices: - /dev/dri:/dev/dri` lines in `docker-compose.yml`. The image includes Intel's video drivers, so TabloView uses Quick Sync on newer chips (Tiger Lake and later) and VAAPI on older ones (from about 2015 on). If neither works, it falls back to the CPU on its own. If the server has more than one graphics chip, set `TABLOVIEW_VAAPI_DEVICE` to the right one (such as `/dev/dri/renderD129`).
 - **NVIDIA:** install the NVIDIA Container Toolkit on the server and give the container the GPU (`gpus: all` under the service, or `runtime: nvidia`).
 
 **Settings → Playback** says what TabloView is converting with.
@@ -78,3 +78,4 @@ Your settings and exports stay where they are.
 | `TABLOVIEW_PIN` | The PIN other devices enter (4 to 6 digits). Changing it signs every device out |
 | `TABLOVIEW_ADMIN` | Home devices treated like the server itself (addresses or ranges, comma-separated) |
 | `TZ` | Your time zone |
+| `TABLOVIEW_VAAPI_DEVICE` | Which graphics chip VAAPI uses (default `/dev/dri/renderD128`) |

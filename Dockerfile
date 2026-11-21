@@ -3,9 +3,17 @@
 # Needs host networking: TabloView finds the Tablo, and players find TabloView, on the home network.
 FROM python:3.12-slim-trixie
 
-# FFmpeg converts the picture for browsers, phones and Roku, and makes the MP4 exports
-RUN apt-get update \
+# FFmpeg converts the picture for browsers, phones and Roku, and makes the MP4 exports.
+# Intel graphics (with /dev/dri passed in, see DOCKER.md): the VA drivers for VAAPI, the non-free one
+# because the free one encodes H.264 only in low-power mode, which needs firmware most hosts don't
+# load (a Comet Lake user, 2026-11-21); i965 for older chips; Intel's VPL runtime for Quick Sync on
+# Tiger Lake and newer. Intel's packages exist only for amd64.
+RUN sed -i 's/^Components: main$/Components: main non-free/' /etc/apt/sources.list.d/debian.sources \
+ && apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg \
+ && if [ "$(dpkg --print-architecture)" = amd64 ]; then \
+      apt-get install -y --no-install-recommends intel-media-va-driver-non-free i965-va-driver libmfx-gen1.2; \
+    fi \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

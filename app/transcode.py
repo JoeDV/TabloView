@@ -422,7 +422,7 @@ class TranscodeManager:
                 height, kbps = plan["size"]
                 deint += f",scale=-2:'min({height},ih)'"
                 enc = encoders.capped(enc, kbps)
-            video = ["-vf", deint, *enc["args"], "-pix_fmt", enc["pix_fmt"],
+            video = [*encoders.video_args(enc, deint),
                      # A keyframe every segment: segments start cleanly and playback starts sooner
                      "-force_key_frames", f"expr:gte(t,n_forced*{HLS_SEGMENT_SECONDS})"]
 
@@ -893,12 +893,15 @@ class TranscodeManager:
                 span = f"start={a:.3f}" + (f":end={b:.3f}" if b is not None else "")
                 graph += [f"[vs{i}]trim={span},setpts=PTS-STARTPTS[v{i}]",
                           f"[as{i}]atrim={span},asetpts=PTS-STARTPTS[a{i}]"]
-            graph.append("".join(f"[v{i}][a{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=1[v][a]")
+            upload = encoders.video_filter(enc, "")  # (VAAPI: the frames go up to the chip after joining)
+            graph.append("".join(f"[v{i}][a{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=1[{'vj' if upload else 'v'}][a]")
+            if upload:
+                graph.append(f"[vj]{upload.lstrip(',')}[v]")
             video = ["-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[a]",
-                     *enc["args"], "-pix_fmt", enc["pix_fmt"]]
+                     *enc["args"], *encoders.pix_fmt_args(enc)]
             audio_filter = []
         else:
-            video = ["-vf", deint, *enc["args"], "-pix_fmt", enc["pix_fmt"]]
+            video = encoders.video_args(enc, deint)
             audio_filter = ["-af", mix]
         return [
             FFMPEG_PATH,

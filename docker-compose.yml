@@ -18,6 +18,6 @@ services:
     volumes:
       - ./tabloview-data:/data           # settings, sign-in and cache
       - ./exports:/data/downloads        # MP4 exports
-    # Intel graphics for converting (optional, untested): uncomment, and see DOCKER.md
+    # Intel graphics for converting (optional): uncomment, and see DOCKER.md
     # devices:
     #   - /dev/dri:/dev/dri

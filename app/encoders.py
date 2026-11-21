@@ -25,6 +25,13 @@ NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 # output is bit-for-bit the same.
 QSV_STABLE = ["-async_depth", "1", "-low_power", "0"]
 
+# Linux: VAAPI, the graphics chip through its VA driver (Intel, also AMD). A Docker user's Comet Lake
+# (UHD 630, 2026-11-21) encoded with h264_vaapi on the host while Quick Sync failed (its runtime for
+# that generation isn't packaged any more). Frames are uploaded to the chip at the end of the filters
+# (VAAPI_UPLOAD), and the device is a global option, which FFmpeg accepts among the output's options.
+VAAPI_DEVICE = ["-vaapi_device", os.getenv("TABLOVIEW_VAAPI_DEVICE") or "/dev/dri/renderD128"]
+VAAPI_UPLOAD = ",format=nv12,hwupload"
+
 # name -> (label, encoder args at normal quality, args at best quality, pixel format)
 HARDWARE = {
     "qsv": ("Intel Quick Sync",
@@ -33,6 +40,14 @@ HARDWARE = {
     "nvenc": ("NVIDIA NVENC",
               ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "23", "-b:v", "0", "-forced-idr", "1"],
               ["-c:v", "h264_nvenc", "-preset", "p6", "-rc", "vbr", "-cq", "20", "-b:v", "0", "-forced-idr", "1"], "yuv420p"),
+    # Constant QP: every VA driver has it. 23/20 by analogy with the others (untested on real streams)
+    "vaapi": ("VAAPI (graphics chip)",
+              [*VAAPI_DEVICE, "-c:v", "h264_vaapi", "-rc_mode", "CQP", "-qp", "23"],
+              [*VAAPI_DEVICE, "-c:v", "h264_vaapi", "-rc_mode", "CQP", "-qp", "20"], None),
+    # Some chips encode H.264 only in low-power mode (Intel's free driver, for example)
+    "vaapi_lp": ("VAAPI (graphics chip, low power)",
+                 [*VAAPI_DEVICE, "-c:v", "h264_vaapi", "-low_power", "1", "-rc_mode", "CQP", "-qp", "23"],
+                 [*VAAPI_DEVICE, "-c:v", "h264_vaapi", "-low_power", "1", "-rc_mode", "CQP", "-qp", "20"], None),
     "amf": ("AMD AMF",
             ["-c:v", "h264_amf", "-quality", "balanced", "-rc", "cqp", "-qp_i", "22", "-qp_p", "24"],
             ["-c:v", "h264_amf", "-quality", "quality", "-rc", "cqp", "-qp_i", "19", "-qp_p", "21"], "yuv420p"),
@@ -43,8 +58,10 @@ HARDWARE = {
                      ["-c:v", "h264_videotoolbox", "-b:v", "8M", "-maxrate", "12M", "-bufsize", "16M"],
                      ["-c:v", "h264_videotoolbox", "-b:v", "12M", "-maxrate", "16M", "-bufsize", "24M"], "nv12"),
 }
-# Which encoders are worth testing where: Apple's only exists on Macs, and the others not there
+# Which encoders are worth testing where: Apple's only exists on Macs, and the others not there;
+# VAAPI only on Linux
 PLATFORM_ENCODERS = {"darwin": ["videotoolbox"]}
+LINUX_ONLY = {"vaapi", "vaapi_lp"}
 CPU = ("CPU (x264)", ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22"],
        ["-c:v", "libx264", "-preset", "faster", "-crf", "20"], "yuv420p")
 FASTEST = ("CPU (x264, fastest)", ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "26"], None, "yuv420p")
@@ -57,6 +74,8 @@ EXPORT_ARGS = {
     "qsv": ["-c:v", "h264_qsv", *QSV_STABLE, "-preset", "medium", "-global_quality", "26"],
     "nvenc": ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "26", "-b:v", "0"],
     "amf": ["-c:v", "h264_amf", "-quality", "quality", "-rc", "cqp", "-qp_i", "25", "-qp_p", "27"],
+    "vaapi": [*VAAPI_DEVICE, "-c:v", "h264_vaapi", "-rc_mode", "CQP", "-qp", "26"],
+    "vaapi_lp": [*VAAPI_DEVICE, "-c:v", "h264_vaapi", "-low_power", "1", "-rc_mode", "CQP", "-qp", "26"],
     # About 2.2 GB per hour, like the others
     "videotoolbox": ["-c:v", "h264_videotoolbox", "-b:v", "5M", "-maxrate", "8M", "-bufsize", "10M"],
     "cpu": ["-c:v", "libx264", "-preset", "faster", "-crf", "25"],
@@ -69,8 +88,9 @@ _lock = threading.Lock()
 
 def _test(name: str) -> bool:
     _, args, _, pix = HARDWARE[name]
+    enc = {"name": name, "args": args, "pix_fmt": pix}
     cmd = [FFMPEG_PATH, "-hide_banner", "-loglevel", "error", "-f", "lavfi",
-           "-i", "testsrc2=size=1920x1080:rate=30", "-t", "1", *args, "-pix_fmt", pix, "-f", "null", "-"]
+           "-i", "testsrc2=size=1920x1080:rate=30", "-t", "1", *video_args(enc, "null"), "-f", "null", "-"]
     try:
         return subprocess.run(cmd, capture_output=True, timeout=20, creationflags=NO_WINDOW).returncode == 0
     except Exception:
@@ -81,7 +101,8 @@ def candidates(platform: str = sys.platform) -> List[str]:
     """The hardware encoders to test on this kind of computer, in preference order."""
     if platform in PLATFORM_ENCODERS:
         return PLATFORM_ENCODERS[platform]
-    return [n for n in HARDWARE if n not in {e for names in PLATFORM_ENCODERS.values() for e in names}]
+    elsewhere = {e for names in PLATFORM_ENCODERS.values() for e in names}
+    return [n for n in HARDWARE if n not in elsewhere and (platform.startswith("linux") or n not in LINUX_ONLY)]
 
 
 def detect() -> List[str]:
@@ -145,6 +166,8 @@ def capped(enc: Dict[str, Any], kbps: int) -> Dict[str, Any]:
         "qsv": ["-c:v", "h264_qsv", *QSV_STABLE, "-preset", "veryfast", *rate, "-forced_idr", "1"],
         "nvenc": ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", *rate, "-forced-idr", "1"],
         "amf": ["-c:v", "h264_amf", "-quality", "balanced", "-rc", "vbr_peak", *rate],
+        "vaapi": [*VAAPI_DEVICE, "-c:v", "h264_vaapi", "-rc_mode", "VBR", *rate],
+        "vaapi_lp": [*VAAPI_DEVICE, "-c:v", "h264_vaapi", "-low_power", "1", "-rc_mode", "VBR", *rate],
         "videotoolbox": ["-c:v", "h264_videotoolbox", *rate],
     }.get(enc["name"])
     if args is None:
@@ -152,6 +175,21 @@ def capped(enc: Dict[str, Any], kbps: int) -> Dict[str, Any]:
         args = ["-c:v", "libx264", "-preset", "ultrafast" if enc["name"] == "fastest" else "veryfast",
                 "-crf", "23", *rate[2:]]
     return {**enc, "args": args}
+
+
+def video_filter(enc: Dict[str, Any], chain: str) -> str:
+    """The video filters, then (VAAPI) the upload of each frame to the graphics chip."""
+    return chain + VAAPI_UPLOAD if enc["name"] in LINUX_ONLY else chain
+
+
+def pix_fmt_args(enc: Dict[str, Any]) -> List[str]:
+    """-pix_fmt for the encoder (VAAPI: none, the uploaded frames are already the chip's)."""
+    return ["-pix_fmt", enc["pix_fmt"]] if enc.get("pix_fmt") else []
+
+
+def video_args(enc: Dict[str, Any], chain: str) -> List[str]:
+    """-vf, the encoder and its pixel format, for an output converted with enc."""
+    return ["-vf", video_filter(enc, chain), *enc["args"], *pix_fmt_args(enc)]
 
 
 def for_export(enc: Dict[str, Any]) -> Dict[str, Any]:

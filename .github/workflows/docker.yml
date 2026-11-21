@@ -24,6 +24,11 @@ jobs:
       - name: FFmpeg is there
         run: docker run --rm tabloview:test ffmpeg -hide_banner -version
 
+      - name: Intel's VA drivers are there, and FFmpeg has the VAAPI and Quick Sync encoders
+        run: |
+          docker run --rm tabloview:test ls -l /usr/lib/x86_64-linux-gnu/dri/iHD_drv_video.so /usr/lib/x86_64-linux-gnu/dri/i965_drv_video.so
+          docker run --rm tabloview:test sh -c "ffmpeg -hide_banner -encoders | grep -E 'h264_(vaapi|qsv)'"
+
       - name: TabloView starts
         run: |
           docker run -d --name tv -e TABLOVIEW_NETWORK=1 -e TABLOVIEW_PIN=2468 tabloview:test
