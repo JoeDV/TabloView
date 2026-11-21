@@ -28,7 +28,7 @@ router = APIRouter(prefix="/api", tags=["system"])
 
 
 # Home's sections (static/app.js HOME_SECTIONS; TV view has the first four)
-HomeSection = Literal["continue", "onnow", "recent", "soon", "back", "premieres", "primetime"]
+HomeSection = Literal["continue", "onnow", "recent", "soon", "alerts", "back", "premieres", "primetime"]
 
 
 class SettingsUpdate(BaseModel):
