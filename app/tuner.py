@@ -247,14 +247,20 @@ async def image(image_id: str):
     return await get_tablo_image(image_id)
 
 
-def stream_cmd(playlist_url: str, enc: Optional[Dict[str, Any]] = None) -> List[str]:
+def stream_cmd(playlist_url: str, enc: Optional[Dict[str, Any]] = None, start: float = 0,
+               recording: bool = False) -> List[str]:
     """The channel as the Tablo sends it (MPEG-2 video, AC-3 sound), picture and every sound track,
     re-wrapped as MPEG-TS for the app reading it: nothing converted (captions stay in the picture).
     Plex, Jellyfin and the others convert it themselves when a player needs that.
 
     enc (app/encoders.py): converted instead, to H.264 and stereo AAC, for DLNA players that can't
     play MPEG-2 (most Rokus), deinterlaced as for playback in TabloView."""
-    head = [FFMPEG_PATH, "-hide_banner", "-loglevel", "error", "-fflags", "+discardcorrupt", "-i", playlist_url]
+    # A recording (DLNA): from start seconds in; one still being recorded from its beginning, not
+    # where it's got to (its playlist has no end yet, which FFmpeg otherwise takes for live TV)
+    seek = ["-ss", f"{start:.3f}"] if start > 0 else []
+    from_first = ["-live_start_index", "0"] if recording else []
+    head = [FFMPEG_PATH, "-hide_banner", "-loglevel", "error", "-fflags", "+discardcorrupt", *seek, *from_first,
+            "-i", playlist_url]
     if enc is None:
         return [*head, "-map", "0:v:0", "-map", "0:a?", "-c", "copy", "-f", "mpegts", "pipe:1"]
     return [*head, "-map", "0:v:0", "-map", "0:a:0?", *encoders.video_args(enc, "bwdif=mode=send_frame:deint=interlaced,fps=30000/1001"),

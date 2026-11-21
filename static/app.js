@@ -2883,7 +2883,7 @@ async function showTuner() {
       <div class="set-desc">Add an M3U source: ${code(`${a}/lineup.m3u`)} (its guide is listed inside it, or use ${code(`${a}/xmltv.xml`)}).</div></div></div>
     <div class="set-row set-row-stack"><div class="set-text">
       <div class="set-label">Roku Media Player, VLC, Kodi and smart TVs</div>
-      <div class="set-desc">Nothing to type: look for <b>TabloView</b> among the media servers on your network (in VLC, View → Playlist → Local Network → Universal Plug'n'Play), open Live TV and pick a channel. There's no guide there, just each channel and what's on it now.${t.dlna && t.dlna.error ? ` <span style="color:var(--rec)">Players can't find it right now: ${esc(t.dlna.error)}</span>` : ''}</div></div></div>
+      <div class="set-desc">Nothing to type: look for <b>TabloView</b> among the media servers on your network (in VLC, View → Playlist → Local Network → Universal Plug'n'Play), open Live TV and pick a channel (no guide there, just each channel and what's on it now), or Recordings to play one, from the start or wherever you skip to.${t.dlna && t.dlna.error ? ` <span style="color:var(--rec)">Players can't find it right now: ${esc(t.dlna.error)}</span>` : ''}</div></div></div>
     <div class="set-sub">${icon('alert', 14)} These addresses use this PC's network address, which your router can change after a restart, and then the apps lose the tuner. To keep it, reserve this PC's address in your router's settings (often called DHCP reservation or a fixed IP).</div>
     ${watching}`;
 }
@@ -3764,7 +3764,7 @@ PAGES.help = async (r, token) => {
       <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
     let html;
     try {
-      const res = await fetch('/static/help.html?v=36');
+      const res = await fetch('/static/help.html?v=37');
       if (!res.ok) throw new Error(res.status);
       html = await res.text();
     } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }

@@ -7,11 +7,15 @@ It answers on the tuner's port and only while the tuner is on:
   /dlna/cds.xml, /dlna/cms.xml      the services' descriptions
   /dlna/control/cds|cms             their SOAP actions (Browse is the one players use)
   /dlna/ch/<number>.ts              a channel, the same stream as /auto/v<number>
+  /dlna/rec/<episode id>.ts         a recording, from the start or a time asked for (TimeSeekRange)
 
 and announces itself over SSDP (UDP 1900, multicast 239.255.255.250), the way players find media
-servers without typing an address. It lists one folder, Live TV, with each channel and what's on it
-now: no guide, no recordings. The
-channels are converted to H.264 for these players (most Rokus can't play the broadcast's MPEG-2). Only this PC and the home network get an answer, as with the tuner.
+servers without typing an address. It lists two folders: Live TV, with each channel and what's on
+it now (no guide), and Recordings, by show, newest first (a forum request: Roku owners without Plex).
+Both are converted to H.264 for these players (most Rokus can't play the broadcast's MPEG-2). A
+recording is converted as it's sent, so players seek by time (TimeSeekRange.dlna.org, which starts
+the conversion again there), not by bytes. Only this PC and the home network get an answer, as with
+the tuner.
 """
 
 import asyncio
@@ -19,14 +23,16 @@ import contextlib
 import os
 import random
 import socket
+import subprocess
 import time
 import uuid
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote, unquote
 from xml.sax.saxutils import escape
 
 from fastapi import Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from . import tuner
 from .config import APP_VERSION, STATIC_DIR
@@ -44,6 +50,9 @@ CMS = "urn:schemas-upnp-org:service:ConnectionManager:1"
 MIME = "video/mpeg"
 # Streaming, no seeking (it's live), DLNA 1.5
 FEATURES = "DLNA.ORG_OP=00;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=8D100000000000000000000000000000"
+# Recordings: seeking by time only (OP=10: converted as it's sent, so no byte positions), converted
+# (CI=1), streaming and background transfers, DLNA 1.5
+REC_FEATURES = "DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000"
 
 _now: Dict[str, Any] = {"at": 0.0, "titles": {}}
 _ssdp: Dict[str, Any] = {"transport": None, "task": None, "error": None, "port": None}
@@ -211,13 +220,74 @@ def didl(parts: List[str]) -> str:
             'xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">' + "".join(parts) + "</DIDL-Lite>")
 
 
+# --- Recordings: a folder per show, newest recording first ---
+
+def _art(url: Optional[str], base: str) -> str:
+    """A picture players can load: the Tablo's through the tuner's /images (TabloView's own port
+    wants the PIN from other devices), or the cloud guide's as it is."""
+    if not url:
+        return ""
+    if url.startswith("/api/images/"):
+        url = f"{base}/images/{url.rsplit('/', 1)[-1].split('?')[0]}"
+    elif not url.startswith("http"):
+        return ""
+    return f"<upnp:albumArtURI>{escape(url)}</upnp:albumArtURI>"
+
+
+def _clock(seconds: float) -> str:
+    s = max(0.0, float(seconds or 0))
+    return f"{int(s // 3600)}:{int(s % 3600 // 60):02d}:{s % 60:06.3f}"
+
+
+def _rec_shows() -> List[Dict[str, Any]]:
+    from .database import get_shows
+    return get_shows(sort_by="recent")
+
+
+def _rec_episodes(show_id: str) -> List[Dict[str, Any]]:
+    from .database import get_episodes_by_show
+    eps = [e for e in get_episodes_by_show(show_id) if e.get("recording_state") in ("finished", "recording", "failed")]
+    return sorted(eps, key=lambda e: e.get("air_date") or "", reverse=True)
+
+
+def _rec_title(e: Dict[str, Any]) -> str:
+    s, n = e.get("season_number") or 0, e.get("episode_number") or 0
+    day = (e.get("air_date") or "")[:10]
+    label = " · ".join(x for x in (f"S{s} E{n}" if s and n else "", e.get("title") or "", "" if s and n else day) if x)
+    return label + (" (recording now)" if e.get("recording_state") == "recording" else "")
+
+
+def _rec_item(e: Dict[str, Any], show: Dict[str, Any], base: str) -> str:
+    oid = f"re-{quote(e['id'], safe='')}"
+    parent = f"rs-{quote(show['id'], safe='')}"
+    length = e.get("actual_duration") or e.get("duration") or 0
+    desc = f"<dc:description>{escape(e['description'])}</dc:description>" if e.get("description") else ""
+    date = f"<dc:date>{escape(e['air_date'][:10])}</dc:date>" if e.get("air_date") else ""
+    return (f'<item id="{oid}" parentID="{parent}" restricted="1">'
+            f"<dc:title>{escape(_rec_title(e))}</dc:title><upnp:class>object.item.videoItem</upnp:class>"
+            f"<upnp:album>{escape(show['title'])}</upnp:album>{date}{desc}"
+            f"{_art(e.get('snapshot_url') or show.get('cover_url'), base)}"
+            f'<res protocolInfo="http-get:*:{MIME}:{REC_FEATURES}" duration="{_clock(length)}">'
+            f"{escape(base)}/dlna/rec/{quote(e['id'], safe='')}.ts</res></item>")
+
+
+def _rec_folder(show: Dict[str, Any], base: str, count: int) -> str:
+    oid = f"rs-{quote(show['id'], safe='')}"
+    return (f'<container id="{oid}" parentID="rec" restricted="1" searchable="0" childCount="{count}">'
+            f"<dc:title>{escape(show['title'])}</dc:title><upnp:class>object.container.storageFolder</upnp:class>"
+            f"{_art(show.get('cover_url') or show.get('backdrop_url'), base)}</container>")
+
+
 async def browse(object_id: str, flag: str, start: int, count: int, base: str) -> Optional[Tuple[str, int, int]]:
     """(DIDL-Lite result, number returned, total matches), or None for an unknown object."""
+    if object_id == "rec" or object_id.startswith(("rs-", "re-")):
+        return await _browse_recordings(object_id, flag, start, count, base)
     chans = await tuner.lineup()
     if object_id == "0":
         if flag == "BrowseMetadata":
-            return didl([_container("0", "-1", "TabloView", 1)]), 1, 1
-        parts = [_container("live", "0", "Live TV", len(chans))]
+            return didl([_container("0", "-1", "TabloView", 2)]), 1, 1
+        shows = await asyncio.to_thread(_rec_shows)
+        parts = [_container("live", "0", "Live TV", len(chans)), _container("rec", "0", "Recordings", len(shows))]
     elif object_id == "live":
         if flag == "BrowseMetadata":
             return didl([_container("live", "0", "Live TV", len(chans))]), 1, 1
@@ -232,6 +302,33 @@ async def browse(object_id: str, flag: str, start: int, count: int, base: str) -
         parts = []
     else:
         return None
+    page = parts[start:start + count] if count else parts[start:]
+    return didl(page), len(page), len(parts)
+
+
+async def _browse_recordings(object_id: str, flag: str, start: int, count: int, base: str) -> Optional[Tuple[str, int, int]]:
+    shows = await asyncio.to_thread(_rec_shows)
+    if object_id == "rec":
+        if flag == "BrowseMetadata":
+            return didl([_container("rec", "0", "Recordings", len(shows))]), 1, 1
+        parts = [_rec_folder(s, base, s.get("episode_count") or 0) for s in shows]
+    elif object_id.startswith("rs-"):
+        show = next((s for s in shows if s["id"] == unquote(object_id[3:])), None)
+        if not show:
+            return None
+        eps = await asyncio.to_thread(_rec_episodes, show["id"])
+        if flag == "BrowseMetadata":
+            return didl([_rec_folder(show, base, len(eps))]), 1, 1
+        parts = [_rec_item(e, show, base) for e in eps]
+    else:
+        from .database import get_episode_by_id
+        e = await asyncio.to_thread(get_episode_by_id, unquote(object_id[3:]))
+        show = next((s for s in shows if e and s["id"] == e.get("show_id")), None)
+        if not e or not show:
+            return None
+        if flag == "BrowseMetadata":
+            return didl([_rec_item(e, show, base)]), 1, 1
+        parts = []
     page = parts[start:start + count] if count else parts[start:]
     return didl(page), len(page), len(parts)
 
@@ -317,6 +414,79 @@ async def channel(number: str, request: Request):
     resp.headers.update(STREAM_HEADERS)
     resp.headers["content-type"] = MIME
     return resp
+
+
+def seek_start(header: Optional[str]) -> float:
+    """The start time a player asks for in TimeSeekRange.dlna.org ("npt=1234.5-" or "npt=0:20:34.5-"),
+    in seconds; 0 when there's none or it can't be read."""
+    if not header or "npt=" not in header:
+        return 0.0
+    first = header.split("npt=", 1)[1].split("-", 1)[0].strip()
+    try:
+        if ":" in first:
+            h, m, s = (first.split(":") + ["0", "0"])[:3]
+            return max(0.0, int(h) * 3600 + int(m) * 60 + float(s))
+        return max(0.0, float(first))
+    except ValueError:
+        return 0.0
+
+
+@tuner.app.api_route("/dlna/rec/{episode_id}.ts", methods=["GET", "HEAD"])
+async def recording(episode_id: str, request: Request):
+    """A recording, converted to H.264 as it's sent, from the start or the time asked for."""
+    from . import background, childproc, encoders, export_pace
+    from .database import get_episode_by_id
+    from .settings import load_settings
+    from .tablo_client import tablo_manager
+    ep = await asyncio.to_thread(get_episode_by_id, unquote(episode_id))
+    if not ep:
+        return Response(status_code=404)
+    length = float(ep.get("actual_duration") or ep.get("duration") or 0)
+    start = seek_start(request.headers.get("timeseekrange.dlna.org"))
+    if length and start >= length:
+        return Response(status_code=416)
+    headers = {"transferMode.dlna.org": "Streaming", "contentFeatures.dlna.org": REC_FEATURES, "Server": SERVER}
+    if request.headers.get("timeseekrange.dlna.org"):
+        headers["TimeSeekRange.dlna.org"] = f"npt={start:.3f}-{length:.3f}/{length:.3f}" if length else f"npt={start:.3f}-"
+    if request.method == "HEAD":  # players ask first: answer without asking the Tablo for anything
+        return Response(status_code=200, media_type=MIME, headers=headers)
+    if not tablo_manager.is_authenticated:
+        return Response(status_code=503)
+    try:
+        watch = await tablo_manager.get_airing_watch_url(ep["path"])
+    except Exception as e:
+        print(f"[DLNA] Couldn't start {ep.get('show_title')} for a player: {e}")
+        return Response(status_code=503)
+    playlist = watch.get("playlist_url")
+    if not playlist:
+        return Response(status_code=503)
+    # Read through TabloView, as its own player does: the joins between the Tablo's files come out clean
+    relay = export_pace.open_relay(playlist, paced=False)
+    enc = encoders.choose(load_settings().get("video_quality") or "auto")
+    cmd = tuner.stream_cmd(relay.url if relay else playlist, enc, start=start, recording=True)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=tuner.NO_WINDOW,
+                            **childproc.popen_kwargs())
+    childproc.tie_to_app(proc)
+    who = request.client.host if request.client else "?"
+    name = f"{ep.get('show_title')} {_rec_title(ep)}"
+    print(f"[DLNA] {name} to {who}{f' from {round(start)} s' if start else ''} ({enc['label']})")
+
+    async def body():
+        try:
+            while True:
+                chunk = await asyncio.to_thread(proc.stdout.read, 188 * 512)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            with contextlib.suppress(Exception):
+                proc.kill()
+                proc.wait(timeout=5)
+            export_pace.close_relay(relay)
+            background.start(tablo_manager.end_watch_session(watch.get("token")))
+            print(f"[DLNA] {name} to {who} ended")
+
+    return StreamingResponse(body(), media_type=MIME, headers=headers)
 
 
 # --- Announcing: SSDP ---
