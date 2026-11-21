@@ -613,7 +613,12 @@ button.tuner-pill:hover { border-color: var(--border-strong); color: var(--text)
 .menu-label { font-size: 11px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; padding: 8px 10px 4px; }
 
 .overlay { position: fixed; inset: 0; z-index: 120; background: rgba(4, 5, 8, 0.7); backdrop-filter: blur(4px); display: grid; place-items: center; padding: 24px; animation: fade 0.12s ease-out; }
-.dialog { width: min(520px, 100%); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 16px; box-shadow: var(--shadow); overflow: hidden; animation: pop 0.14s ease-out; }
+.dialog { width: min(520px, 100%); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 16px; box-shadow: var(--shadow); overflow: hidden; animation: pop 0.14s ease-out;
+  /* Never taller than the window: the text scrolls and the buttons stay in view (a long What's new
+     pushed Got it off the bottom of a laptop screen) */
+  max-height: calc(100vh - 48px); display: flex; flex-direction: column; }
+.dialog > .dialog-body { overflow-y: auto; min-height: 0; }
+.dialog > .dialog-foot { flex-shrink: 0; }
 .dialog-body { padding: 22px 22px 6px; }
 .dialog.wide { width: min(680px, 100%); }
 .dialog.wide:has(.fast-airings) { width: min(920px, 100%); }
