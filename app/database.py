@@ -259,6 +259,9 @@ def init_db():
         if "found_by" not in cm_cols:
             # How the breaks were found: logo, colour (no usable logo) or claude; NULL from before 1.3.3
             cursor.execute("ALTER TABLE commercials ADD COLUMN found_by TEXT")
+        if "tries" not in cm_cols:
+            # Failures in a row on this recording (a failed one is tried again, 3 tries in all)
+            cursor.execute("ALTER TABLE commercials ADD COLUMN tries INTEGER DEFAULT 0")
 
         # Indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_episodes_show_id ON episodes(show_id)")
@@ -654,15 +657,16 @@ def save_commercials(episode_id: str, status: str, breaks: Optional[List[Dict[st
     it (Claude answered, or there's no key), None leaves it."""
     with get_connection() as conn:
         conn.execute("""
-            INSERT INTO commercials (episode_id, status, breaks_json, error, analyzed_at, method, by_claude, found_by, claude_failed)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO commercials (episode_id, status, breaks_json, error, analyzed_at, method, by_claude, found_by, claude_failed, tries)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'failed' THEN 1 ELSE 0 END)
             ON CONFLICT(episode_id) DO UPDATE SET status = excluded.status, breaks_json = excluded.breaks_json,
                 error = excluded.error, analyzed_at = excluded.analyzed_at, method = excluded.method,
                 by_claude = excluded.by_claude, found_by = excluded.found_by,
+                tries = CASE WHEN excluded.status = 'failed' THEN COALESCE(commercials.tries, 0) + 1 ELSE 0 END,
                 claude_failed = CASE WHEN ? IS NULL THEN commercials.claude_failed
                                      WHEN ? = 1 THEN COALESCE(commercials.claude_failed, 0) + 1 ELSE 0 END
         """, (episode_id, status, json.dumps(breaks) if breaks is not None else None, error,
-              datetime.now(timezone.utc).isoformat(), method, int(by_claude), found_by, int(bool(claude_failed)),
+              datetime.now(timezone.utc).isoformat(), method, int(by_claude), found_by, int(bool(claude_failed)), status,
               None if claude_failed is None else int(claude_failed), None if claude_failed is None else int(claude_failed)))
         conn.commit()
 

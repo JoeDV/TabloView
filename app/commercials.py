@@ -652,12 +652,15 @@ def pending(shows: Optional[List[str]] = None) -> List[Dict[str, str]]:
                        AND c.status IN ('done', 'unreliable') AND e.status != 'Watched')
                    -- Claude couldn't be asked last time (network, Anthropic busy): again an hour later, 3 tries in all
                    OR (? IS NOT NULL AND COALESCE(c.claude_failed, 0) BETWEEN 1 AND 2 AND c.analyzed_at < ?
+                       AND e.status != 'Watched')
+                   -- couldn't be read (the Tablo busy, the network): again an hour later, 3 tries in all
+                   OR (c.status = 'failed' AND COALESCE(c.tries, 0) < 3 AND c.analyzed_at < ?
                        AND e.status != 'Watched'))
               AND (e.id IN ({qmarks}) OR (e.show_id IN ({marks}) AND e.status != 'Watched'))
                -- asked for again with Claude from the episode menu, watched or not
                OR e.id IN ({rmarks})
             ORDER BY e.air_date DESC
-        """, [claude_since, claude_since, claude_since, retry_before, *queued, *shows, *redo]).fetchall()
+        """, [claude_since, claude_since, claude_since, retry_before, retry_before, *queued, *shows, *redo]).fetchall()
     found = []
     for r in rows:
         details = recording_details(r["raw_json"])
@@ -945,6 +948,7 @@ def _analyze(url: str, log_path, stop: threading.Event, progress: Optional[Dict[
     size = OUT_W * OUT_H * 3
     hists: List[List[float]] = []
     corners: List[Tuple[bytes, ...]] = []
+    ours = False  # TabloView stopped it (something started playing): not a failure
     with open(log_path, "w", encoding="utf-8") as log:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=log, creationflags=LOW_PRIORITY,
                                 **childproc.popen_kwargs(LOW_PRIORITY_POSIX))
@@ -962,11 +966,29 @@ def _analyze(url: str, log_path, stop: threading.Event, progress: Optional[Dict[
                 if progress is not None:
                     progress["done"] = len(hists)
             proc.wait()
+            ours = stop.is_set()
         finally:
             stop.set()
+    # Stopped before its first frame, FFmpeg's exit code 1 (Windows) was taken for a failure, and the
+    # recording was never looked at again (Survivor, 2026-11-18: played as the search began)
+    if ours:
+        return None
     if proc.returncode != 0 and not hists:
-        raise RuntimeError(f"FFmpeg exited with code {proc.returncode}")
+        why = _ffmpeg_error(log_path)
+        for p in (log_path, eye_path(log_path), rating_path(log_path)):
+            Path(p).unlink(missing_ok=True)
+        raise RuntimeError(f"FFmpeg exited with code {proc.returncode}{f': {why}' if why else ''}")
     return None if proc.returncode != 0 and len(hists) < 60 else (hists, corners)
+
+
+def _ffmpeg_error(log_path) -> str:
+    """FFmpeg's last words in its log, for the reason saved with a failure (not its "Opening ..." notes)."""
+    try:
+        lines = Path(log_path).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    lines = [s.strip() for s in lines if s.strip() and "Opening '" not in s]
+    return " / ".join(lines[-2:])[-240:]
 
 
 # What the one pass measured, kept per recording (the test recordings' format, tests/data/ads): finding

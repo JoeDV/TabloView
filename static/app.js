@@ -1750,6 +1750,7 @@ function commercialTag(ep) {
     return `<span class="ad-tag ad-progress ${running ? '' : 'dim'}" data-ad-ep="${esc(ep.id)}" title="Commercial breaks are found in the background while nothing is playing">${running ? 'Finding commercials' : 'Waiting'}</span>`;
   }
   if (ep.commercials === 'unreliable') return '<span class="ad-tag dim" title="The show and its ads look too much alike to mark the breaks safely">–</span>';
+  if (ep.commercials === 'failed') return `<span class="ad-tag dim" title="${esc(`Couldn’t look for the commercials${ep.commercials_error ? `: ${ep.commercials_error}` : ''}. Tried again on its own later, or use Find commercials in this recording’s menu`)}">!</span>`;
   return '';
 }
 

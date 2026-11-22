@@ -159,9 +159,13 @@ class TranscodeManager:
         now: left alone. Wiping it deleted a live stream's rewind (2026-10-20, twice)."""
         try:
             if TRANSCODE_DIR.exists():
+                old = time.time() - 6 * 3600
                 for d in TRANSCODE_DIR.iterdir():
                     if d.is_dir() and not self._in_use(d):
                         force_rmtree(d)
+                    # Logs of commercial and dropout searches that failed, left behind before 1.4.3
+                    elif d.is_file() and d.name.startswith(("ads_", "dropouts_")) and d.stat().st_mtime < old:
+                        d.unlink(missing_ok=True)
         except Exception as e:
             print(f"[TranscodeManager] Cleanup notice: {e}")
 
@@ -1135,6 +1139,16 @@ class TranscodeManager:
         return round(min(99.0, done / expected_duration * 100), 1)
 
     @staticmethod
+    def export_stalled(now: float, last_change: float, fed_at: Optional[float], limit: float = EXPORT_STALL_SECONDS) -> bool:
+        """No progress for `limit` seconds. Progress is FFmpeg writing more, or (read through TabloView)
+        the Tablo still sending: while an export that leaves the breaks out reads through one, FFmpeg
+        writes nothing, and a break of a few minutes looked like the Tablo stopping (Killah_G,
+        2026-11-22: stopped at 190 s, where a break began)."""
+        if fed_at is not None and now - fed_at < limit:
+            return False
+        return now - last_change >= limit
+
+    @staticmethod
     def _stop_stalled_export(proc: subprocess.Popen, done: float, expected_duration: int) -> str:
         """FFmpeg made no progress for EXPORT_STALL_SECONDS: the Tablo stopped sending (FFmpeg waits for
         more and ignores its own quit command while it does). Stop it. Near the end, what arrived is
@@ -1156,6 +1170,8 @@ class TranscodeManager:
         relay = export_pace.open_relay(playlist_url)  # TabloView paces it; or directly at EXPORT_READRATE
         # Commercial breaks to leave out: while converting (enc), or from the copy once it's saved (below)
         cut_now = self.export_breaks(episode) if enc else []
+        # Read directly (no relay), a break being left out is waited through at EXPORT_READRATE
+        stall_limit = EXPORT_STALL_SECONDS + (0 if relay else max([b["end"] - b["start"] for b in cut_now] or [0]) / EXPORT_READRATE)
         cmd = self.export_cmd(relay.url if relay else playlist_url, part_path, enc, None if relay else EXPORT_READRATE,
                               surround=surround, cuts=cut_now)
         if cut_now:
@@ -1196,7 +1212,7 @@ class TranscodeManager:
                 done = self.export_seconds(tail)
                 if done is not None and done > last_done:
                     last_done, last_change = done, time.monotonic()
-                elif time.monotonic() - last_change >= EXPORT_STALL_SECONDS:
+                elif self.export_stalled(time.monotonic(), last_change, relay.fed_at if relay else None, stall_limit):
                     stalled = self._stop_stalled_export(proc, last_done, expected_duration)
                     break
                 progress = self.export_progress(tail, expected_duration)

@@ -52,6 +52,9 @@ class Relay:
         self.targets: Dict[str, Piece] = {"playlist.m3u8": (playlist_url, 0.0, None)}
         self.names: Dict[Any, str] = {playlist_url: "playlist.m3u8"}  # url, or (url, offset, length)
         self.next_at = clock() - BURST_SECONDS  # the head start
+        # When a piece last arrived from the Tablo: an export leaving breaks out writes nothing while
+        # FFmpeg reads through one, so this is what tells a long break from the Tablo stopping
+        self.fed_at = clock()
 
     @property
     def url(self) -> str:
@@ -156,6 +159,7 @@ async def serve(relay_id: str, name: str) -> Response:
     resp = await transcode_manager._http.get(url, headers=headers, timeout=30)
     if resp.status_code not in (200, 206):
         return Response(resp.content, status_code=resp.status_code)
+    relay.fed_at = relay.clock()
     if name.endswith(".m3u8"):
         return Response(relay.rewrite(resp.text, url), media_type="application/vnd.apple.mpegurl")
     return Response(resp.content, media_type=resp.headers.get("content-type") or "video/mp2t")

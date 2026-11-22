@@ -136,8 +136,9 @@ async def find_commercials(episode_id: str):
     if ep.get("recording_state") != "finished":
         raise HTTPException(status_code=400, detail="This recording isn't finished yet")
     found = get_commercials([episode_id]).get(episode_id) or {}
-    if found.get("status") in ("done", "unreliable"):
-        # Done before: once more, with the finder as it is now (and Claude, if there's a key)
+    if found:
+        # Done before (or failed): once more, with the finder as it is now (and Claude, if there's a
+        # key). Queued as new, a failed one waited for ever: the queue leaves out what has a result
         commercials.queue_redo(episode_id)
     else:
         commercials.queue_episode(episode_id)

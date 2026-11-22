@@ -56,6 +56,86 @@ class CommercialQueueTests(unittest.TestCase):
         db.save_commercials("a1", "done", [{"start": 10.0, "end": 250.0}], method=commercials.METHOD)
         self.assertEqual(self.ids(), [])
 
+    def _an_hour_later(self, ep_id):
+        with db.get_connection() as conn:
+            conn.execute("UPDATE commercials SET analyzed_at = '2000-01-01T00:00:00+00:00' WHERE episode_id = ?", (ep_id,))
+            conn.commit()
+
+    def test_a_failed_one_is_tried_again_an_hour_later_three_tries_in_all(self):
+        self.settings["commercial_shows"] = ["showa"]
+        db.save_commercials("a2", "done", [], method=commercials.METHOD)
+        db.save_commercials("a1", "failed", error="FFmpeg exited with code 1")
+        self.assertEqual(self.ids(), [])  # not straight away
+        self._an_hour_later("a1")
+        self.assertEqual(self.ids(), ["a1"])
+        db.save_commercials("a1", "failed")
+        db.save_commercials("a1", "failed")
+        self._an_hour_later("a1")
+        self.assertEqual(self.ids(), [])  # 3 failures: left alone
+        db.save_commercials("a1", "done", [], method=commercials.METHOD)
+        db.save_commercials("a1", "failed")
+        self._an_hour_later("a1")
+        self.assertEqual(self.ids(), ["a1"])  # counted again after a success
+
+    def test_find_commercials_on_a_failed_one_queues_it(self):
+        from app.routes import episodes
+        db.save_commercials("a3", "failed", error="x")
+        with mock.patch.object(episodes, "get_episode_by_id", return_value={"id": "a3", "recording_state": "finished"}):
+            asyncio.run(episodes.find_commercials("a3"))
+        self.assertIn("a3", self.ids())  # watched and failed: still done when asked
+
+
+class _Proc:
+    """FFmpeg for _analyze: writes `log` to its log, gives no frames, exits with code 1."""
+    log = ""
+    on_read = None
+
+    def __init__(self, *a, **k):
+        k["stderr"].write(self.log)
+        k["stderr"].flush()
+        self.stdout = self
+        self.returncode = None
+
+    def read(self, n):
+        if self.on_read:
+            self.on_read()
+        return b""
+
+    def poll(self):
+        return self.returncode
+
+    def kill(self):
+        self.returncode = 1
+
+    def wait(self, timeout=None):
+        self.returncode = 1
+        return 1
+
+
+class StoppedSearchTests(unittest.TestCase):
+    def run_analyze(self, log_text, stop, on_read=None):
+        import tempfile
+        from pathlib import Path
+        log = Path(tempfile.mkdtemp()) / "ads_x.log"
+        proc = type("P", (_Proc,), {"log": log_text, "on_read": staticmethod(on_read) if on_read else None})
+        with mock.patch.object(commercials.subprocess, "Popen", proc), mock.patch.object(commercials.childproc, "tie_to_app"):
+            return log, commercials._analyze("http://tablo/p.m3u8", log, stop)
+
+    def test_stopped_by_tabloview_before_a_frame_isnt_a_failure(self):
+        import threading
+        stop = threading.Event()
+        # Something started playing before the first frame came (Survivor, 2026-11-18)
+        _, result = self.run_analyze("Opening 'http://tablo/seg.ts' for reading\n", stop, on_read=stop.set)
+        self.assertIsNone(result)
+
+    def test_a_real_failure_keeps_ffmpegs_reason_and_no_log(self):
+        import threading
+        with self.assertRaises(RuntimeError) as cm:
+            self.run_analyze("Opening 'http://tablo/seg.ts' for reading\n"
+                             "http://tablo/seg.ts: Server returned 503 Service Unavailable\n", threading.Event())
+        self.assertIn("503 Service Unavailable", str(cm.exception))
+        self.assertNotIn("Opening", str(cm.exception))
+
 
 class ReadSpeedTests(unittest.TestCase):
     """Recordings are read as fast as they come, unless another app is watching live TV from the Tablo."""

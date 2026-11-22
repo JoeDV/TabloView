@@ -101,5 +101,32 @@ class ExportSpeedTests(unittest.TestCase):
         cmd = TranscodeManager.export_cmd("http://tablo/p.m3u8", Path("o.part.ts"), None)
         self.assertEqual(cmd[cmd.index("-readrate") + 1], "2")  # reading directly: twice real time
 
+    def test_a_long_break_left_out_isnt_a_stall(self):
+        # FFmpeg writes nothing for minutes while it reads through a break it leaves out
+        stalled = TranscodeManager.export_stalled
+        self.assertFalse(stalled(now=500, last_change=300, fed_at=495, limit=60))  # the Tablo is still sending
+        self.assertTrue(stalled(now=500, last_change=300, fed_at=420, limit=60))   # it stopped
+        self.assertTrue(stalled(now=500, last_change=300, fed_at=None, limit=60))  # read directly: time only
+        self.assertFalse(stalled(now=500, last_change=480, fed_at=None, limit=60))
+
+    def test_the_relay_notes_when_the_tablo_last_sent(self):
+        import asyncio
+        from unittest import mock
+        from app import export_pace
+        clock = [100.0]
+        relay = export_pace.Relay("http://tablo/p.m3u8", clock=lambda: clock[0], paced=False)
+        relay.targets["s1.ts"] = ("http://tablo/a.ts", 2.4, None)
+        export_pace.relays[relay.id] = relay
+        resp = mock.Mock(status_code=200, content=b"x", headers={})
+        fake = mock.Mock(_http=mock.Mock(get=mock.AsyncMock(return_value=resp)))
+        try:
+            clock[0] = 250.0
+            with mock.patch("app.transcode.transcode_manager", fake):
+                asyncio.run(export_pace.serve(relay.id, "s1.ts"))
+            self.assertEqual(relay.fed_at, 250.0)
+        finally:
+            export_pace.close_relay(relay)
+
+
 if __name__ == "__main__":
     unittest.main()
