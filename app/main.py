@@ -97,6 +97,7 @@ async def lifespan(app: FastAPI):
 # The bundled fonts (static/vendor/fonts): Python on Windows doesn't know .woff2 and serves them as
 # application/octet-stream
 mimetypes.add_type("font/woff2", ".woff2")
+mimetypes.add_type("application/manifest+json", ".webmanifest")  # (Add to Home Screen on phones)
 
 app = FastAPI(
     title=APP_NAME,

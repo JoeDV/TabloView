@@ -617,6 +617,21 @@ export const SUITES = {
     t.check('Remote: search finds channels or shows', await b.waitFor(`document.querySelectorAll('#results .result').length > 0`, 20000));
   },
 
+  // Add to Home Screen: PC view and the phone remote each have a manifest the browser reads without
+  // errors, with icons it can load
+  async homescreen(b, t) {
+    for (const [page, name, start] of [['/', 'TabloView', '/'], ['/remote', 'TabloView Remote', '/remote']]) {
+      await b.send('Page.navigate', { url: `${BASE}${page}` });
+      await b.waitFor(`document.readyState === 'complete'`, 20000);
+      const m = (await b.send('Page.getAppManifest', {})).result || {};
+      const parsed = (() => { try { return JSON.parse(m.data || '{}'); } catch { return {}; } })();
+      t.check(`Home screen: ${name} has its manifest, without errors`, m.url && !(m.errors || []).length && parsed.name === name
+        && new URL(parsed.start_url, BASE).pathname === start, JSON.stringify(m.errors || []));
+      const icons = await Promise.all((parsed.icons || []).map(i => fetch(new URL(i.src, BASE)).then(r => r.ok && r.headers.get('content-type') === 'image/png')));
+      t.check(`Home screen: ${name}'s icons load`, icons.length >= 3 && icons.every(Boolean));
+    }
+  },
+
   // TV view on a PC: the menu opened with the mouse closes once the arrow keys move off it, with the
   // mouse still resting on it (it stayed open)
   async tvmenu(b, t) {
