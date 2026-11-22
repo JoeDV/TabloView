@@ -46,6 +46,7 @@ const ICONS = {
   queue: '<path d="M3 6h13M3 12h9M3 18h9"/><path d="M16 12.5v6.8a.5.5 0 0 0 .77.42l5-3.4a.5.5 0 0 0 0-.84l-5-3.4a.5.5 0 0 0-.77.42z" fill="currentColor" stroke="none"/>',
   calendar: '<rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
   monitor: '<rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  phone: '<rect width="12" height="20" x="6" y="2" rx="2"/><path d="M11 18h2"/>',
 };
 const svg = name => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;
 
@@ -78,7 +79,19 @@ function focusables() {
 function focusEl(el) {
   if (!el) return;
   el.focus({ preventScroll: true });
-  el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+  // A row of tiles (Home): the row goes to the top of the screen with its heading, the first one
+  // all the way up. Centred, a tile left the row above cut in half on a wide screen, and the first
+  // row's heading off the top (2026-11-22)
+  const shelf = el.closest('.shelf');
+  const screen = $('#screen');
+  if (shelf && screen.contains(shelf)) {
+    el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });  // (along the row)
+    const first = shelf === screen.querySelector('.shelf');
+    const top = shelf.getBoundingClientRect().top - screen.getBoundingClientRect().top + screen.scrollTop;
+    screen.scrollTo({ top: first ? 0 : Math.max(0, top - 8), behavior: 'smooth' });
+  } else {
+    el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+  }
   if (el.dataset.key && !el.closest('.rail') && !el.closest('.dialog')) state.focus[location.hash || '#/'] = el.dataset.key;
 }
 
@@ -820,10 +833,10 @@ function route() {
 // Choices: a small box of big buttons. Resolves with the chosen value (null for Back)
 // ---------------------------------------------------------------------------
 let dialogDone = null;
-function choose(title, text, buttons) {
+function choose(title, text, buttons, html = '') {
   const box = $('#dialog');
   box.innerHTML = `<div class="dialog-box"><div class="dialog-title">${esc(title)}</div>
-    ${text ? `<div class="dialog-text">${esc(text)}</div>` : ''}
+    ${text ? `<div class="dialog-text">${esc(text)}</div>` : ''}${html}
     <div class="dialog-actions">${buttons.map((b, i) => `<button class="btn f ${b.danger ? 'danger' : i === 0 ? 'primary' : ''}" data-choice="${i}">${esc(b.label)}</button>`).join('')}</div></div>`;
   const was = document.activeElement;
   box.classList.remove('hidden');
@@ -1920,6 +1933,7 @@ window.tvBack = () => {
 
 function onKey(e) {
   const k = e.key;
+  $('#rail').classList.remove('hover');  // the keys took over from a mouse left on the menu
   // Typing the PIN: leave its keys alone, except moving off the box
   if (e.target.id === 'pinInput' && !['ArrowDown', 'ArrowUp', 'Enter'].includes(k)) return;
 
@@ -2045,6 +2059,7 @@ function onClick(e) {
   }
   else if (act === 'g-air') guideAiring(el.dataset.ch, Number(el.dataset.i));
   else if (act === 'alert') alertAiring(Number(el.dataset.i));
+  else if (act === 'phone-remote') phoneDialog();
   else if (act === 'reload') location.reload();
   else if (act === 'upcoming') upcomingAction(Number(el.dataset.i));
   else if (act === 'delete-watched') deleteWatched(el.dataset.show, Number(el.dataset.count));
@@ -2067,6 +2082,132 @@ function onClick(e) {
   }
 }
 
+// Phone as a remote (app/remote.py; /remote on a phone): this screen asks TabloView for what a phone
+// sends, a few seconds' wait at a time, and does it as the TV remote's own buttons would. It also
+// says what it's showing, for the phone. Not while hidden (the TV app behind another app): it then
+// drops off the phone's list
+const PHONE_KEYS = {
+  up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', ok: 'Enter', back: 'GoBack',
+  playpause: 'MediaPlayPause', rewind: 'MediaRewind', forward: 'MediaFastForward', chup: 'ChannelUp', chdown: 'ChannelDown',
+};
+const PAGE_NAMES = { '#/': 'Home', '#/library': 'Library', '#/live': 'Live TV', '#/watchlist': 'Watch list', '#/upcoming': 'Coming up' };
+
+const phoneRemote = {
+  id: null,
+  last: '',
+  lastSent: 0,
+
+  start() {
+    try { this.id = sessionStorage.getItem('tv_screen'); } catch { /* a new one each load */ }
+    if (!this.id) {
+      this.id = `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+      try { sessionStorage.setItem('tv_screen', this.id); } catch { /* this load only */ }
+    }
+    this.loop();
+    setInterval(() => this.report(), 1500);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) this.report(true); });
+  },
+
+  async loop() {
+    const pause = ms => new Promise(r => setTimeout(r, ms));
+    for (;;) {
+      if (document.hidden) { await pause(2000); continue; }
+      const began = Date.now();
+      try {
+        const res = await fetch(`/api/remote/next?screen=${this.id}`, { headers: API_HEADERS });
+        if (!res.ok) throw new Error(String(res.status));
+        const cmds = (await res.json()).commands || [];
+        for (const c of cmds) await this.run(c);
+        if (cmds.length) setTimeout(() => this.report(), 400);
+        else if (Date.now() - began < 1000) await pause(1000);  // (TabloView closing: answered at once)
+      } catch { await pause(5000); }  // PC asleep or restarting, or no PIN yet
+    }
+  },
+
+  async run({ command, value }) {
+    try {
+      if (command === 'key' && value === 'home') {
+        if (dialogDone) dialogDone(null);
+        if (player.open) player.exit();
+        setTimeout(() => { if ((location.hash || '#/') !== '#/') location.hash = '#/'; }, 50);
+      } else if (command === 'key' && PHONE_KEYS[value]) {
+        const key = PHONE_KEYS[value];
+        onKey({ key, keyCode: key === 'GoBack' ? 4 : 0, target: document.activeElement || document.body, preventDefault() {} });
+      } else if (command === 'skipbreak') {
+        if (player.open && player.inBreak) player.skipBreak();
+      } else if (command === 'tune') {
+        if (dialogDone) dialogDone(null);
+        await loadLive();
+        await player.tune(value);
+      } else if (command === 'play') {
+        if (dialogDone) dialogDone(null);
+        await player.playEpisode(value, { from: 'resume' });
+      } else if (command === 'open') {
+        if (dialogDone) dialogDone(null);
+        if (player.open) player.exit();
+        setTimeout(() => { location.hash = value; }, 50);
+      }
+    } catch (err) { console.warn('Phone remote:', err); }
+  },
+
+  // What's on this screen, sent when it changes (and now and then, in case TabloView restarted)
+  report(force = false) {
+    if (!this.id || document.hidden) return;
+    const h = location.hash || '#/';
+    const heading = $('#screen h1');
+    const dialog = !$('#dialog').classList.contains('hidden') && $('#dialog .dialog-title');
+    const now = {
+      page: player.open ? '' : PAGE_NAMES[h] || (heading && heading.textContent) || '',
+      playing: player.open ? $('#osdTitle').textContent : '',
+      sub: player.open ? $('#osdSub').textContent : '',
+      kind: player.open ? player.s.kind || '' : '',
+      paused: player.open ? player.video().paused : null,
+      in_break: !!(player.open && player.inBreak),
+      dialog: dialog ? dialog.textContent : '',
+    };
+    const text = JSON.stringify(now);
+    if (!force && text === this.last && Date.now() - this.lastSent < 15000) return;
+    if (text !== this.last) this.changedAt = Date.now();
+    this.last = text;
+    this.lastSent = Date.now();
+    fetch('/api/remote/state', { method: 'POST', headers: API_HEADERS,
+      body: JSON.stringify({ screen: this.id, state: { ...now, at: this.changedAt } }) }).catch(() => {});
+  },
+};
+
+// Menu → Use your phone: a QR code of the phone remote's address (/remote), on this PC's home
+// network address. Opened at 127.0.0.1 (TV view on the PC itself), that's the PC's own LAN address
+async function phoneDialog() {
+  let info = {};
+  try { info = await api('/api/system/info'); } catch { /* the address alone */ }
+  const loopback = /^(127\.|localhost$|\[::1\]$)/.test(location.hostname);
+  const base = loopback ? info.network_url : location.origin;
+  let html = '';
+  if (base) {
+    if (!window.qrcode) {
+      await new Promise(resolve => {
+        const s = document.createElement('script');
+        s.src = '/static/vendor/qrcode.js?v=1.4.4';
+        s.onload = s.onerror = resolve;
+        document.head.appendChild(s);
+      });
+    }
+    const url = `${base}/remote`;
+    if (window.qrcode) {
+      const qr = window.qrcode(0, 'M');
+      qr.addData(url);
+      qr.make();
+      html = `<div class="qr">${qr.createSvgTag({ cellSize: 4, margin: 4, scalable: true })}</div>`;
+    }
+    html += `<div class="qr-url">${esc(url.replace(/^https?:\/\//, ''))}</div>`;
+  }
+  const text = !base ? "This PC's address on your home network couldn't be found."
+    : info.listening_on_network === false ? 'First, on the PC, turn on Settings → Desktop & network → Allow other devices on my network.'
+    : !info.lan_pin_set ? 'Scan this with your phone’s camera. First set a PIN on the PC (Settings → Desktop & network): the phone asks for it once.'
+    : 'Scan this with your phone’s camera: buttons, channels and search for this screen. The phone asks for the PIN once.';
+  await choose('Use your phone as the remote', text, [{ label: 'Close', value: null }], html);
+}
+
 function tickClock() { $('#clock').textContent = fmt.time(Date.now()); }
 
 function init() {
@@ -2080,7 +2221,17 @@ function init() {
   document.addEventListener('keydown', onKey);
   document.addEventListener('click', onClick);
   // A pointer (TV Bro's or Silk's cursor mode) moves the highlight too
-  document.addEventListener('mouseover', e => { const el = e.target.closest('.f'); if (el && el !== document.activeElement) el.focus({ preventScroll: true }); });
+  // Only a pointer that really moved: browsers also send these when what's under a resting pointer
+  // changes (the page scrolling, the menu opening), which pulled the highlight back into the menu
+  let pointerAt = '';
+  document.addEventListener('mouseover', e => {
+    const at = `${e.screenX},${e.screenY}`;
+    if (at === pointerAt) return;
+    pointerAt = at;
+    const el = e.target.closest('.f');
+    if (el && el !== document.activeElement) el.focus({ preventScroll: true });
+  });
+  document.documentElement.addEventListener('mouseleave', () => $('#rail').classList.remove('hover'));
   // Moving the mouse over the picture brings up the controls
   let lastPointer = '';
   document.addEventListener('mousemove', e => {
@@ -2088,7 +2239,8 @@ function init() {
     // pointer changes, which kept the controls and title up
     const at = `${e.screenX},${e.screenY}`;
     if (at === lastPointer) return;
-    lastPointer = at;
+    lastPointer = pointerAt = at;
+    $('#rail').classList.toggle('hover', !!e.target.closest('.rail'));
     if (!player.open || !$('#dialog').classList.contains('hidden')) return;
     if (!player.controls) { player.showControls(); return; }
     player.wake();
@@ -2142,6 +2294,7 @@ function init() {
   api('/api/settings').then(s => { state.shapes = s.picture_shapes || {}; state.stopAfterSearch = s.stop_after_search !== false; }).catch(() => {});
   if (location.hash === '#/play') location.replace('#/');
   route();
+  phoneRemote.start();
 }
 
 init();

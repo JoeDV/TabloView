@@ -27,6 +27,7 @@ from .transcode import transcode_manager
 from .routes import auth, shows, episodes, system, debug, guide, live, watchlist
 from .routes import streaming as streaming_routes
 from .routes import devcheck, devtools
+from .routes import remote as remote_routes
 from .routes import plex_routes
 
 
@@ -34,6 +35,8 @@ from .routes import plex_routes
 async def lifespan(app: FastAPI):
     # Sign-in tokens and the account's email never reach the log (it gets pasted into forum posts)
     redact.install()
+    from . import remote
+    remote.reopen()
     background.start(asyncio.to_thread(netcheck.tailscale))  # this PC's Tailscale name, for _on_tailnet
     # Startup: initialize database tables
     print("[Startup] Initializing Tablo SQLite database...")
@@ -228,6 +231,7 @@ if devtools.ENABLED:  # developer tools (TABLOVIEW_DEV_TOOLS=1): never in the ap
 app.include_router(streaming_routes.router)
 app.include_router(plex_routes.router)
 app.include_router(devcheck.router)  # the browser tests' check of a save they fake
+app.include_router(remote_routes.router)  # phone as a remote
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +384,12 @@ async def serve_index():
 async def serve_tv():
     """TabloView for a TV's browser: a few big screens for a remote (static/tv.js)."""
     return FileResponse(str(STATIC_DIR / "tv.html"), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+
+@app.get("/remote")
+async def serve_remote():
+    """A phone as the remote for an open TV view (app/remote.py, static/remote.js)."""
+    return FileResponse(str(STATIC_DIR / "remote.html"), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 # The TabloView app for Google TV and Fire TV (tvapp/). On the TV, Downloader fetches it from this PC's

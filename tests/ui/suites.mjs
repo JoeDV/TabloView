@@ -550,6 +550,91 @@ export const SUITES = {
     await b.ev(`delete window.__fake['/api/guide/alerts'], true`);
   },
 
+  // Phone as a remote: an open TV view picks up what's sent for it (a page, buttons), says what it
+  // shows, and the phone's page lists it, with its search. Nothing is tuned or played
+  async phoneremote(b, t) {
+    const post = (p, body) => fetch(BASE + p, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-TabloView': '1' }, body: JSON.stringify(body) });
+    await b.send('Page.navigate', { url: `${BASE}/tv#/` });
+    await b.waitFor(`typeof phoneRemote === 'object' && !!phoneRemote.id && !!document.querySelector('.shelf, .empty')`, 30000);
+    const id = await b.ev(`phoneRemote.id`);
+    let listed = false;
+    for (let i = 0; i < 20 && !listed; i++) {
+      listed = ((await api('/api/remote/screens')).screens || []).some(s => s.id === id);
+      if (!listed) await sleep(500);
+    }
+    t.check('Remote: an open TV view is listed', listed);
+    const sent = Date.now();
+    await post('/api/remote/send', { screen: id, command: 'open', value: '#/library' });
+    t.check('Remote: the TV view opens what the phone sent, at once', await b.waitFor(`location.hash === '#/library'`, 3000), `${Date.now() - sent} ms`);
+    const reported = async page => {
+      for (let i = 0; i < 20; i++) {
+        const s = ((await api('/api/remote/screens')).screens || []).find(x => x.id === id);
+        if (s && s.state && s.state.page === page) return true;
+        await sleep(300);
+      }
+      return false;
+    };
+    t.check('Remote: the TV view says what it shows', await reported('Library'));
+    await post('/api/remote/send', { screen: id, command: 'key', value: 'home' });
+    t.check('Remote: Home goes home', await b.waitFor(`(location.hash || '#/') === '#/'`, 3000) && await reported('Home'));
+    const refused = await post('/api/remote/send', { screen: id, command: 'open', value: 'https://example.com' });
+    t.check('Remote: only TabloView’s own pages can be opened', refused.status === 400);
+
+    // Menu → Use your phone: a QR code of the remote's address
+    await b.ev(`document.querySelector('[data-act="phone-remote"]').click(), true`);
+    t.check('Remote: Use your phone shows a QR code of /remote', await b.waitFor(`!!document.querySelector('#dialog:not(.hidden) .qr svg')
+      && document.querySelector('#dialog .qr-url').textContent.endsWith('/remote')`, 10000));
+    await b.ev(`dialogDone && dialogDone(null), true`);
+    // Going down Home and back up again ends at the very top: the first row's heading was cut off
+    // (a wide, short window, as on a PC: the rows are sized by the width)
+    await b.send('Emulation.setDeviceMetricsOverride', { width: 1600, height: 680, deviceScaleFactor: 1, mobile: false });
+    await b.ev(`showHome(), true`);
+    await b.waitFor(`document.querySelectorAll('.shelf').length > 0`, 20000);
+    if (await b.ev(`document.querySelectorAll('.shelf').length >= 3`)) {
+      await b.ev(`$('#screen').scrollTop = 0, focusContent(), true`);
+      for (const k of ['ArrowDown', 'ArrowDown', 'ArrowDown', 'ArrowUp', 'ArrowUp', 'ArrowUp']) {
+        await b.ev(`onKey({ key: '${k}', keyCode: 0, target: document.activeElement, preventDefault() {} }), true`);
+        await sleep(400);
+      }
+      await sleep(800);
+      t.check('TV: back up at the first row, the page is at the very top', await b.ev(`$('#screen').scrollTop < 2`), await b.ev(`$('#screen').scrollTop`));
+      // Down a row: that row and its heading at the top, nothing cut in half above it
+      await b.ev(`onKey({ key: 'ArrowDown', keyCode: 0, target: document.activeElement, preventDefault() {} }), true`);
+      await b.ev(`onKey({ key: 'ArrowDown', keyCode: 0, target: document.activeElement, preventDefault() {} }), true`);
+      await sleep(1200);
+      t.check('TV: the row picked is at the top with its heading, none cut off above', await b.ev(`(() => {
+        const scr = $('#screen').getBoundingClientRect().top, shelf = document.activeElement.closest('.shelf');
+        const h = shelf.querySelector('h2').getBoundingClientRect().top;
+        const above = shelf.previousElementSibling;
+        return h >= scr - 1 && h < scr + 60 && (!above || above.getBoundingClientRect().bottom <= scr + 1);
+      })()`));
+    }
+    await b.send('Emulation.clearDeviceMetricsOverride', {});
+
+    await b.send('Page.navigate', { url: `${BASE}/remote` });
+    t.check('Remote: the phone page lists the screen and its buttons', await b.waitFor(`!document.querySelector('#controls').classList.contains('hidden')`, 10000));
+    await b.ev(`(() => { const s = document.querySelector('#search'); s.value = 'a'; s.dispatchEvent(new Event('input')); })()`);
+    t.check('Remote: search finds channels or shows', await b.waitFor(`document.querySelectorAll('#results .result').length > 0`, 20000));
+  },
+
+  // TV view on a PC: the menu opened with the mouse closes once the arrow keys move off it, with the
+  // mouse still resting on it (it stayed open)
+  async tvmenu(b, t) {
+    await b.send('Page.navigate', { url: `${BASE}/tv#/` });
+    await b.waitFor(`typeof showHome === 'function' && !!document.querySelector('.shelf, .empty')`, 30000);
+    await sleep(800);  // (Home settled: it puts the highlight on the page when it's drawn)
+    const open = `$('#rail').getBoundingClientRect().width > innerWidth * 0.12`;
+    const home = await b.ev(`(() => { const r = document.querySelector('.rail .nav').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
+    for (const dx of [0, 3]) await b.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: home[0] + dx, y: home[1] });
+    t.check('TV menu: the mouse over it opens it', await b.waitFor(open, 3000));
+    await b.ev(`onKey({ key: 'ArrowRight', keyCode: 0, target: document.activeElement, preventDefault() {} }), true`);
+    await sleep(600);
+    t.check('TV menu: the arrows moving off it close it, the mouse still on it', await b.ev(`!(${open}) && !document.activeElement.closest('.rail')`), await b.ev(`JSON.stringify({ w: $('#rail').getBoundingClientRect().width, cls: $('#rail').className, fw: !!$('#rail').matches(':focus-within'), act: document.activeElement.className })`));
+    await b.ev(`showHome(), true`);  // the page changing under the resting mouse
+    await sleep(1500);
+    t.check('TV menu: the page changing under a resting mouse doesn’t pull the highlight back', await b.ev(`!document.activeElement.closest('.rail') && !(${open})`));
+  },
+
   // Add a channel offers every channel, not only the first one's list: watching a playlist group's
   // channel, antenna channels and favorites of every kind are there too (a forum user couldn't add
   // an antenna channel to one from a group). Nothing is tuned

@@ -132,6 +132,8 @@ class ServerRunner:
     def request_restart(self):
         """Called from inside the server (settings change); the monitor thread does the restart."""
         self.restart_requested.set()
+        from app import remote
+        remote.close_all()  # TV views waiting for a phone's commands are answered at once
         if self.server:
             self.server.should_exit = True
 
@@ -146,6 +148,8 @@ class ServerRunner:
 
     def stop(self):
         self.stopping = True
+        from app import remote
+        remote.close_all()
         if self.server:
             self.server.should_exit = True
         if self.thread:

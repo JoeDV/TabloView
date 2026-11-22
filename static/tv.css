@@ -36,10 +36,12 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 /* Tapping the logo opens the menu with its names (a phone has no hover) */
 .rail-brand { cursor: pointer; }
 /* Opening on hover too, only where there's a real pointer (a mouse, a TV browser's cursor): on a
-   phone a tap counts as a hover that stays until the next tap elsewhere, which kept it open */
+   phone a tap counts as a hover that stays until the next tap elsewhere, which kept it open.
+   .hover is set by tv.js while the pointer really moves over it, and cleared by the remote's keys:
+   with :hover, a mouse left resting on the menu kept it open after the arrows moved off it */
 @media (hover: hover) {
-  .rail:hover { width: 19vw; box-shadow: 3vw 0 5vw rgba(0,0,0,0.75); }
-  .rail:hover span { opacity: 1; }
+  .rail.hover { width: 19vw; box-shadow: 3vw 0 5vw rgba(0,0,0,0.75); }
+  .rail.hover span { opacity: 1; }
 }
 .nav.active { background: var(--surface-2); color: var(--text); }
 .nav.f:focus { transform: none; box-shadow: none; background: #fff; color: #000; }
@@ -100,6 +102,8 @@ h2 { font-size: 1.7vw; margin: 2.4vw 0 1.2vw; color: var(--dim); font-weight: 60
 
 /* Home: rows that scroll sideways. The padding leaves room for the highlight ring. */
 .shelf { margin-bottom: 1.8vw; }
+/* Room under the last row, so it too can go to the top of the screen (tv.js focusEl) */
+.shelf:last-of-type { min-height: calc(100vh - 4vw); }
 .shelf h2 { margin: 0 0 0.4vw; color: var(--text); }
 .strip { display: flex; gap: 1.6vw; overflow-x: auto; scrollbar-width: none; padding: 0.8vw; margin: 0 -0.8vw; }
 .strip::-webkit-scrollbar { display: none; }
@@ -233,6 +237,9 @@ h2 { font-size: 1.7vw; margin: 2.4vw 0 1.2vw; color: var(--dim); font-weight: 60
 /* Choices (resume, not enough tuners) and the PIN */
 .dialog { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(0,0,0,0.7); }
 .dialog-box { width: 46vw; padding: 2.6vw; border-radius: 1.2vw; background: var(--surface); }
+.qr { width: 18vw; margin: 1.6vw auto 0.8vw; border-radius: 0.8vw; overflow: hidden; }
+.qr svg { display: block; width: 100%; height: auto; }
+.qr-url { text-align: center; font-size: 1.4vw; color: var(--dim); margin-bottom: 0.6vw; }
 .dialog-title { font-size: 2vw; font-weight: 700; }
 .dialog-text { color: var(--dim); margin-top: 1vw; line-height: 1.45; }
 .dialog-actions { display: flex; gap: 1.2vw; margin-top: 2vw; flex-wrap: wrap; }

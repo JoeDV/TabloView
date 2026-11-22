@@ -22,6 +22,8 @@ const BROWSERS = [
 // (Starting/stopping playback of a recording is read-only on the Tablo.)
 // ($ matters: /watched, marking a recording watched on the Tablo, must be faked)
 const ALLOWED_WRITES = [/^\/api\/episodes\/[^/]+\/watch$/, /^\/api\/live\/stop$/,
+  // Phone remote: what a TV view shows, kept in TabloView's memory only
+  /^\/api\/remote\/state$/,
   // Live TV tuning takes a tuner, so it's only real when a test run asks for it
   ...(process.env.TABLOVIEW_ALLOW_TUNE ? [/^\/api\/live\/tune$/] : [])];
 
