@@ -626,6 +626,31 @@ export const SUITES = {
     t.check('Remote: search finds channels or shows', await b.waitFor(`document.querySelectorAll('#results .result').length > 0`, 20000));
   },
 
+  // Splash: the intro plays the first time a browser opens this version, then gets out of the way
+  // (by itself, or on a key, which doesn't reach the page); not again until the next version
+  async splash(b, t) {
+    for (const page of ['/', '/tv']) {
+      await b.send('Page.navigate', { url: `${BASE}${page}` });
+      await b.waitFor(`document.readyState === 'complete'`, 20000);
+      await b.ev(`localStorage.setItem('tv_view', ${JSON.stringify(page === '/' ? 'pc' : 'tv')}), localStorage.removeItem('splash_version'), sessionStorage.setItem('splash_test', '1'), true`);
+      await b.send('Page.reload', {});
+      t.check(`Splash (${page}): shown the first time`, await b.waitFor(`!!document.querySelector('#splash')`, 5000));
+      t.check(`Splash (${page}): the video plays`, await b.waitFor(`document.querySelector('#splash video').currentTime > 0.3`, 5000));
+      t.check(`Splash (${page}): gone by itself`, await b.waitFor(`!document.querySelector('#splash')`, 8000));
+      await b.ev(`sessionStorage.setItem('splash_test', '1'), true`);  // (allowed, but already seen)
+      await b.send('Page.reload', {});
+      await b.waitFor(`document.readyState === 'complete'`, 20000);
+      t.check(`Splash (${page}): not again for the same version`, !(await b.ev(`!!document.querySelector('#splash')`)));
+    }
+    // A key skips it, and isn't passed on to the page
+    await b.ev(`localStorage.setItem('splash_version', '0.0.1'), sessionStorage.setItem('splash_test', '1'), true`);  // (a new version)
+    await b.send('Page.reload', {});
+    await b.waitFor(`!!document.querySelector('#splash')`, 5000);
+    await b.ev(`window.__keys = 0, document.addEventListener('keydown', () => window.__keys++), true`);
+    await b.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+    t.check('Splash: a key skips it, without reaching the page', await b.waitFor(`!document.querySelector('#splash')`, 2000) && await b.ev(`window.__keys === 0`));
+  },
+
   // Add to Home Screen: PC view and the phone remote each have a manifest the browser reads without
   // errors, with icons it can load
   async homescreen(b, t) {

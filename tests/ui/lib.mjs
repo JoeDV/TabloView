@@ -30,6 +30,8 @@ const ALLOWED_WRITES = [/^\/api\/episodes\/[^/]+\/watch$/, /^\/api\/live\/stop$/
 const SHIM = `(() => {
   if (window.__shim) return; window.__shim = true;
   window.__writes = []; window.__fake = {};
+  // No splash over the page, except for the splash suite's own load
+  try { sessionStorage.setItem('splash_off', sessionStorage.getItem('splash_test') === '1' ? '0' : '1'); sessionStorage.removeItem('splash_test'); } catch {}
   // No "What's new" card in tests (its "seen" request is faked, so it would show on every page)
   window.__fake['/api/system/whatsnew'] = { show: false, notes: [] };
   const realFetch = window.fetch.bind(window);

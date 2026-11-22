@@ -387,6 +387,13 @@ async def serve_tv():
     return FileResponse(str(STATIC_DIR / "tv.html"), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
+@app.get("/splash.js")
+async def serve_splash():
+    """The intro (static/splash.js), with this version in it: each browser plays it once per version."""
+    text = (STATIC_DIR / "splash.js").read_text(encoding="utf-8").replace("__APP_VERSION__", APP_VERSION)
+    return Response(text, media_type="text/javascript", headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/remote")
 async def serve_remote():
     """A phone as the remote for an open TV view (app/remote.py, static/remote.js)."""

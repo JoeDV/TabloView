@@ -17,6 +17,7 @@ NOTES: Dict[str, List[str]] = {
         "Use your phone as the remote for TabloView on the TV: arrows, OK, Back, pause, skip and Skip break, channel up and down, and a search that tunes a channel or opens a show on the TV. Choose Use your phone in TV view's menu and scan the code, or see Settings → Desktop & network.",
         "Add TabloView, or the phone remote, to a phone's or tablet's home screen: it gets its own icon and opens full screen, like an app.",
         "TV view's Home shows what your Guide alerts found, with Record (or Watch, when it's on now).",
+        "A short intro plays the first time you open a new version (any click or key skips it).",
         "TV view: the row you're on moves to the top of the screen with its heading, so the row above is no longer cut in half, and the menu closes when you move off it even with a mouse resting on it.",
         "A recording whose commercial search fails is tried again an hour later (3 tries in all), shows ! with the reason, and Find commercials works on it.",
         "Fixed: an MP4 export leaving out the commercials could stop partway at a long break, as if the Tablo had stopped sending.",
