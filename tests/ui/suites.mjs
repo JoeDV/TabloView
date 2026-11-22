@@ -527,6 +527,29 @@ export const SUITES = {
     await b.ev(`document.querySelector('[data-act="live-tab"][data-tab="ota"]').click()`);
   },
 
+  // TV view's Home: Guide alerts set on the PC show as a row when something is found, and OK on one
+  // offers to record it (the record is faked, but checked with the server)
+  async tvalerts(b, t) {
+    await b.send('Page.navigate', { url: `${BASE}/tv#/` });
+    await b.waitFor(`typeof showHome === 'function' && !!document.querySelector('.shelf, .empty')`, 30000);
+    t.check('TV: no Guide alerts row when nothing is found', await b.ev(`![...document.querySelectorAll('.shelf h2')].some(h => h.textContent === 'Guide alerts')`)
+      || await b.ev(`fetch('/api/guide/alerts').then(r => r.json()).then(d => d.matches.length > 0)`));
+    const later = new Date(Date.now() + 2 * 86400000).toISOString();
+    const match = { path: '/guide/series/episodes/test-1', series_path: '/guide/series/test', show_title: 'Test Show', episode_title: 'Pilot',
+      season_number: 1, episode_number: 1, air_datetime: later, duration: 3600, channel_call_sign: 'TEST', channel_network: 'NET',
+      is_new: true, is_premiere: false, schedule_state: 'none', scheduled: false, alert: 'pilot', cover_url: null, backdrop_url: null };
+    await b.ev(`window.__fake['/api/guide/alerts'] = { words: ['pilot'], matches: [${JSON.stringify(match)}] }; showHome(), true`);
+    t.check('TV: Guide alerts row shows what was found', await b.waitFor(`[...document.querySelectorAll('.shelf h2')].some(h => h.textContent === 'Guide alerts')
+      && !!document.querySelector('[data-act="alert"]')`, 15000));
+    await b.ev(`document.querySelector('[data-act="alert"]').click(), true`);
+    t.check('TV: OK on an alert offers to record it', await b.waitFor(`!!document.querySelector('#dialog:not(.hidden) [data-choice]')
+      && document.querySelector('#dialog .dialog-title').textContent === 'Test Show'`, 5000));
+    await b.ev(`window.__writes = [], document.querySelector('#dialog [data-choice="0"]').click(), true`);
+    const sent = `window.__writes.filter(w => w[1].endsWith('/api/guide/episodes/schedule')).map(w => JSON.parse(w[2]))`;
+    t.check('TV: Record it sends the recording', await b.waitFor(`JSON.stringify(${sent}) === ${JSON.stringify(JSON.stringify([{ path: match.path, scheduled: true }]))}`, 5000));
+    await b.ev(`delete window.__fake['/api/guide/alerts'], true`);
+  },
+
   // Add a channel offers every channel, not only the first one's list: watching a playlist group's
   // channel, antenna channels and favorites of every kind are there too (a forum user couldn't add
   // an antenna channel to one from a group). Nothing is tuned

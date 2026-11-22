@@ -178,6 +178,7 @@ function recTags(e) {
   else if (e.commercials === 'done') tags.push(['', 'No breaks found']);
   else if (e.commercials === 'analyzing') tags.push(['', 'Finding commercials']);
   else if (e.commercials === 'queued') tags.push(['', 'Commercials: waiting']);
+  else if (e.commercials === 'failed') tags.push(['', 'Commercials: couldn’t look']);
   if (e.finding_dropouts) tags.push(['', 'Checking signal']);
   else if ((e.dropouts || []).length) tags.push(['caution', e.dropouts.length === 1 ? '1 dropout' : `${e.dropouts.length} dropouts`]);
   if (e.protected) tags.push(['', 'Protected']);
@@ -185,13 +186,15 @@ function recTags(e) {
 }
 const chNum = c => (c.major > 0 ? `${c.major}.${c.minor}` : '');
 
-// Home: rows to scroll along (Continue watching, On now, Recently recorded, Recording soon), as on the PC
-const HOME_ROWS = ['continue', 'onnow', 'recent', 'soon'];  // TV view's rows, as designed
+// Home: rows to scroll along (Continue watching, On now, Recently recorded, Recording soon, Guide
+// alerts), as on the PC
+const HOME_ROWS = ['continue', 'onnow', 'recent', 'soon', 'alerts'];  // TV view's rows, as designed
 
 async function showHome() {
   loading('#/');
-  const [progress, shows, , upcoming, settings] = await Promise.allSettled([
+  const [progress, shows, , upcoming, settings, alerts] = await Promise.allSettled([
     api('/api/episodes/in_progress'), api('/api/shows'), loadLive(), api('/api/guide/upcoming'), api('/api/settings'),
+    api('/api/guide/alerts'),
   ]);
   if (progress.status === 'rejected' && shows.status === 'rejected') return failed(progress.reason, '#/');
   // The rows in the order chosen under Customize on the PC's Home, without the ones turned off there
@@ -244,6 +247,22 @@ async function showHome() {
       <div class="art" ${art(a.backdrop_url || a.cover_url)}></div>
       <div class="label"><div class="name">${esc(a.show_title)}${a.wont_record || a.missed_new ? '<span class="tag warn">Won\'t record</span>' : ''}</div>
         <div class="meta">${when} · ${esc([a.channel_number, a.channel_call_sign].filter(Boolean).join(' '))}</div></div>
+    </button>`;
+  }));
+
+  // Guide alerts: shows coming up with one of the words set on the PC (Home → Guide alerts there),
+  // up to 4 a word as on the PC's Home. Only when something's found
+  const perWord = {};
+  state.alerts = (alerts.status === 'fulfilled' ? alerts.value.matches || [] : [])
+    .filter(a => (perWord[a.alert] = (perWord[a.alert] || 0) + 1) <= 4).slice(0, 12);
+  shelf('alerts', 'Guide alerts', state.alerts.map((a, i) => {
+    const t = new Date(a.air_datetime).getTime();
+    const when = t <= now ? '<span class="tag live">On now</span>' : esc(`${fmt.dayLabel(a.air_datetime)} ${fmt.time(t)}`);
+    const what = [fmt.se(a.season_number, a.episode_number), a.episode_title].filter(Boolean).join(' · ');
+    return `<button class="tile f" data-act="alert" data-i="${i}" data-key="al-${esc(a.path)}">
+      <div class="art" ${art(a.backdrop_url || a.cover_url)}>${a.scheduled ? '<span class="badge rec">● Set to record</span>' : ''}</div>
+      <div class="label"><div class="name">${esc(a.show_title)}</div>
+        <div class="meta">${when} · ${esc([a.channel_call_sign, what || `“${a.alert}”`].filter(Boolean).join(' · '))}</div></div>
     </button>`;
   }));
 
@@ -645,6 +664,32 @@ async function guideAiring(chId, i) {
     else await api('/api/guide/episodes/schedule', { method: 'POST', body: JSON.stringify({ path: a.path, scheduled }) });
     a.schedule_state = scheduled ? 'scheduled' : 'none';
     showLive();
+  } catch (err) {
+    await choose("Couldn't do that", err.message, [{ label: 'OK', value: 1 }]);
+  }
+}
+
+// A Guide alert on Home: on now, watch it; otherwise record it (or not), as on the PC's Home
+async function alertAiring(i) {
+  const a = (state.alerts || [])[i];
+  if (!a) return;
+  const aStart = new Date(a.air_datetime).getTime(), aEnd = aStart + (a.duration || 0) * 1000;
+  const ch = allChannels().find(c => c.kind !== 'extra' && c.call_sign && c.call_sign === a.channel_call_sign);
+  const live = aStart <= Date.now() && Date.now() < aEnd;
+  const what = [fmt.se(a.season_number, a.episode_number), a.episode_title].filter(Boolean).join(' · ');
+  const text = `${fmt.dayLabel(a.air_datetime)}, ${fmt.time(aStart)} – ${fmt.time(aEnd)} · ${[a.channel_call_sign, a.channel_network].filter(Boolean).join(' ')}`
+    + (what ? ` · ${what}` : '') + `. Found for “${a.alert}”.` + (a.scheduled ? ' Set to record.' : '');
+  const pick = await choose(a.show_title, text, [
+    ...(live && ch ? [{ label: '▶ Watch it', value: 'watch' }] : []),
+    { label: a.scheduled ? "Don't record it" : '● Record it', value: a.scheduled ? 'skip' : 'record' },
+    { label: 'Close', value: null }]);
+  if (!pick) return;
+  if (pick === 'watch') { player.tune(ch.channel_id); return; }
+  try {
+    const scheduled = pick === 'record';
+    await api('/api/guide/episodes/schedule', { method: 'POST', body: JSON.stringify({ path: a.path, scheduled }) });
+    state.focus['#/'] = `al-${a.path}`;
+    showHome();
   } catch (err) {
     await choose("Couldn't do that", err.message, [{ label: 'OK', value: 1 }]);
   }
@@ -1999,6 +2044,7 @@ function onClick(e) {
     showLive();
   }
   else if (act === 'g-air') guideAiring(el.dataset.ch, Number(el.dataset.i));
+  else if (act === 'alert') alertAiring(Number(el.dataset.i));
   else if (act === 'reload') location.reload();
   else if (act === 'upcoming') upcomingAction(Number(el.dataset.i));
   else if (act === 'delete-watched') deleteWatched(el.dataset.show, Number(el.dataset.count));
