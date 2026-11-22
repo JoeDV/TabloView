@@ -611,6 +611,15 @@ export const SUITES = {
     }
     await b.send('Emulation.clearDeviceMetricsOverride', {});
 
+    // The PC's Settings → Desktop & network has the same code (shown when other devices can connect)
+    await b.ev(`localStorage.setItem('tv_view', 'pc'), true`);  // (TV view above made it this browser's view)
+    await b.send('Page.navigate', { url: `${BASE}/#/settings?tab=desktop` });
+    await b.waitFor(`typeof phoneRemoteQr === 'function'`, 20000);
+    await b.ev(`phoneRemoteQr('http://192.168.1.50:7070/remote'), true`);
+    t.check('Remote: Settings shows the QR code too', await b.waitFor(`!!document.querySelector('.overlay .qr-box svg')
+      && document.querySelector('.overlay .qr-url').textContent === 'http://192.168.1.50:7070/remote'`, 10000));
+    await b.ev(`document.querySelector('.overlay [data-action="modal-ok"]').click(), true`);
+
     await b.send('Page.navigate', { url: `${BASE}/remote` });
     t.check('Remote: the phone page lists the screen and its buttons', await b.waitFor(`!document.querySelector('#controls').classList.contains('hidden')`, 10000));
     await b.ev(`(() => { const s = document.querySelector('#search'); s.value = 'a'; s.dispatchEvent(new Event('input')); })()`);

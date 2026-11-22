@@ -1175,6 +1175,9 @@ label.set-row-switch:hover { background: rgba(255, 255, 255, 0.015); }
 .grp-row { display: flex; align-items: center; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--border); }
 .grp-row .grp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .grp-row.dim .grp-name { opacity: 0.6; }
+.qr-box { width: 220px; margin: 16px auto 8px; border-radius: 10px; overflow: hidden; }
+.qr-box svg { display: block; width: 100%; height: auto; }
+.qr-url { text-align: center; color: var(--text-2); font-size: 13px; overflow-wrap: anywhere; }
 .grp-row .switch { flex-shrink: 0; margin-right: 4px; }
 
 /* Settings → Live TV → Saved playlists */

@@ -701,6 +701,34 @@ function alertRow(a) {
     </div>`;
 }
 
+// Settings → Desktop & network → Your phone as the remote: its address as a QR code for the
+// phone's camera (static/vendor/qrcode.js, loaded on first use)
+async function phoneRemoteQr(url) {
+  if (!window.qrcode) {
+    await new Promise(resolve => {
+      const s = document.createElement('script');
+      s.src = '/static/vendor/qrcode.js?v=1.4.4';
+      s.onload = s.onerror = resolve;
+      document.head.appendChild(s);
+    });
+  }
+  let code = '';
+  if (window.qrcode) {
+    const qr = window.qrcode(0, 'M');
+    qr.addData(url);
+    qr.make();
+    code = `<div class="qr-box">${qr.createSvgTag({ cellSize: 4, margin: 4, scalable: true })}</div>`;
+  }
+  await openModal(`
+    <div class="dialog-body">
+      <div class="dialog-title">Your phone as the remote</div>
+      <div class="dialog-text">Point your phone’s camera at this, on your home Wi-Fi. The phone asks for the PIN once. TabloView has to be open on the TV: the TabloView app, or TV view in its browser (that menu has this code too).</div>
+      ${code}
+      <div class="qr-url">${esc(url)}</div>
+    </div>
+    <div class="dialog-foot"><button class="btn btn-primary" data-action="modal-ok" data-autofocus>Done</button></div>`);
+}
+
 // Guide alerts (app/alerts.py): add and remove the words while the dialog stays open
 async function guideAlertsDialog() {
   let words = [];
@@ -3795,7 +3823,7 @@ PAGES.help = async (r, token) => {
       <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
     let html;
     try {
-      const res = await fetch('/static/help.html?v=39');
+      const res = await fetch('/static/help.html?v=40');
       if (!res.ok) throw new Error(res.status);
       html = await res.text();
     } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
@@ -4099,7 +4127,9 @@ PAGES.settings = async (r, token) => {
           <div class="set-text"><div class="set-label">Open it on other devices</div>
             <div class="set-desc">On this network: <b>${esc(info.network_url)}</b>. On Google TV or Fire TV, get the <b>TabloView app</b>: in the Downloader app, enter <b>${esc(info.network_url.replace(/^https?:\/\//, ''))}/app</b> (<a href="#/help?topic=help-tv">how</a>). On other TVs, open <b>${esc(info.network_url)}/tv</b> in the TV’s browser.</div>
             <div id="lanAccess"></div></div>
-        </div>` : ''}
+        </div>
+        ${setRow('Your phone as the remote', `For TabloView on the TV (the app, or TV view): buttons, channels and search, at <b>${esc(info.network_url)}/remote</b>. Add it to the phone’s home screen to keep it handy.`,
+          `<button class="btn btn-sm" data-action="phone-remote-qr" data-url="${esc(info.network_url)}/remote">QR code</button>`)}` : ''}
       <div class="set-sub" id="lanActivity"></div>`);
 
   // ---- About & diagnostics
@@ -6687,6 +6717,7 @@ const ACTIONS = {
   'skip-break-hide': () => player.hideSkipBreak(),
   'rerecord': el => rerecordDialog(el.dataset.id),
   'guide-alerts': () => guideAlertsDialog(),
+  'phone-remote-qr': el => phoneRemoteQr(el.dataset.url),
   'alert-record': async el => {
     el.disabled = true;
     try {
