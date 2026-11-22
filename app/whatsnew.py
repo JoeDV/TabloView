@@ -13,6 +13,15 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.4.3": [
+        "Use your phone as the remote for TabloView on the TV: arrows, OK, Back, pause, skip and Skip break, channel up and down, and a search that tunes a channel or opens a show on the TV. Choose Use your phone in TV view's menu and scan the code, or see Settings → Desktop & network.",
+        "Add TabloView, or the phone remote, to a phone's or tablet's home screen: it gets its own icon and opens full screen, like an app.",
+        "TV view's Home shows what your Guide alerts found, with Record (or Watch, when it's on now).",
+        "TV view: the row you're on moves to the top of the screen with its heading, so the row above is no longer cut in half, and the menu closes when you move off it even with a mouse resting on it.",
+        "A recording whose commercial search fails is tried again an hour later (3 tries in all), shows ! with the reason, and Find commercials works on it.",
+        "Fixed: an MP4 export leaving out the commercials could stop partway at a long break, as if the Tablo had stopped sending.",
+        "Fixed: starting to watch a recording just as its commercial search began left it with no breaks marked, for good.",
+    ],
     "1.4.2": [
         "Arrange groups (Live TV → More) has a Bottom button beside Top, and a switch on each group to hide or show it right there.",
         "Fixed: Customize on Home couldn't save any change in 1.4.1.",
