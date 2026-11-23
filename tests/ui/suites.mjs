@@ -869,6 +869,30 @@ export const SUITES = {
     t.check('TV captions: off means none show', await b.ev(`[...player.video().textTracks].every(tr => tr.mode !== 'showing')`));
   },
 
+  // PC player: the same guard as TV view's. A second track turned on by something else goes off;
+  // split view's second picture keeps its own CC choice
+  async pccaptions(b, t) {
+    await b.open('#/');
+    await b.ev(`localStorage.setItem('tv_view', 'pc'), true`);  // (a TV view test before may have made it this browser's view)
+    await b.open('#/');
+    await b.waitFor(`typeof player === 'object' && typeof player.keepOneTrack === 'function'`, 30000);
+    await b.ev(`(() => {
+      window.__en = player.video().addTextTrack('captions', 'English', 'en');
+      state.captions = true;
+      player.applyCaptions();
+      window.__cc3 = player.video().addTextTrack('captions', 'Unknown CC', 'es');
+      return true;
+    })()`);
+    await sleep(500);
+    t.check('PC captions: the English track shows', await b.ev(`__en.mode === 'showing' && __cc3.mode !== 'showing'`));
+    await b.ev(`__cc3.mode = 'showing', true`);
+    t.check('PC captions: a second track turned on later goes off again', await b.waitFor(`__cc3.mode !== 'showing' && __en.mode === 'showing'`, 3000),
+      await b.ev(`JSON.stringify([__en.mode, __cc3.mode])`));
+    await b.ev(`state.captions = false, player.applyCaptions(), true`);
+    await sleep(500);
+    t.check('PC captions: off means none show', await b.ev(`[...player.video().textTracks].every(tr => tr.mode !== 'showing')`));
+  },
+
   async seekhold(b, t) {
     const shows = (await api('/api/shows')).shows;
     const eps = (await api(`/api/shows/episodes?show_id=${encodeURIComponent(shows[0].id)}`)).episodes;

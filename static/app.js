@@ -5518,14 +5518,30 @@ const player = {
 
   // --- Closed captions: the broadcast's own captions travel inside the converted video (FFmpeg keeps
   // them), and hls.js turns them into a text track; this only shows or hides it
-  applyCaptions() {
+  // Which caption tracks should show: in each picture only its chosen track, if its CC is on
+  captionModes() {
     const tracks = [...[...this.video().textTracks].map(t => [t, 'main']), ...[...$('#video2').textTracks].map(t => [t, 'second'])];
     const shown = [captionTrack(this.video()), captionTrack($('#video2'))];
-    for (const [t, pane] of tracks) {
-      // Each channel in split view has its own captions setting (the CC on its picture); the second
-      // is on unless turned off, so a muted game can be followed. A forum user wanted them off: they
-      // covered an NFL game's score
-      t.mode = shown.includes(t) && (pane === 'main' ? state.captions : dual.on && state.captions2) ? 'showing' : 'hidden';
+    // Each channel in split view has its own captions setting (the CC on its picture); the second
+    // is on unless turned off, so a muted game can be followed. A forum user wanted them off: they
+    // covered an NFL game's score
+    return tracks.map(([t, pane]) => [t, shown.includes(t) && (pane === 'main' ? state.captions : dual.on && state.captions2) ? 'showing' : 'hidden']);
+  },
+
+  // Only the chosen tracks may show. hls.js can turn one on by itself later (a second caption channel,
+  // a track made again): two sets of captions were drawn over each other until CC was toggled (a
+  // forum user's TV view, 1.4.4). Put right as soon as it happens, never a tug of war with hls.js
+  keepOneTrack() {
+    if (!this.captionModes().some(([t, mode]) => (t.mode === 'showing') !== (mode === 'showing'))) return;
+    const now = Date.now();
+    if (now - (this.fixedTracksAt || 0) < 300) return;
+    this.fixedTracksAt = now;
+    this.applyCaptions();
+  },
+
+  applyCaptions() {
+    for (const [t, mode] of this.captionModes()) {
+      t.mode = mode;
       if (!t.__raised) {
         // Broadcast captions sit on the bottom rows, under the player bar: lift them above it
         t.__raised = true;
@@ -7287,12 +7303,21 @@ function wireEvents() {
   const video = $('#video');
   // A caption track appears once the stream's first captions arrive: show it if captions are on
   video.textTracks.addEventListener('addtrack', () => player.applyCaptions());
+  video.textTracks.addEventListener('change', () => player.keepOneTrack());
+  // Rows stacked again after a pause, play or jump too, not only when the captions change
+  for (const ev of ['pause', 'play', 'seeked']) {
+    video.addEventListener(ev, () => {
+      player.keepOneTrack();
+      for (const tr of video.textTracks) if (tr.mode === 'showing') stackCues(tr, 78);
+    });
+  }
   video.addEventListener('play', () => { if (state.stream.held) { state.stream.held = false; player.setStatus(''); } });
   try { video.volume = Math.max(0, Math.min(1, parseFloat(store('tablo_volume', '1')))); } catch { /* default */ }
   ['play', 'pause', 'volumechange'].forEach(ev => video.addEventListener(ev, () => player.syncButtons()));
   video.addEventListener('click', () => (dual.on ? dual.paneClick('main') : player.togglePlay()));
   $('#video2').addEventListener('click', () => dual.paneClick('second'));
   $('#video2').textTracks.addEventListener('addtrack', () => player.applyCaptions());
+  $('#video2').textTracks.addEventListener('change', () => player.keepOneTrack());
   video.addEventListener('dblclick', () => player.toggleFullscreen());
   $('#pbVolume').addEventListener('input', e => player.setVolume(parseFloat(e.target.value)));
   $('#pbSpeed').addEventListener('change', e => { player.setSpeed(parseFloat(e.target.value)); e.target.blur(); });
