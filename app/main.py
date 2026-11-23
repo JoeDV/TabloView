@@ -91,7 +91,7 @@ async def lifespan(app: FastAPI):
     # Shutdown: clean up transcode sessions
     print("[Shutdown] Cleaning up stream sessions...")
     for sid in list(transcode_manager.sessions.keys()):
-        transcode_manager.stop_session(sid)
+        transcode_manager.stop_session(sid, force=True)
 
 
 # The bundled fonts (static/vendor/fonts): Python on Windows doesn't know .woff2 and serves them as

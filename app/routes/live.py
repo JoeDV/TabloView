@@ -289,6 +289,7 @@ class TuneRequest(BaseModel):
 
 class StopRequest(BaseModel):
     session_id: str
+    viewer: Optional[str] = Field(default=None, max_length=40)  # (live TV: this page's share of it)
 
 
 _model_tuner_count: Dict[str, int] = {}
@@ -867,6 +868,21 @@ async def tune_live_channel(req: TuneRequest, request: Request):
     # Changing channels: let the Tablo hear that the old one ended before asking for a tuner,
     # otherwise a 2-tuner Tablo can briefly count both and refuse the new one
     await transcode_manager.wait_for_ended_sessions()
+    away = away_from_home(lanauth.client_address(request))
+    if req.transcode:
+        shared = transcode_manager.find_live_session(channel_id, away=away, captions=req.captions)
+        if shared:
+            viewer = transcode_manager.add_viewer(shared)
+            print(f"[LiveTV] Sharing active session {shared.session_id[:8]} for {channel_id} ({len(shared.viewers)} viewers)")
+            return {
+                "session_id": shared.session_id,
+                "stream_url": f"/api/transcoded/{shared.session_id}/playlist.m3u8",
+                "channel_id": channel_id,
+                "captions": shared.captions,
+                "shared": True,
+                "viewer": viewer,
+                "token": shared.tablo_token,
+            }
     try:
         # Tune via TabloClient (synchronous, so keep it off the event loop)
         stream = await asyncio.to_thread(client.watch, channel_id)
@@ -882,7 +898,7 @@ async def tune_live_channel(req: TuneRequest, request: Request):
             sess.channel_id = channel_id
             stream_url = await transcode_manager.start_browser_transcode(
                 sess.session_id, stream.playlist_url, passthrough=passthrough, captions=req.captions,
-                away=away_from_home(lanauth.client_address(request)))
+                away=away)
             if req.kind != "fast":
                 transcode_manager.start_reception(sess)  # streaming channels have no antenna signal
             return {
@@ -890,6 +906,7 @@ async def tune_live_channel(req: TuneRequest, request: Request):
                 "stream_url": stream_url,
                 "channel_id": channel_id,
                 "captions": sess.captions,
+                "viewer": transcode_manager.add_viewer(sess),
                 "token": stream.token,
                 "expires": stream.expires,
                 "keepalive": stream.keepalive
@@ -1071,18 +1088,21 @@ async def reception_report(session_id: str):
 
 class AliveRequest(BaseModel):
     session_ids: List[str] = Field(default_factory=list, max_length=8)
+    viewers: List[Optional[str]] = Field(default_factory=list, max_length=8)  # (each stream's viewer id, in order)
 
 
 @router.post("/alive")
 async def streams_alive(req: AliveRequest):
     """The player checks in every minute while it's open (paused too), so its streams aren't closed
     as unused. Says which are gone."""
-    return {"gone": [sid for sid in req.session_ids if sid and not transcode_manager.touch(sid)]}
+    viewers = req.viewers + [None] * (len(req.session_ids) - len(req.viewers))
+    return {"gone": [sid for sid, viewer in zip(req.session_ids, viewers)
+                     if sid and not transcode_manager.touch(sid, viewer)]}
 
 
 @router.post("/stop")
 async def stop_live_session(req: StopRequest):
     """Stop active live stream transcode session and free up tuner."""
     if req.session_id:
-        transcode_manager.stop_session(req.session_id)
+        transcode_manager.stop_session(req.session_id, viewer=req.viewer)
     return {"status": "ok"}

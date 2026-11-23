@@ -6,6 +6,17 @@
 
 const $ = sel => document.querySelector(sel);
 const API_HEADERS = { 'Content-Type': 'application/json', 'X-TabloView': '1' };
+// Live TV: this page's viewer id for each of its streams. TabloView shares a channel's stream
+// between everyone watching it; the id makes this page's stop end only its own share, and its
+// check-ins keep its share (a page gone quiet for 3 minutes is dropped)
+const viewerOf = {};
+const noteViewer = res => { if (res && res.session_id && res.viewer) viewerOf[res.session_id] = res.viewer; return res; };
+const stopBody = id => {
+  const viewer = viewerOf[id];
+  delete viewerOf[id];
+  return JSON.stringify(viewer ? { session_id: id, viewer } : { session_id: id });
+};
+const aliveBody = ids => JSON.stringify({ session_ids: ids, viewers: ids.map(id => viewerOf[id] || null) });
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 async function api(url, options = {}) {
@@ -940,11 +951,14 @@ const player = {
     // Two channels: the layout, and closing the one you aren't hearing (also Back)
     const other = dual.on && (dual.active === 'second' ? this.s.channel : dual.s.channel);
     const second = live && !dual.on ? [['second', '⊞ Add a channel']] : [];  // (on a TV that can't, it says so when pressed)
+    const lastCh = live && !dual.on && state.lastChannel && state.lastChannel.channel_id !== this.s.id
+      ? [['lastch', `↩ ${chLabel(state.lastChannel)}`]] : [];
+    const replayCc = !dual.on && !state.captions && this.s.captionsInVideo !== false ? [['replaycc', '◀◀ 10 s + CC']] : [];
     this.controlList = dual.on
       ? [['pause', paused ? '▶ Play' : '❚❚ Pause'], ['layout', `Layout: ${DUAL_LAYOUT_NAMES[dual.layout]}`], cc, ['close2', `✕ Close ${other ? other.name : 'the other'}`], ['close', '✕ Close both']]
       : live
-      ? [['pause', paused ? '▶ Play' : '❚❚ Pause'], ['live', 'Back to live'], ...record, cc, ...shape, ...second, ['close', '✕ Close']]
-      : [...skipBreak, ['pause', this.video().paused ? '▶ Play' : '❚❚ Pause'], ['back', '◀◀ 10 s'], ['fwd', '30 s ▶▶'], cc, ...shape, ['close', '✕ Close']];
+      ? [['pause', paused ? '▶ Play' : '❚❚ Pause'], ['live', 'Back to live'], ...lastCh, ...replayCc, ...record, cc, ...shape, ...second, ['close', '✕ Close']]
+      : [...skipBreak, ['pause', this.video().paused ? '▶ Play' : '❚❚ Pause'], ['back', '◀◀ 10 s'], ...replayCc, ['fwd', '30 s ▶▶'], cc, ...shape, ['close', '✕ Close']];
     this.controlIndex = Math.min(index, this.controlList.length - 1);
     this.controls = true;
     this.shapeMenu = false;
@@ -999,6 +1013,8 @@ const player = {
     if (what === 'skipbreak') { this.hideControls(); this.skipBreak(); return; }
     if (what === 'second') { this.hideControls(); dual.pick(); return; }
     if (what === 'close2') { this.hideControls(); dual.closeOther(); return; }
+    if (what === 'lastch') { this.hideControls(); this.lastChannel(); return; }
+    if (what === 'replaycc') { this.hideControls(); this.whatDidTheySay(); return; }
     if (what === 'layout') {
       dual.cycleLayout();
       this.controlList[this.controlIndex][1] = `Layout: ${DUAL_LAYOUT_NAMES[dual.layout]}`;
@@ -1048,9 +1064,39 @@ const player = {
     }, 4000);
   },
 
+  // "What did they say?": jump back 10 s and turn captions on for 15 s if they were off
+  whatDidTheySay() {
+    this.skip(-10);
+    if (this.held) { this.held = false; this.video().play().catch(() => {}); }
+    const s = this.s;
+    if (state.captions || s.captionsInVideo === false) {
+      this.banner('Back 10 s');
+      return;
+    }
+    clearTimeout(this.tempCcTimer);
+    state.captions = true;
+    this.applyCaptions();
+    this.tempCcTimer = setTimeout(() => {
+      this.tempCcTimer = null;
+      if (this.s === s) {
+        state.captions = false;
+        this.applyCaptions();
+      }
+    }, 15000);
+    this.banner('Back 10 s · captions on for 15 s');
+  },
+
+  // Flip back to the previous live channel
+  lastChannel() {
+    const prev = state.lastChannel;
+    if (!prev || prev.channel_id === this.s.id) { this.banner('No previous channel yet'); return; }
+    this.tune(prev.channel_id);
+  },
+
   // Closed captions: the broadcast's own, carried in the converted video; hls.js makes them a text
   // track, which this shows or hides (the same switch as the PC page's CC button)
   toggleCaptions() {
+    if (this.tempCcTimer) { clearTimeout(this.tempCcTimer); this.tempCcTimer = null; }
     state.captions = !state.captions;
     try { localStorage.setItem('tablo_cc', state.captions ? '1' : '0'); } catch { /* this visit only */ }
     this.applyCaptions();
@@ -1292,6 +1338,9 @@ const player = {
           [{ label: 'Watch anyway', value: 1 }, { label: 'Cancel', value: 0 }])) return;
       }
     }
+    if (this.s.kind === 'live' && this.s.channel && this.s.channel.channel_id !== channelId) {
+      state.lastChannel = this.s.channel;
+    }
     const previous = this.s.sessionId;  // the channel playing now (changing channel), if any
     const s = { kind: 'live', id: channelId, channel: c, shapeKey: channelId };
     this.s = s;
@@ -1302,7 +1351,7 @@ const player = {
     await this.stopById(previous);  // its tuner goes back to the Tablo before this one asks for one
     this.message(`Tuning ${c.name}…`);
     try {
-      const res = await api('/api/live/tune', { method: 'POST', body: JSON.stringify({ channel_id: channelId, transcode: true, kind: c.kind, captions: state.captions }) });
+      const res = noteViewer(await api('/api/live/tune', { method: 'POST', body: JSON.stringify({ channel_id: channelId, transcode: true, kind: c.kind, captions: state.captions }) }));
       if (this.s !== s) return this.stopById(res.session_id);  // changed channel again meanwhile
       s.sessionId = res.session_id;
       s.captionsInVideo = res.captions !== false;
@@ -1542,7 +1591,7 @@ const player = {
 
   stopById(sessionId, keepalive = false) {
     if (!sessionId) return Promise.resolve();
-    return fetch('/api/live/stop', { method: 'POST', headers: API_HEADERS, body: JSON.stringify({ session_id: sessionId }), keepalive }).catch(() => {});
+    return fetch('/api/live/stop', { method: 'POST', headers: API_HEADERS, body: stopBody(sessionId), keepalive }).catch(() => {});
   },
 
   // The Tablo's session ends too, so a live channel's tuner is freed at once
@@ -1556,6 +1605,11 @@ const player = {
     if (!this.open) return;
     if (APP) APP.setPlaying(false);
     dual.stop(keepalive);
+    if (this.tempCcTimer) {
+      clearTimeout(this.tempCcTimer);
+      this.tempCcTimer = null;
+      state.captions = stored('tablo_cc', '0') === '1';
+    }
     this.undo = null;
     this.held = false;  // (stopped on a spot while searching: the next thing played starts as usual)
     clearTimeout(this.seekTimer);
@@ -1714,7 +1768,7 @@ const dual = {
     this.s = s;
     try {
       // (always with captions, so CC can show them without starting it again)
-      const res = await api('/api/live/tune', { method: 'POST', body: JSON.stringify({ channel_id: c.channel_id, transcode: true, kind: c.kind, captions: true }) });
+      const res = noteViewer(await api('/api/live/tune', { method: 'POST', body: JSON.stringify({ channel_id: c.channel_id, transcode: true, kind: c.kind, captions: true }) }));
       if (this.s !== s) { player.stopById(res.session_id); return false; }
       Object.assign(s, { sessionId: res.session_id, url: res.stream_url });
     } catch (err) {
@@ -1985,6 +2039,8 @@ function onKey(e) {
       ArrowUp: () => (live ? player.surf(-1) : player.undo ? player.undo() : player.wake()), ArrowDown: () => (live ? player.surf(1) : player.showControls()),
       ChannelUp: () => live && player.surf(-1), ChannelDown: () => live && player.surf(1),
       PageUp: () => live && player.surf(-1), PageDown: () => live && player.surf(1),
+      w: () => player.whatDidTheySay(), W: () => player.whatDidTheySay(),
+      b: () => live && player.lastChannel(), B: () => live && player.lastChannel(),
     };
     if (keys[k]) { e.preventDefault(); keys[k](); player.wake(); return; }
     if (isBack(e)) { e.preventDefault(); player.exit(); }
@@ -2271,7 +2327,7 @@ function init() {
   // While something plays (paused too), tell TabloView every minute, so it isn't closed as unused
   setInterval(() => {
     const ids = [player.s.sessionId, dual.s.sessionId].filter(Boolean);
-    if (ids.length) api('/api/live/alive', { method: 'POST', body: JSON.stringify({ session_ids: ids }) }).catch(() => {});
+    if (ids.length) api('/api/live/alive', { method: 'POST', body: aliveBody(ids) }).catch(() => {});
   }, 60000);
   // TabloView updated on the PC: load the new page. The TV app keeps this page open for days (Home
   // and back only hides it), so it went on running the old version's player after an update

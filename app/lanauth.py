@@ -36,6 +36,11 @@ LOCKOUT_SECONDS = 60
 LOCKOUT_MAX_SECONDS = 3600
 LOCKOUT_FORGET_SECONDS = 86400  # a day without a lockout: the next one is short again
 PUBLIC_PATHS = {"/api/lan/status", "/api/lan/login"}
+# A stream's own address (an "Open in VLC" .m3u's): its id is 32 random hex characters, handed out
+# only to someone who passed the PIN (or this PC), and it stops working when the stream closes. VLC
+# can't send the PIN's cookie, so on another device these were always refused. Nothing else under
+# /api, and nothing at all with network access off
+STREAM_LINK = re.compile(r"^/api/hls/[0-9a-f]{32}/[^/]")
 
 ACTIVITY_FILE = DATA_DIR / "lan_activity.json"
 EVENTS_KEPT = 100
@@ -212,7 +217,7 @@ def blocked(path: str, client_host: Optional[str], cookie: Optional[str],
     # (by hand, or a proxy on this PC) TabloView answered other devices with the switch off
     if not network_access_on():
         return "lan_off"
-    if path in PUBLIC_PATHS:
+    if path in PUBLIC_PATHS or STREAM_LINK.match(path):
         return None
     if not (path.startswith("/api/") or path.startswith("/downloads/")):
         return None

@@ -86,6 +86,17 @@ function plural(n, word, pluralWord) {
 
 // The server rejects state-changing requests without X-TabloView (blocks other websites)
 const API_HEADERS = { 'Content-Type': 'application/json', 'X-TabloView': '1' };
+// Live TV: this page's viewer id for each of its streams. TabloView shares a channel's stream
+// between everyone watching it; the id makes this page's stop end only its own share, and its
+// check-ins keep its share (a page gone quiet for 3 minutes is dropped)
+const viewerOf = {};
+const noteViewer = res => { if (res && res.session_id && res.viewer) viewerOf[res.session_id] = res.viewer; return res; };
+const stopBody = id => {
+  const viewer = viewerOf[id];
+  delete viewerOf[id];
+  return JSON.stringify(viewer ? { session_id: id, viewer } : { session_id: id });
+};
+const aliveBody = ids => JSON.stringify({ session_ids: ids, viewers: ids.map(id => viewerOf[id] || null) });
 
 // The server's reason as words: FastAPI sends a list of objects for a request it refuses as
 // malformed (a 422), which showed as "[object Object]"
@@ -4996,6 +5007,7 @@ const player = {
 
   showHelp() {
     const keys = [['Space or K', 'Play / pause'], ['← or J', 'Back 10 seconds'], ['→ or L', 'Ahead 30 seconds'],
+      ['W', 'What did they say? (back 10s + captions for 15s)'], ['B', 'Back to last channel (live TV)'],
       ['↑ ↓', 'Volume'], ['M', 'Mute'], ['F', 'Full screen'], ['P', 'Picture in picture'],
       ['&lt; &gt;', 'Slower / faster (recordings)'], ['Home', 'Back to live (live TV)'],
       ['Page Up / Down', 'Previous / next channel (live TV)'], ['S', 'Skip a commercial break'], ['U', 'Undo a skip: it was the show'], ['T', 'Captions on / off'], ['A', 'Picture shape for this channel'], ['2', 'Watch a live channel alongside'], ['Tab', 'Hear the other channel'], ['V', 'Layout of two channels'], ['C', 'Channel list (live TV)'], ['↑ ↓ / Page Up / Down', 'In the channel list: move through it (Enter picks)'], ['Esc', 'Close the player']];
@@ -5323,6 +5335,9 @@ const player = {
   },
 
   async watchLive(channelId, name, kind) {
+    if (state.stream.channelId && state.stream.channelId !== channelId) {
+      state.lastChannel = { channelId: state.stream.channelId, name: state.stream.channelName, kind: state.stream.channelKind };
+    }
     this.finishEpisode();
     const stopping = this.stopStream();
     this.hideUpNext();
@@ -5335,7 +5350,7 @@ const player = {
     this.setStatus(`<span class="wait">Tuning ${esc(name)}…</span>`);
     try {
       await stopping;  // the old channel's tuner goes back to the Tablo before this one asks for one
-      const res = await api('/api/live/tune', { method: 'POST', body: JSON.stringify({ channel_id: channelId, transcode: true, kind, captions: state.captions }) });
+      const res = noteViewer(await api('/api/live/tune', { method: 'POST', body: JSON.stringify({ channel_id: channelId, transcode: true, kind, captions: state.captions }) }));
       state.stream.sessionId = res.session_id;
       state.stream.captionsInVideo = res.captions !== false;
       checkTuners();
@@ -5529,8 +5544,37 @@ const player = {
     }
   },
 
+  // Flip back to the previous live channel (B key)
+  lastChannel() {
+    const prev = state.lastChannel;
+    if (!prev || prev.channelId === state.stream.channelId) { toast('No previous channel yet'); return; }
+    this.watchLive(prev.channelId, prev.name, prev.kind);
+  },
+
+  // "What did they say?" (W key): jump back 10 s and turn captions on for 15 s if they were off
+  whatDidTheySay() {
+    this.skip(-10);
+    const s = state.stream;
+    if (state.captions || s.captionsInVideo === false) {
+      toast('Back 10s');
+      return;
+    }
+    clearTimeout(s.tempCcTimer);
+    state.captions = true;
+    this.applyCaptions();
+    s.tempCcTimer = setTimeout(() => {
+      s.tempCcTimer = null;
+      if (state.stream === s) {
+        state.captions = false;
+        this.applyCaptions();
+      }
+    }, 15000);
+    toast('Back 10s · captions on for 15s');
+  },
+
   // pane: 'main' or 'second' (a picture's own CC in split view); none: the channel you're hearing
   toggleCaptions(pane) {
+    if (state.stream.tempCcTimer) { clearTimeout(state.stream.tempCcTimer); state.stream.tempCcTimer = null; }
     if ((pane || (dual.on ? dual.active : 'main')) === 'second') {
       state.captions2 = !state.captions2;
       save('tablo_cc_second', state.captions2 ? '1' : '0');
@@ -5712,12 +5756,17 @@ const player = {
     state.stream.sessionId = null;
     return fetch('/api/live/stop', {
       method: 'POST', headers: API_HEADERS,
-      body: JSON.stringify({ session_id: id }), keepalive,
+      body: stopBody(id), keepalive,
     }).catch(() => {});
   },
 
   // Save where the current recording got to before switching or closing
   finishEpisode() {
+    if (state.stream.tempCcTimer) {
+      clearTimeout(state.stream.tempCcTimer);
+      state.stream.tempCcTimer = null;
+      state.captions = store('tablo_cc', '0') === '1';
+    }
     if (state.stream.episodeId) this.saveProgress({ final: true });
     clearInterval(state.stream.progressTimer);
     state.stream.progressTimer = null;
@@ -6105,7 +6154,7 @@ const dual = {
     this.teardown();
     try {
       // (always with captions, so its CC can turn them on and off without starting it again)
-      const res = await api('/api/live/tune', { method: 'POST', body: JSON.stringify({ channel_id: channelId, transcode: true, kind, captions: true }) });
+      const res = noteViewer(await api('/api/live/tune', { method: 'POST', body: JSON.stringify({ channel_id: channelId, transcode: true, kind, captions: true }) }));
       this.s = { channelId, name, kind, sessionId: res.session_id, url: res.stream_url };
       pictureShape.apply(v, channelId);
     } catch (err) {
@@ -6153,7 +6202,7 @@ const dual = {
 
   stopSession(keepalive = false) {
     if (this.s.sessionId) {
-      fetch('/api/live/stop', { method: 'POST', headers: API_HEADERS, body: JSON.stringify({ session_id: this.s.sessionId }), keepalive }).catch(() => {});
+      fetch('/api/live/stop', { method: 'POST', headers: API_HEADERS, body: stopBody(this.s.sessionId), keepalive }).catch(() => {});
     }
     this.s = {};
   },
@@ -7166,6 +7215,8 @@ function wireEvents() {
       ' ': () => player.togglePlay(), k: () => player.togglePlay(),
       ArrowLeft: () => player.skip(-10), j: () => player.skip(-10),
       ArrowRight: () => player.skip(30), l: () => player.skip(30),
+      w: () => player.whatDidTheySay(),
+      b: () => { if (state.stream.channelId) player.lastChannel(); },
       ArrowUp: () => player.setVolume(v.volume + 0.1), ArrowDown: () => player.setVolume(v.volume - 0.1),
       m: () => player.toggleMute(), f: () => player.toggleFullscreen(), p: () => player.togglePip(),
       '>': () => player.stepSpeed(1), '<': () => player.stepSpeed(-1),
@@ -7259,7 +7310,7 @@ function wireEvents() {
   // on for 10 minutes is closed (a TV browser switched off never says goodbye)
   setInterval(() => {
     const ids = [state.stream.sessionId, dual.s.sessionId].filter(Boolean);
-    if (ids.length) api('/api/live/alive', { method: 'POST', body: JSON.stringify({ session_ids: ids }) }).catch(() => {});
+    if (ids.length) api('/api/live/alive', { method: 'POST', body: aliveBody(ids) }).catch(() => {});
   }, 60000);
   // Stop the backend FFmpeg session if the tab is closed mid-playback
   window.addEventListener('pagehide', () => {

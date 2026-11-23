@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import secrets
 import sys
 import uuid
 import asyncio
@@ -42,6 +43,10 @@ RESTARTS_RESET_SECONDS = 600
 # TabloView restarted: holding a live tuner, pausing commercial finding, slowing exports. Long enough
 # for VLC, which can't check in, to sit paused a while.
 ABANDONED_SECONDS = 600
+# A live TV viewer that hasn't checked in for this long (its page checks in every minute, paused
+# too) has gone: a crashed TV app, a closed laptop. Shared streams drop it; the last one gone (with
+# no video fetched meanwhile either) closes the stream and frees the tuner
+VIEWER_GONE_SECONDS = 180
 # Live TV keeps this much behind the live point, for pause and rewind (about 1-1.5 GB on disk)
 LIVE_REWIND_MINUTES = 30
 # Recordings: a small preview frame every this many seconds, for the timeline. Named by position in
@@ -131,6 +136,13 @@ class StreamSession:
         self.relay = None  # a recording's playback reads through TabloView (export_pace, unpaced)
         self.last_used = time.time()  # video fetched or a check-in from its page (see ABANDONED_SECONDS)
         self.captions = True  # the video carries the broadcast's captions (not with AMD's or Apple's encoder)
+        self.live = False  # live TV session (eligible for sharing across viewers on the same channel)
+        self.away = False  # away-from-home bitrate-capped stream (kept separate from full-quality LAN streams)
+        # Live TV viewers (tune_live_channel): id -> last check-in. A second viewer of the same channel
+        # shares this stream (find_live_session); only the last one leaving stops FFmpeg and frees the
+        # tuner. Stopping is per viewer, so a page stopping twice can't cut another viewer off.
+        # Empty for streams nobody shares (recordings, VLC, the antenna helper): stopped as before
+        self.viewers: Dict[str, float] = {}
 
 
 class TranscodeManager:
@@ -187,20 +199,66 @@ class TranscodeManager:
     def get_session(self, session_id: str) -> Optional[StreamSession]:
         return self.sessions.get(session_id)
 
-    def touch(self, session_id: str) -> bool:
-        """The stream is still wanted. False if it's gone (closed, or TabloView restarted)."""
+    def touch(self, session_id: str, viewer: Optional[str] = None) -> bool:
+        """The stream is still wanted (by this viewer, if given). False if it's gone (closed, TabloView
+        restarted, or this viewer was dropped as gone)."""
         sess = self.sessions.get(session_id)
-        if sess:
-            sess.last_used = time.time()
-        return bool(sess)
+        if not sess:
+            return False
+        now = time.time()
+        sess.last_used = now
+        if viewer:
+            if viewer not in sess.viewers:
+                return not sess.viewers  # (a stream without viewers: one nobody shares)
+            sess.viewers[viewer] = now
+        else:
+            for v in sess.viewers:  # (a page from before viewer ids)
+                sess.viewers[v] = now
+        return True
+
+    @staticmethod
+    def add_viewer(sess: StreamSession) -> str:
+        """A new viewer of this stream; its id goes back to the page, for its check-ins and its stop."""
+        viewer = secrets.token_hex(8)
+        sess.viewers[viewer] = time.time()
+        sess.last_used = time.time()
+        return viewer
+
+    def find_live_session(self, channel_id: str, away: bool = False, captions: bool = False) -> Optional[StreamSession]:
+        """Reuse an active live TV session for the same channel instead of claiming a second Tablo tuner
+        and running a second FFmpeg encode. Only shares sessions with matching away-from-home quality and
+        caption support."""
+        for sess in self.sessions.values():
+            if (sess.live and not sess.stopped and sess.transcoded and sess.channel_id == channel_id
+                    and sess.away == away and (not captions or sess.captions)
+                    and sess.proc is not None and sess.proc.poll() is None
+                    and (TRANSCODE_DIR / sess.session_id / "playlist.m3u8").exists()):
+                return sess
+        return None
 
     def close_abandoned(self, now: Optional[float] = None) -> List[str]:
-        """Close streams nothing has used for ABANDONED_SECONDS; returns their ids."""
+        """Close streams nothing has used for ABANDONED_SECONDS, and live ones whose viewers have all
+        gone (VIEWER_GONE_SECONDS without a check-in, and no video fetched); drop gone viewers from a
+        stream others still watch. Returns the closed streams' ids."""
         now = now or time.time()
-        gone = [sid for sid, s in self.sessions.items() if now - s.last_used > ABANDONED_SECONDS]
+        gone = []
+        for sid, s in list(self.sessions.items()):
+            if now - s.last_used > ABANDONED_SECONDS:
+                print(f"[Transcode] Session {sid[:8]}: closed, not used for {ABANDONED_SECONDS // 60} minutes")
+                gone.append(sid)
+                continue
+            if not s.viewers:
+                continue
+            stale = [v for v, seen in s.viewers.items() if now - seen > VIEWER_GONE_SECONDS]
+            if len(stale) < len(s.viewers):
+                for v in stale:  # others are still watching
+                    del s.viewers[v]
+                    print(f"[Transcode] Session {sid[:8]}: a viewer stopped checking in ({len(s.viewers)} left)")
+            elif now - s.last_used > VIEWER_GONE_SECONDS:
+                print(f"[Transcode] Session {sid[:8]}: closed, its viewers have gone")
+                gone.append(sid)
         for sid in gone:
-            print(f"[Transcode] Session {sid[:8]}: closed, not used for {ABANDONED_SECONDS // 60} minutes")
-            self.stop_session(sid)
+            self.stop_session(sid, force=True)
         return gone
 
     async def abandoned_loop(self) -> None:
@@ -243,7 +301,22 @@ class TranscodeManager:
         if self._ending:
             await asyncio.wait(list(self._ending), timeout=timeout)
 
-    def stop_session(self, session_id: str):
+    def stop_session(self, session_id: str, force: bool = False, viewer: Optional[str] = None):
+        """Stop a stream, or with others still watching it, only this viewer's share of it. Without a
+        viewer id (a page from before them), the one seen least recently leaves."""
+        existing = self.sessions.get(session_id)
+        if not force and existing and existing.viewers:
+            before = len(existing.viewers)
+            if viewer:
+                existing.viewers.pop(viewer, None)
+            elif before > 1:
+                del existing.viewers[min(existing.viewers, key=existing.viewers.get)]
+            else:
+                existing.viewers.clear()
+            if existing.viewers:
+                if len(existing.viewers) < before:
+                    print(f"[Transcode] Session {session_id[:8]}: a viewer left ({len(existing.viewers)} still watching)")
+                return
         sess = self.sessions.pop(session_id, None)
         if sess:
             sess.stopped = True
@@ -501,6 +574,8 @@ class TranscodeManager:
             run_at_full_speed(proc)
             sess.proc = proc
             sess.transcoded = True
+            sess.live = live
+            sess.away = away
             sess.encoder = "copy" if plan["encoder"] is None else plan["encoder"]["label"]
 
             # Wait up to 12 seconds for at least 2 segments, for a smooth start

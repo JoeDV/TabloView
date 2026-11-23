@@ -33,7 +33,7 @@ class AbandonedStreamTests(unittest.TestCase):
         return stop
 
     def test_unused_for_ten_minutes_is_closed(self):
-        self.close_after(transcode.ABANDONED_SECONDS + 5).assert_called_once_with("abc123")
+        self.close_after(transcode.ABANDONED_SECONDS + 5).assert_called_once_with("abc123", force=True)  # (for every viewer)
 
     def test_a_paused_player_isnt(self):
         self.close_after(transcode.ABANDONED_SECONDS - 60).assert_not_called()
