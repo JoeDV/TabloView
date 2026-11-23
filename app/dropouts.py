@@ -59,6 +59,16 @@ def get(episode_id: str) -> Optional[Dict[str, Any]]:
     return {"status": row["status"], "spans": json.loads(row["spans_json"] or "[]")} if row else None
 
 
+def get_many(episode_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Dropout results for several recordings in one query (avoids N+1 on show pages)."""
+    if not episode_ids:
+        return {}
+    placeholders = ",".join("?" for _ in episode_ids)
+    with get_connection() as conn:
+        rows = conn.execute(f"SELECT * FROM dropouts WHERE episode_id IN ({placeholders})", episode_ids).fetchall()
+    return {r["episode_id"]: {"status": r["status"], "spans": json.loads(r["spans_json"] or "[]")} for r in rows}
+
+
 def pending() -> List[Dict[str, Any]]:
     """Finished recordings the Tablo flagged as not clean, not read yet; newest first."""
     with get_connection() as conn:

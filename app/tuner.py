@@ -279,7 +279,7 @@ async def channel_stream(number: str, request: Request, convert: bool = False):
     from tablo_api import TabloClient
     from .routes.live import all_tuners_busy_message
     from .tablo_client import tablo_manager
-    from .transcode import transcode_manager
+    from .transcode import run_at_full_speed, transcode_manager
     c = next((c for c in await lineup() if c["number"] == number), None)
     if not c:
         raise HTTPException(status_code=404, detail="No such channel")
@@ -300,6 +300,7 @@ async def channel_stream(number: str, request: Request, convert: bool = False):
     proc = subprocess.Popen(stream_cmd(watch.playlist_url, enc), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                             creationflags=NO_WINDOW, **childproc.popen_kwargs())
     childproc.tie_to_app(proc)
+    run_at_full_speed(proc)
     who = request.client.host if request.client else "?"
     streams[proc.pid] = {"channel": f"{number} {c['name']}", "client": who, "since": time.time()}
     how = f" (converted, {enc['label']})" if enc else ""

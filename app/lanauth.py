@@ -286,16 +286,28 @@ def _load_activity() -> Dict:
 _activity_lock = threading.Lock()
 
 
+def _write_activity_locked(data: Dict) -> None:
+    """Write activity atomically; caller must hold _activity_lock."""
+    tmp = ACTIVITY_FILE.with_suffix(".json.tmp")
+    try:
+        tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
+        for attempt in range(5):
+            try:
+                os.replace(tmp, ACTIVITY_FILE)
+                return
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05)
+    except OSError as e:
+        print(f"[Network access] Couldn't save the sign-in record: {e}")
+
+
 def _save_activity(data: Dict) -> None:
     """Written whole to a temporary file, then swapped in, so a crash or power cut mid-write can't
     leave half a file (which would lose the record of devices, sign-ins and lockouts)."""
-    tmp = ACTIVITY_FILE.with_suffix(".json.tmp")
-    try:
-        with _activity_lock:
-            tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
-            os.replace(tmp, ACTIVITY_FILE)
-    except OSError as e:
-        print(f"[Network access] Couldn't save the sign-in record: {e}")
+    with _activity_lock:
+        _write_activity_locked(data)
 
 
 def _touch_device(data: Dict, address: str, device: str, now: float) -> None:
@@ -311,15 +323,16 @@ def note_event(address: str, ua: Optional[str], what: str, wait: int = 0, now: O
     """Record a sign-in ('signed_in'), a wrong PIN ('wrong_pin') or a lockout ('locked_out', wait = seconds)."""
     now = now or time.time()
     device = describe_agent(ua)
-    data = _load_activity()
-    event = {"time": now, "address": address, "device": device, "what": what}
-    if wait:
-        event["wait"] = wait
-    data["events"] = ([event] + data["events"])[:EVENTS_KEPT]
-    if what == "signed_in":
-        _touch_device(data, address, device, now)
-        _seen_written[f"{address}|{device}"] = now
-    _save_activity(data)
+    with _activity_lock:
+        data = _load_activity()
+        event = {"time": now, "address": address, "device": device, "what": what}
+        if wait:
+            event["wait"] = wait
+        data["events"] = ([event] + data["events"])[:EVENTS_KEPT]
+        if what == "signed_in":
+            _touch_device(data, address, device, now)
+            _seen_written[f"{address}|{device}"] = now
+        _write_activity_locked(data)
 
 
 def note_seen(address: Optional[str], ua: Optional[str], now: Optional[float] = None) -> None:
@@ -329,12 +342,13 @@ def note_seen(address: Optional[str], ua: Optional[str], now: Optional[float] = 
     now = now or time.time()
     device = describe_agent(ua)
     key = f"{address}|{device}"
-    if now - _seen_written.get(key, 0) < SEEN_EVERY:
-        return
-    _seen_written[key] = now
-    data = _load_activity()
-    _touch_device(data, address, device, now)
-    _save_activity(data)
+    with _activity_lock:
+        if now - _seen_written.get(key, 0) < SEEN_EVERY:
+            return
+        _seen_written[key] = now
+        data = _load_activity()
+        _touch_device(data, address, device, now)
+        _write_activity_locked(data)
 
 
 def activity(now: Optional[float] = None) -> Dict:
@@ -348,5 +362,6 @@ def activity(now: Optional[float] = None) -> Dict:
 
 
 def clear_activity() -> None:
-    _seen_written.clear()
-    _save_activity({"events": [], "devices": {}})
+    with _activity_lock:
+        _seen_written.clear()
+        _write_activity_locked({"events": [], "devices": {}})

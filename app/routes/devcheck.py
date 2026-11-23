@@ -21,6 +21,8 @@ from pydantic import BaseModel, Field
 from starlette.datastructures import QueryParams
 from starlette.routing import Match
 
+from .system import _only_this_pc
+
 router = APIRouter(prefix="/api/dev", tags=["dev"])
 
 
@@ -64,6 +66,7 @@ async def _errors(route: Any, path_params: Dict[str, Any], query: str, body: Opt
 async def check(req: CheckRequest, request: Request):
     """{ok, detail}: whether this request would be accepted, with FastAPI's 422 detail if not (or a
     404 status when no route takes it). {ok: true, unknown: true}: it couldn't be checked."""
+    _only_this_pc(request)
     parts = urlsplit(req.url)
     method = req.method.upper()
     scope = {"type": "http", "path": parts.path, "method": method, "root_path": "",

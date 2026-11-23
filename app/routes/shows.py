@@ -173,7 +173,7 @@ def _with_commercials(episodes: List[dict]) -> List[dict]:
     queued = set(commercials.queued_episodes())
     redo = set(commercials.redo_episodes())
     claude_key = bool(load_settings().get("claude_api_key"))
-    drops = {e["id"]: dropouts.get(e["id"]) for e in episodes}
+    drops = dropouts.get_many([e["id"] for e in episodes])
     return [{**e, "commercials": ("analyzing" if e["id"] == current else "queued" if e["id"] in redo
                                   else found[e["id"]]["status"] if e["id"] in found else "queued" if e["id"] in queued else None),
              "commercial_breaks": len(found[e["id"]]["breaks"]) if e["id"] in found else 0,
@@ -187,7 +187,7 @@ def _with_commercials(episodes: List[dict]) -> List[dict]:
              "commercials_can_redo": e["id"] in found and found[e["id"]]["status"] in ("done", "unreliable"),
              "claude_key": claude_key,
              # Signal dropouts found (recordings the Tablo flagged as not clean; app/dropouts.py)
-             "dropouts": (drops[e["id"]] or {}).get("spans", []),
+             "dropouts": (drops.get(e["id"]) or {}).get("spans", []),
              "finding_dropouts": dropouts.status["current"] == e["id"]} for e in episodes]
 
 

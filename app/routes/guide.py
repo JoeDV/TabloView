@@ -1,6 +1,7 @@
 """Guide search, discovery, and series recording management routes."""
 
 import json
+import re
 import time
 from datetime import datetime
 import asyncio
@@ -169,8 +170,21 @@ async def conflict_alternatives():
     return {"tuners": tuners, "conflicts": find_alternatives(scheduled, candidates, tuners)}
 
 
+_GUIDE_PATH = re.compile(r"^/guide/(?:series|movies|sports|episodes|events|airings)/[A-Za-z0-9_/-]+$")
+
+
+def _guide_path(path: str) -> str:
+    """Ensure a user-supplied Tablo path stays under /guide/... with no traversal or query injection."""
+    p = (path or "").strip()
+    if not p.startswith("/"):
+        p = "/" + p
+    if ".." in p.split("/") or not _GUIDE_PATH.match(p):
+        raise HTTPException(status_code=400, detail="Invalid guide path")
+    return p
+
+
 async def _set_scheduled(path: str, scheduled: bool) -> None:
-    path = path if path.startswith("/") else "/" + path
+    path = _guide_path(path)
     resp = await tablo_manager.request_local("PATCH", path, json.dumps({"scheduled": scheduled}))
     if resp.status_code not in (200, 204):
         raise HTTPException(status_code=502, detail=f"Tablo error {resp.status_code}: {resp.text[:120]}")
@@ -217,6 +231,7 @@ async def list_scheduled_shows():
 @router.get("/series")
 async def get_guide_series_details(path: str = Query(..., description="Guide series path, e.g. /guide/series/163949")):
     """Get single guide show details from database or live Tablo."""
+    path = _guide_path(path)
     show = get_guide_show_by_path(path)
     if not show and tablo_manager.is_authenticated:
         try:
@@ -277,7 +292,7 @@ async def set_series_schedule(payload: SeriesScheduleRequest):
     if rule not in ("new", "all", "none"):
         raise HTTPException(status_code=400, detail="Invalid rule. Must be 'new', 'all', or 'none'")
 
-    path = payload.path if payload.path.startswith("/") else "/" + payload.path
+    path = _guide_path(payload.path)
 
     # Send signed PATCH to local Tablo hardware
     patch_body = json.dumps({
@@ -317,8 +332,7 @@ async def get_series_upcoming_episodes(series_path: str = Query(...)):
     if not tablo_manager.is_authenticated:
         raise HTTPException(status_code=400, detail="Tablo device is not connected")
 
-    if not series_path.startswith("/"):
-        series_path = "/" + series_path
+    series_path = _guide_path(series_path)
 
     try:
         resp = await tablo_manager.request_local("GET", airings_list_path(series_path))
@@ -389,7 +403,7 @@ async def set_episode_schedule(payload: EpisodeScheduleRequest):
     if not tablo_manager.is_authenticated:
         raise HTTPException(status_code=400, detail="Tablo device is not connected")
 
-    path = payload.path if payload.path.startswith("/") else "/" + payload.path
+    path = _guide_path(payload.path)
     patch_body = json.dumps({"scheduled": payload.scheduled})
 
     try:

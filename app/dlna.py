@@ -368,10 +368,16 @@ def _int(v: Optional[str]) -> int:
         return 0
 
 
+MAX_SOAP_BYTES = 64 * 1024
+
+
 @tuner.app.post("/dlna/control/{service}")
 async def control(service: str, request: Request):
     action = (request.headers.get("soapaction") or "").strip().strip('"').rsplit("#", 1)[-1]
-    args = _soap_args(await request.body())
+    raw_body = await request.body()
+    if len(raw_body) > MAX_SOAP_BYTES:
+        return Response(status_code=413)
+    args = _soap_args(raw_body)
     if service == "cds":
         if action == "Browse":
             got = await browse(args.get("ObjectID", "0"), args.get("BrowseFlag", "BrowseDirectChildren"),
@@ -438,6 +444,7 @@ async def recording(episode_id: str, request: Request):
     from .database import get_episode_by_id
     from .settings import load_settings
     from .tablo_client import tablo_manager
+    from .transcode import run_at_full_speed
     ep = await asyncio.to_thread(get_episode_by_id, unquote(episode_id))
     if not ep:
         return Response(status_code=404)
@@ -467,8 +474,10 @@ async def recording(episode_id: str, request: Request):
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=tuner.NO_WINDOW,
                             **childproc.popen_kwargs())
     childproc.tie_to_app(proc)
+    run_at_full_speed(proc)
     who = request.client.host if request.client else "?"
     name = f"{ep.get('show_title')} {_rec_title(ep)}"
+    tuner.streams[proc.pid] = {"channel": name, "client": who, "since": time.time()}
     print(f"[DLNA] {name} to {who}{f' from {round(start)} s' if start else ''} ({enc['label']})")
 
     async def body():
@@ -482,6 +491,7 @@ async def recording(episode_id: str, request: Request):
             with contextlib.suppress(Exception):
                 proc.kill()
                 proc.wait(timeout=5)
+            tuner.streams.pop(proc.pid, None)
             export_pace.close_relay(relay)
             background.start(tablo_manager.end_watch_session(watch.get("token")))
             print(f"[DLNA] {name} to {who} ended")

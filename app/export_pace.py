@@ -126,9 +126,10 @@ def close_relay(relay: Optional[Relay]) -> None:
 
 async def something_playing() -> bool:
     """Anything TabloView is playing from the Tablo, or live TV in another app on the Tablo."""
+    from . import tuner
     from .tablo_client import tablo_manager
     from .transcode import transcode_manager
-    if any(not s.stopped for s in transcode_manager.sessions.values()):
+    if any(not s.stopped for s in transcode_manager.sessions.values()) or tuner.streams:
         return True
     if time.monotonic() - _tuners["at"] > TUNER_CHECK_SECONDS:
         busy = False

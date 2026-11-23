@@ -981,7 +981,7 @@ async def all_tuners_busy_message() -> Optional[str]:
 
 
 @router.get("/vlc/{channel_id}")
-async def get_live_vlc_playlist(channel_id: str):
+async def get_live_vlc_playlist(channel_id: str, request: Request):
     """Generate instant .m3u playlist file to stream live channel natively in VLC."""
     from .. import extra_channels
     if extra_channels.is_extra(channel_id):
@@ -1006,7 +1006,12 @@ async def get_live_vlc_playlist(channel_id: str):
         if not stream or not stream.playlist_url:
             raise ValueError("No playlist URL returned")
 
-        m3u_content = f"#EXTM3U\n#EXTINF:-1, Tablo Live Channel - {channel_id}\n{stream.playlist_url}\n"
+        sess = transcode_manager.create_session(stream.playlist_url)
+        sess.tablo_token = stream.token
+        sess.channel_id = channel_id
+        base_host = str(request.base_url).rstrip("/")
+        stream_link = f"{base_host}/api/hls/{sess.session_id}/playlist.m3u8"
+        m3u_content = f"#EXTM3U\n#EXTINF:-1, Tablo Live Channel - {channel_id}\n{stream_link}\n"
         clean_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', channel_id)
 
         return Response(

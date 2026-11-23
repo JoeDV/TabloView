@@ -269,8 +269,9 @@ async def download_m3u_playlist(episode_id: str, request: Request):
     if not playlist_url:
         raise HTTPException(status_code=502, detail="No playlist_url received from Tablo")
 
-    # Create proxy session so client on any machine on LAN can play it
+    # Create proxy session so client on any machine on LAN can play it, and release the Tablo session when abandoned
     sess = transcode_manager.create_session(playlist_url)
+    sess.tablo_token = watch_data.get("token")
     base_host = str(request.base_url).rstrip("/")
     stream_link = f"{base_host}/api/hls/{sess.session_id}/playlist.m3u8"
 
@@ -379,7 +380,7 @@ async def bulk_delete_episodes(req: BulkDeleteRequest):
         except Exception as e:
             errors.append(f"Failed deleting {ep_id}: {e}")
 
-    updated_shows = [get_show_by_id(sid) for sid in affected_shows if get_show_by_id(sid)]
+    updated_shows = [s for sid in affected_shows if (s := get_show_by_id(sid))]
 
     return {
         "deleted_count": len(deleted),

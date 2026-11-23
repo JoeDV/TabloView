@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 WAIT_SECONDS = 8
 GONE_SECONDS = 25  # a screen that hasn't asked for this long has closed
 MAX_WAITING = 20  # commands kept for a screen between its requests
+MAX_SCREENS = 50  # cap in-memory screen entries so stale or rotating IDs can't grow unboundedly
 
 # What a phone may send: remote buttons, and the few things the TV view does from a value
 KEYS = {"up", "down", "left", "right", "ok", "back", "home", "playpause", "rewind", "forward", "chup", "chdown"}
@@ -61,10 +62,15 @@ def _forget_gone(now: float) -> None:
 
 def screen(screen_id: str, name: str, clock=time.monotonic) -> Screen:
     """This screen, now seen (added if new)."""
+    now = clock()
     s = screens.get(screen_id)
     if s is None:
+        _forget_gone(now)
+        if len(screens) >= MAX_SCREENS:
+            oldest = min(screens, key=lambda sid: screens[sid].seen)
+            del screens[oldest]
         s = screens[screen_id] = Screen(screen_id, name, clock)
-    s.name, s.seen = name or s.name, clock()
+    s.name, s.seen = name or s.name, now
     return s
 
 

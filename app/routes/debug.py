@@ -3,11 +3,12 @@
 import platform
 import time
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from typing import Dict, Any
 
 from ..config import APP_VERSION, IS_PACKAGED, IS_STORE
 from ..tablo_client import tablo_manager
+from .system import _only_this_pc
 
 router = APIRouter(prefix="/api/debug", tags=["debug"])
 
@@ -27,8 +28,9 @@ def _hide_tokens(text: str, *secrets: str) -> str:
 
 
 @router.get("/endpoints")
-async def probe_endpoints():
+async def probe_endpoints(request: Request):
     """Probe standard local and cloud endpoints for Tablo 4th Gen diagnosis."""
+    _only_this_pc(request)
     if not tablo_manager.is_authenticated:
         return {
             "authenticated": False,
