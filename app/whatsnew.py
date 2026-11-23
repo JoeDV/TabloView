@@ -13,6 +13,15 @@ from .settings import load_settings, save_settings
 
 # Newest first. Keep in step with packaging/release-notes.txt and the Store listing's "What's new".
 NOTES: Dict[str, List[str]] = {
+    "1.4.4": [
+        "Watching the same live channel on two devices (a TV and a PC, say) now uses one tuner instead of two: the second joins the first's stream, and the tuner is freed when the last one stops.",
+        "What did they say? W goes back 10 seconds with captions on for 15 seconds; on the TV, it's the ◀◀ 10 s + CC button.",
+        "Back to the last channel: B on the PC, or the button with the channel's name on the TV while watching live TV. Press it again to flip between two channels.",
+        "Open in VLC now works on other devices at home too, for live TV and recordings.",
+        "A live stream left behind (a TV app that crashed, a laptop closed mid-show) frees its tuner after about 3 minutes instead of 10.",
+        "Streams to Plex, Jellyfin, Roku and other players run at full speed, and exports slow down while they play, as they do for TabloView's own player.",
+        "Security and reliability fixes: requests to your Tablo's guide are checked first, two developer tools work only on the PC running TabloView, and the record of sign-ins is saved more safely.",
+    ],
     "1.4.3": [
         "Use your phone as the remote for TabloView on the TV: arrows, OK, Back, pause, skip and Skip break, channel up and down, and a search that tunes a channel or opens a show on the TV. Choose Use your phone in TV view's menu and scan the code, or see Settings → Desktop & network.",
         "Add TabloView, or the phone remote, to a phone's or tablet's home screen: it gets its own icon and opens full screen, like an app.",
