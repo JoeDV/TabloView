@@ -845,6 +845,30 @@ export const SUITES = {
     t.check('Playlist order sends an empty order', await b.waitFor(`JSON.stringify(${sent}) === '[[]]'`, 5000));
   },
 
+  // TV view: only one caption track shows. Something else turning on a second (hls.js, a second
+  // caption channel) drew two sets of captions over each other until CC was toggled (1.4.4 forum report)
+  async tvcaptions(b, t) {
+    await b.send('Page.navigate', { url: `${BASE}/tv#/` });
+    await b.waitFor(`typeof player === 'object' && !!document.querySelector('.shelf, .empty')`, 30000);
+    await b.ev(`(() => {
+      const v = player.video();
+      window.__en = v.addTextTrack('captions', 'English', 'en');
+      state.captions = true;
+      player.applyCaptions();
+      return true;
+    })()`);
+    t.check('TV captions: the English track shows', await b.waitFor(`__en.mode === 'showing'`, 3000));
+    // A second track that appeared earlier (hidden then), turned on later by something else
+    await b.ev(`(() => { window.__cc3 = player.video().addTextTrack('captions', 'Unknown CC', 'es'); return true; })()`);
+    await sleep(500);
+    await b.ev(`__cc3.mode = 'showing', true`);
+    t.check('TV captions: a second track turned on goes off again, the English one stays', await b.waitFor(`__cc3.mode !== 'showing' && __en.mode === 'showing'`, 3000),
+      await b.ev(`JSON.stringify([__en.mode, __cc3.mode])`));
+    await b.ev(`state.captions = false, player.applyCaptions(), true`);
+    await sleep(500);
+    t.check('TV captions: off means none show', await b.ev(`[...player.video().textTracks].every(tr => tr.mode !== 'showing')`));
+  },
+
   async seekhold(b, t) {
     const shows = (await api('/api/shows')).shows;
     const eps = (await api(`/api/shows/episodes?show_id=${encodeURIComponent(shows[0].id)}`)).episodes;

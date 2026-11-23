@@ -1124,6 +1124,20 @@ const player = {
     }
   },
 
+  // Only the chosen caption track may show. hls.js can turn on a track of its own (a second caption
+  // channel, or a stream's track made again): two showing drew two sets of captions over each other,
+  // until CC was turned off and on (a forum user, 1.4.4, after a pause). Put right as soon as it happens
+  keepOneTrack() {
+    const shown = captionTrack(this.video());
+    const heard = !(dual.on && dual.active === 'second');
+    const wrong = [...this.video().textTracks].some(t => (t.mode === 'showing') !== (state.captions && heard && t === shown));
+    if (!wrong) return;
+    const now = Date.now();
+    if (now - (this.fixedTracksAt || 0) < 300) return;  // (never a tug of war with hls.js)
+    this.fixedTracksAt = now;
+    this.applyCaptions();
+  },
+
   // Broadcast captions sit on the bottom rows: above the title and bar while they're up, low
   // down once they fade
   placeCaptions() {
@@ -2305,6 +2319,10 @@ function init() {
   });
   // A caption track appears once the stream's first captions arrive: show it if captions are on
   player.video().textTracks.addEventListener('addtrack', () => player.applyCaptions());
+  player.video().textTracks.addEventListener('change', () => player.keepOneTrack());
+  // Rows stacked again after a pause, play or jump too, not only when the captions change: one that
+  // arrived while paused could sit on top of another
+  for (const ev of ['pause', 'play', 'seeked']) player.video().addEventListener(ev, () => { player.keepOneTrack(); player.placeCaptions(); });
   dual.video().textTracks.addEventListener('addtrack', () => dual.apply());
   window.addEventListener('hashchange', route);
   window.addEventListener('resize', () => {
