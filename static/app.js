@@ -3834,7 +3834,7 @@ PAGES.help = async (r, token) => {
       <div class="list"><div class="loading-line"><span class="spinner"></span>Loading…</div></div></div>`);
     let html;
     try {
-      const res = await fetch('/static/help.html?v=41');
+      const res = await fetch('/static/help.html?v=42');
       if (!res.ok) throw new Error(res.status);
       html = await res.text();
     } catch (err) { if (!stale(token)) view().querySelector('.list').outerHTML = errorState(err); return; }
@@ -4715,6 +4715,17 @@ function captionTrack(video) {
   return ts.find(t => t.language === 'en') || ts[0] || null;
 }
 
+// Playback ended: empty every caption track and switch it off. The video is used again for the next
+// show, and its old tracks (which can't be removed) kept their captions: a forum user saw the last
+// show's BBC News lines drawn among the new show's (1.4.4)
+function emptyTracks(video) {
+  for (const t of video.textTracks) {
+    if (t.mode === 'disabled') t.mode = 'hidden';  // (a switched-off track's cues can't be reached)
+    for (const c of [...(t.cues || [])]) { try { t.removeCue(c); } catch { /* already gone */ } }
+    t.mode = 'disabled';
+  }
+}
+
 // A "break" this long is more likely the show taken for one (a forum user: almost 10 minutes of
 // Survivor): it's marked, but not skipped on its own. Real breaks rarely run past 5 minutes
 const LONG_BREAK = 7 * 60;
@@ -5525,7 +5536,7 @@ const player = {
     // Each channel in split view has its own captions setting (the CC on its picture); the second
     // is on unless turned off, so a muted game can be followed. A forum user wanted them off: they
     // covered an NFL game's score
-    return tracks.map(([t, pane]) => [t, shown.includes(t) && (pane === 'main' ? state.captions : dual.on && state.captions2) ? 'showing' : 'hidden']);
+    return tracks.map(([t, pane]) => [t, !shown.includes(t) ? 'disabled' : (pane === 'main' ? state.captions : dual.on && state.captions2) ? 'showing' : 'hidden']);
   },
 
   // Only the chosen tracks may show. hls.js can turn one on by itself later (a second caption channel,
@@ -5761,6 +5772,7 @@ const player = {
     if (s.timer) { clearInterval(s.timer); s.timer = null; }
     if (s.handler) { this.video().removeEventListener('progress', s.handler); s.handler = null; }
     if (s.hls) { s.hls.destroy(); s.hls = null; }
+    emptyTracks(this.video());
   },
 
   // Tell the backend to kill the FFmpeg transcode (and free the tuner for live TV)
@@ -6211,6 +6223,7 @@ const dual = {
   teardown() {
     if (this.hls) { this.hls.destroy(); this.hls = null; }
     const v = $('#video2');
+    emptyTracks(v);
     v.pause();
     v.removeAttribute('src');
     v.load();

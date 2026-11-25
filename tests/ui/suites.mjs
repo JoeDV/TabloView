@@ -864,6 +864,19 @@ export const SUITES = {
     await b.ev(`__cc3.mode = 'showing', true`);
     t.check('TV captions: a second track turned on goes off again, the English one stays', await b.waitFor(`__cc3.mode !== 'showing' && __en.mode === 'showing'`, 3000),
       await b.ev(`JSON.stringify([__en.mode, __cc3.mode])`));
+    // The next show: the last one's captions are emptied and its track switched off (a forum user saw
+    // the previous show's BBC News lines among the new show's, 1.4.4)
+    await b.ev(`(() => {
+      state.captions = true; player.applyCaptions();
+      __en.addCue(new VTTCue(0, 9999, 'OLD SHOW'));
+      player.teardown();
+      window.__next = player.video().addTextTrack('captions', 'English', 'en');
+      player.applyCaptions();
+      return true;
+    })()`);
+    await sleep(500);
+    t.check('TV captions: the last show\'s captions are gone at the next', await b.ev(`__en.mode === 'disabled' && __next.mode === 'showing' && (__en.mode = 'hidden', __en.cues.length === 0)`),
+      await b.ev(`JSON.stringify([__en.mode, __en.cues && __en.cues.length, __next.mode])`));
     await b.ev(`state.captions = false, player.applyCaptions(), true`);
     await sleep(500);
     t.check('TV captions: off means none show', await b.ev(`[...player.video().textTracks].every(tr => tr.mode !== 'showing')`));
@@ -888,6 +901,19 @@ export const SUITES = {
     await b.ev(`__cc3.mode = 'showing', true`);
     t.check('PC captions: a second track turned on later goes off again', await b.waitFor(`__cc3.mode !== 'showing' && __en.mode === 'showing'`, 3000),
       await b.ev(`JSON.stringify([__en.mode, __cc3.mode])`));
+    // The next show: the last one's captions are emptied and its track switched off (a forum user saw
+    // the previous show's BBC News lines among the new show's, 1.4.4)
+    await b.ev(`(() => {
+      state.captions = true; player.applyCaptions();
+      __en.addCue(new VTTCue(0, 9999, 'OLD SHOW'));
+      player.teardown();
+      window.__next = player.video().addTextTrack('captions', 'English', 'en');
+      player.applyCaptions();
+      return true;
+    })()`);
+    await sleep(500);
+    t.check('PC captions: the last show\'s captions are gone at the next', await b.ev(`__en.mode === 'disabled' && __next.mode === 'showing' && (__en.mode = 'hidden', __en.cues.length === 0)`),
+      await b.ev(`JSON.stringify([__en.mode, __en.cues && __en.cues.length, __next.mode])`));
     await b.ev(`state.captions = false, player.applyCaptions(), true`);
     await sleep(500);
     t.check('PC captions: off means none show', await b.ev(`[...player.video().textTracks].every(tr => tr.mode !== 'showing')`));

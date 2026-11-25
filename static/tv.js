@@ -903,6 +903,17 @@ function captionTrack(video) {
   return ts.find(t => t.language === 'en') || ts[0] || null;
 }
 
+// Playback ended: empty every caption track and switch it off. The video is used again for the next
+// show, and its old tracks (which can't be removed) kept their captions: a forum user saw the last
+// show's BBC News lines drawn among the new show's (1.4.4)
+function emptyTracks(video) {
+  for (const t of video.textTracks) {
+    if (t.mode === 'disabled') t.mode = 'hidden';  // (a switched-off track's cues can't be reached)
+    for (const c of [...(t.cues || [])]) { try { t.removeCue(c); } catch { /* already gone */ } }
+    t.mode = 'disabled';
+  }
+}
+
 // A "break" this long is more likely the show taken for one (a forum user: almost 10 minutes of
 // Survivor): it's marked, but not skipped on its own. Real breaks rarely run past 5 minutes
 const LONG_BREAK = 7 * 60;
@@ -1117,7 +1128,7 @@ const player = {
     const shown = captionTrack(this.video());
     const heard = !(dual.on && dual.active === 'second');  // two channels: captions on the one you hear
     for (const t of this.video().textTracks) {
-      t.mode = state.captions && heard && t === shown ? 'showing' : 'hidden';
+      t.mode = t !== shown ? 'disabled' : state.captions && heard ? 'showing' : 'hidden';
       if (t.__raised) continue;
       t.__raised = true;
       t.addEventListener('cuechange', () => this.placeCaptions());
@@ -1598,6 +1609,7 @@ const player = {
     $('#player').classList.remove('started');
     if (this.hls) { this.hls.destroy(); this.hls = null; }
     const v = this.video();
+    emptyTracks(v);
     v.pause();
     v.removeAttribute('src');
     v.load();
@@ -1815,6 +1827,7 @@ const dual = {
     clearInterval(this.watchTimer);
     if (this.hls) { this.hls.destroy(); this.hls = null; }
     const v = this.video();
+    emptyTracks(v);
     v.onplaying = null;
     v.pause();
     v.removeAttribute('src');
@@ -1881,7 +1894,7 @@ const dual = {
     second.muted = !(this.on && this.active === 'second');
     player.applyCaptions();
     const shown = captionTrack(second);
-    for (const t of second.textTracks) t.mode = this.on && this.active === 'second' && state.captions && t === shown ? 'showing' : 'hidden';
+    for (const t of second.textTracks) t.mode = t !== shown ? 'disabled' : this.on && this.active === 'second' && state.captions ? 'showing' : 'hidden';
     $('#player').classList.toggle('hear-second', this.on && this.active === 'second');
     if (this.on) {
       const label = (c, on) => `${on ? '🔊 ' : ''}${esc(c ? chLabel(c) : '')}`;
