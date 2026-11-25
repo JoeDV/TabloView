@@ -18,13 +18,22 @@ class ExportTests(unittest.TestCase):
         self.assertIn("bwdif", cmd[cmd.index("-vf") + 1])
         self.assertEqual(cmd[-1], "out.mp4")
 
-    def test_stereo_unless_the_recording_has_surround(self):
-        cmd = TranscodeManager.export_cmd("http://tablo/p.m3u8", Path("o.part.ts"), None)
+    def test_original_copies_the_sound_too(self):
+        # The broadcast's AC-3 as recorded (a forum user: the Tablo Desktop Player's download kept it)
+        for surround in (False, True):
+            cmd = TranscodeManager.export_cmd("http://tablo/p.m3u8", Path("o.part.ts"), None, surround=surround)
+            self.assertEqual(cmd[cmd.index("-c:a") + 1], "copy")
+            self.assertNotIn("-af", cmd)
+            self.assertNotIn("-ac", cmd)
+
+    def test_converted_stereo_unless_the_recording_has_surround(self):
+        enc = encoders.for_export(encoders.cpu_fallback())
+        cmd = TranscodeManager.export_cmd("http://tablo/p.m3u8", Path("o.part.ts"), enc)
         self.assertEqual(cmd[cmd.index("-ac") + 1], "2")
         self.assertIn("clev=1.0", cmd[cmd.index("-af") + 1])  # dialogue kept up in the mix-down
 
-    def test_surround_kept_as_51_throughout(self):
-        cmd = TranscodeManager.export_cmd("http://tablo/p.m3u8", Path("o.part.ts"), None, surround=True)
+    def test_converted_surround_kept_as_51_throughout(self):
+        cmd = TranscodeManager.export_cmd("http://tablo/p.m3u8", Path("o.part.ts"), encoders.for_export(encoders.cpu_fallback()), surround=True)
         self.assertEqual(cmd[cmd.index("-ac") + 1], "6")
         self.assertIn("ochl=5.1", cmd[cmd.index("-af") + 1])  # a stereo stretch stays a 5.1 file
         self.assertEqual(cmd[cmd.index("-c:a") + 1], "aac")

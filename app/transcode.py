@@ -950,9 +950,12 @@ class TranscodeManager:
         """enc None: copy the broadcast video as is (largest, exact). Otherwise convert to H.264
         (deinterlaced, like playback), which is usually much smaller.
 
-        surround: the recording has 5.1 sound (export_surround), kept as AAC 5.1 for the whole file; any
-        stereo part (a station can switch) goes to the front left and right. Otherwise stereo, mixed as
-        for playback.
+        Sound: with the original video, the broadcast's own (AC-3, Dolby Digital) copied as it is: a
+        forum user compared ours (AAC 5.1) with the Tablo Desktop Player's download (the AC-3 as
+        recorded), and anything that plays the MPEG-2 video plays AC-3. Converted (enc), AAC for phones
+        and browsers: surround (the recording has 5.1, export_surround) kept as AAC 5.1 for the whole
+        file, any stereo part (a station can switch) going to the front left and right; otherwise
+        stereo, mixed as for playback.
 
         Written as MPEG-TS first (part_path), then re-packaged as the MP4 (remux_cmd): an MP4 is only
         playable once FFmpeg closes it, and FFmpeg can't when the Tablo stops sending partway (an
@@ -965,7 +968,7 @@ class TranscodeManager:
         deint = "bwdif=mode=send_frame:deint=interlaced"
         mix = "aresample=async=1:ochl=5.1(side)" if surround else "aresample=async=1:ochl=stereo:clev=1.0:slev=0.6"
         if enc is None:
-            video, audio_filter = ["-c:v", "copy"], ["-af", mix]
+            video, audio_filter = ["-c:v", "copy"], []
         elif cuts:
             pieces = TranscodeManager.kept_pieces(cuts)
             n = len(pieces)
@@ -995,8 +998,9 @@ class TranscodeManager:
             "-i", playlist_url,
             *video,
             *audio_filter,
-            *(["-c:a", "aac", "-b:a", "384k", "-ac", "6"] if surround else ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]),
-            "-ar", "48000",
+            *(["-c:a", "copy"] if enc is None else
+              ["-c:a", "aac", "-b:a", "384k", "-ac", "6", "-ar", "48000"] if surround else
+              ["-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000"]),
             "-f", "mpegts",
             str(part_path)
         ]
@@ -1241,7 +1245,7 @@ class TranscodeManager:
                                  episode: Optional[Dict[str, Any]] = None) -> bool:
         part_path = self.export_part_path(job_id, output_path)  # becomes the MP4 when done
         from . import export_pace
-        surround = await self.export_surround(playlist_url)
+        surround = await self.export_surround(playlist_url) if enc else False  # (the original: sound copied)
         relay = export_pace.open_relay(playlist_url)  # TabloView paces it; or directly at EXPORT_READRATE
         # Commercial breaks to leave out: while converting (enc), or from the copy once it's saved (below)
         cut_now = self.export_breaks(episode) if enc else []
@@ -1253,8 +1257,8 @@ class TranscodeManager:
             # FFmpeg's time= counts what's written: the recording without its breaks
             left_out = sum(max(0.0, min(b["end"], expected_duration or b["end"]) - b["start"]) for b in cut_now)
             expected_duration = max(60, int(expected_duration - left_out)) if expected_duration else 0
-        print(f"[ExportWorker] Starting export {job_id} -> {output_path.name} "
-              f"({enc['label'] if enc else 'original video'}, {'5.1' if surround else 'stereo'} sound"
+        what = f"{enc['label']}, {'5.1' if surround else 'stereo'} sound" if enc else "original video and sound"
+        print(f"[ExportWorker] Starting export {job_id} -> {output_path.name} ({what}"
               f"{f', leaving out {len(cut_now)} commercial breaks' if cut_now else ''})")
         save_export_job({"job_id": job_id, "status": "downloading", "progress": 0.0, "error": None})
         # Send FFmpeg's chatty stderr to a log file instead of an unread pipe,
