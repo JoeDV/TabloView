@@ -516,19 +516,27 @@ async function loadLive() {
   return state.live;
 }
 
+// The Guide on a later page: that page's listings (see guidePage)
+const guideLater = () => (liveView() === 'guide' && state.guidePage > 0 && state.guideLater) || null;
+
 function liveChannels() {
+  const later = guideLater();
+  const chans = (later ? later.channels : state.live && state.live.channels) || [];
   if (state.liveTab === 'extra' && state.tvGroup) {
     const g = state.tvGroup;
-    if (g.rows) return g.rows.filter(c => !c.hidden || c.group_hidden);
-    const extra = ((state.live && state.live.channels) || []).filter(c => c.kind === 'extra' && !c.hidden);
+    if (g.rows) return ((later && later.rows) || g.rows).filter(c => !c.hidden || c.group_hidden);
+    const extra = chans.filter(c => c.kind === 'extra' && !c.hidden);
     return g.name === STARRED ? extra.filter(c => c.favorite) : g.name === ALL ? extra : extra.filter(c => c.network === g.name);
   }
-  return ((state.live && state.live.channels) || []).filter(c => !c.hidden && c.kind === (state.liveTab === 'fast' ? 'fast' : state.liveTab === 'extra' ? 'extra' : 'ota'));
+  return chans.filter(c => !c.hidden && c.kind === (state.liveTab === 'fast' ? 'fast' : state.liveTab === 'extra' ? 'extra' : 'ota'));
 }
 
 // Every channel the TV knows of: the guide's, and those of a big playlist's group being looked at
+// (a later Guide page's first: its listings are the ones on screen)
 function allChannels() {
-  return [...((state.live && state.live.channels) || []), ...((state.tvGroup && state.tvGroup.rows) || [])];
+  const later = guideLater();
+  return [...((later && later.channels) || []), ...((later && later.rows) || []),
+    ...((state.live && state.live.channels) || []), ...((state.tvGroup && state.tvGroup.rows) || [])];
 }
 
 // More (a playlist): its groups first, as on the computer. A big playlist's (over 3,000 channels)
@@ -573,11 +581,47 @@ function groupList(groups) {
 // Live TV as a list (what's on now, and next) or as the Guide (the next GUIDE_HOURS, a row per channel)
 const GUIDE_HOURS = 6;
 const GUIDE_SLOT = 15;  // vw per half hour
+const GUIDE_PAGES = 14 * 24 / GUIDE_HOURS;  // about two weeks ahead, as far as guides go
+
+// Where a page of the Guide starts: 0 is this half hour, then GUIDE_HOURS at a time
+const guideStart = (page = state.guidePage || 0) => Math.floor(Date.now() / 1800000) * 1800000 + page * GUIDE_HOURS * 3600000;
+
+// The Guide went no further than its first 6 hours (a forum user, 2026-11-27): ▶ past a row's last
+// listing loads the next page, ◀ past its first comes back. Each page is drawn on its own, so a long
+// look ahead costs a Fire Stick no more than the first page. Back on the same channel's row
+async function guidePage(dir, chId) {
+  const page = (state.guidePage || 0) + dir;
+  if (page < 0 || page >= GUIDE_PAGES) return;
+  try {
+    if (page > 0) {
+      const iso = encodeURIComponent(new Date(guideStart(page)).toISOString());
+      const g = state.tvGroup;
+      const [data, rows] = await Promise.all([
+        api(`/api/live/epg?hours=${GUIDE_HOURS}&start_iso=${iso}`),
+        g && g.rows ? api(`/api/live/extra/rows?hours=${GUIDE_HOURS}&start_iso=${iso}&limit=500&group=${encodeURIComponent(g.name)}`) : null,
+      ]);
+      state.guideLater = { start: guideStart(page), channels: data.channels || [], rows: rows && rows.rows };
+    } else state.guideLater = null;
+  } catch (err) {
+    await choose("Couldn't load the Guide", err.message, [{ label: 'OK', value: 1 }]);
+    return;
+  }
+  state.guidePage = page;
+  await showLive();
+  const row = [...document.querySelectorAll('#epg .g-row')].find(r => r.dataset.ch === chId);
+  const cells = row ? [...row.querySelectorAll('.g-cell')] : [];
+  const target = dir > 0 ? cells[0] : cells[cells.length - 1];
+  if (target) { state.guideAt = Number(target.dataset.start); focusEl(target); }
+}
+
+// Back to the Guide's first page (another tab or group, or a page that's gone by)
+function guideFromNow() { state.guidePage = 0; state.guideLater = null; }
 const liveView = () => (stored('tv_live_view', 'list') === 'guide' ? 'guide' : 'list');
 
 async function showLive() {
   loading('#/live');
   let groups = null;
+  if (state.guideLater && state.guideLater.start !== guideStart()) guideFromNow();  // (the page's hours have moved on)
   try {
     await loadLive();
     // More: the playlist's groups to pick from (straight to the channels when it has just one)
@@ -621,10 +665,13 @@ function liveList() {
 // The Guide: channels down the side, the next hours across, starting at this half hour. Every row has
 // something to land on (a channel without listings is one long "No listings" that tunes it)
 function guideGrid() {
-  const now = Date.now();
-  const start = Math.floor(now / 1800000) * 1800000, end = start + GUIDE_HOURS * 3600000;
+  const now = Date.now(), page = state.guidePage || 0;
+  const start = guideStart(page), end = start + GUIDE_HOURS * 3600000;
   const x = t => Number((((t - start) / 1800000) * GUIDE_SLOT).toFixed(2));
-  const times = Array.from({ length: GUIDE_HOURS * 2 }, (_, i) => `<div class="g-time" style="left:${x(start + i * 1800000)}vw">${esc(fmt.time(start + i * 1800000))}</div>`).join('');
+  const day = t => { const l = fmt.dayLabel(t); return l === 'Today' || l === 'Tomorrow' ? l : fmt.day(t); };
+  const midnight = t => { const d = new Date(t); return !d.getHours() && !d.getMinutes(); };
+  const times = Array.from({ length: GUIDE_HOURS * 2 }, (_, i) => start + i * 1800000)
+    .map(t => `<div class="g-time ${midnight(t) && t !== start ? 'g-day' : ''}" style="left:${x(t)}vw">${esc(midnight(t) && t !== start ? day(t) : fmt.time(t))}</div>`).join('');
   const rows = liveChannels().map(c => {
     const cells = (c.airings || []).map((a, i) => {
       const aStart = new Date(a.air_datetime).getTime(), aEnd = aStart + (a.duration || 0) * 1000;
@@ -636,12 +683,12 @@ function guideGrid() {
         <span class="g-title">${esc(a.title)}${mark}</span><span class="g-sub">${esc(fmt.time(aStart))} – ${esc(fmt.time(aEnd))}</span></button>`;
     }).join('') || `<button class="g-cell f" style="left:0;width:${x(end)}vw" data-act="tune" data-id="${esc(c.channel_id)}" data-start="${start}" data-end="${end}"
         data-key="g-${esc(c.channel_id)}-none"><span class="g-title dim">No listings</span></button>`;
-    return `<div class="g-row"><div class="g-ch"><span class="ch-num">${esc(chNum(c))}</span>
+    return `<div class="g-row" data-ch="${esc(c.channel_id)}"><div class="g-ch"><span class="ch-num">${esc(chNum(c))}</span>
         <span class="g-logo">${c.logo_url ? `<img src="${esc(c.logo_url)}" alt="">` : `<b>${esc(c.call_sign || c.name)}</b>`}</span></div>
       <div class="g-cells" style="width:${x(end)}vw">${cells}</div></div>`;
   }).join('');
-  return `<div class="epg" id="epg"><div class="g-head"><div class="g-ch"></div><div class="g-cells" style="width:${x(end)}vw">${times}
-      <div class="g-now" style="left:${x(now)}vw"></div></div></div>${rows}</div>`;
+  return `<div class="epg" id="epg"><div class="g-head"><div class="g-ch g-when">${page ? '◀ ' : ''}${esc(day(start))}</div><div class="g-cells" style="width:${x(end)}vw">${times}
+      ${page ? '' : `<div class="g-now" style="left:${x(now)}vw"></div>`}</div></div>${rows}</div>`;
 }
 
 // Moving in the Guide, row by row (a streaming lineup has thousands of listings; measuring them all
@@ -651,7 +698,11 @@ function guideMove(cur, dir) {
   const start = Number(cur.dataset.start), end = Number(cur.dataset.end);
   if (dir === 'left' || dir === 'right') {
     const next = dir === 'right' ? cur.nextElementSibling : cur.previousElementSibling;
-    if (next) { state.guideAt = Number(next.dataset.start); focusEl(next); } else if (dir === 'left') focusRail();
+    const ch = cur.closest('.g-row').dataset.ch;
+    if (next) { state.guideAt = Number(next.dataset.start); focusEl(next); }
+    else if (dir === 'right') guidePage(1, ch);
+    else if (state.guidePage > 0) guidePage(-1, ch);
+    else focusRail();
     return true;
   }
   // The time being looked at: kept while going up and down, so a long show doesn't pull it along
@@ -2127,17 +2178,19 @@ function onClick(e) {
   else if (act === 'live-tab') {
     state.liveTab = el.dataset.tab; state.focus['#/live'] = el.dataset.key;
     state.tvGroup = null; state.tvGroups = null; state.tvGroupsShown = false;
+    guideFromNow();
     showLive();
   }
   else if (act === 'tv-group') {
     const key = el.dataset.key;
-    pickGroup(el.dataset.group).then(() => { state.tvGroupFocus = key; state.focus['#/live'] = null; showLive(); },
+    pickGroup(el.dataset.group).then(() => { state.tvGroupFocus = key; state.focus['#/live'] = null; guideFromNow(); showLive(); },
       err => failed(err, '#/live'));
   }
-  else if (act === 'tv-groups') { state.tvGroup = null; state.focus['#/live'] = state.tvGroupFocus || null; showLive(); }
+  else if (act === 'tv-groups') { state.tvGroup = null; state.focus['#/live'] = state.tvGroupFocus || null; guideFromNow(); showLive(); }
   else if (act === 'live-view') {
     try { localStorage.setItem('tv_live_view', el.dataset.view); } catch { /* this visit only */ }
     state.focus['#/live'] = el.dataset.key;
+    guideFromNow();
     showLive();
   }
   else if (act === 'g-air') guideAiring(el.dataset.ch, Number(el.dataset.i));

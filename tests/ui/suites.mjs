@@ -845,6 +845,39 @@ export const SUITES = {
     t.check('Playlist order sends an empty order', await b.waitFor(`JSON.stringify(${sent}) === '[[]]'`, 5000));
   },
 
+  // TV view's Guide, 6 hours at a time: past a row's last listing, the next 6 hours on the same
+  // channel; back past the first; the first page's first, to the menu (a forum user: it stopped at 6 hours)
+  async tvguidepages(b, t) {
+    await b.send('Page.navigate', { url: `${BASE}/tv#/` });
+    await b.waitFor(`typeof showLive === 'function'`, 30000);
+    await b.ev(`localStorage.setItem('tv_live_view', 'guide'), state.liveTab = 'ota', location.hash = '#/live', true`);
+    if (!await b.waitFor(`!!document.querySelector('#epg .g-row .g-cell')`, 60000)) return t.skip('TV Guide pages', 'no antenna channels in the Guide');
+    await sleep(800);
+    const key = k => b.ev(`onKey({ key: ${JSON.stringify(k)}, keyCode: 0, target: document.activeElement, preventDefault() {} }), true`);
+    const ch = await b.ev(`(() => { const row = document.querySelectorAll('#epg .g-row')[1] || document.querySelector('#epg .g-row');
+      const cells = row.querySelectorAll('.g-cell'); focusEl(cells[cells.length - 1]); return row.dataset.ch; })()`);
+    await key('ArrowRight');
+    t.check('TV Guide: ▶ past the last listing loads the next 6 hours', await b.waitFor(`state.guidePage === 1 && !!document.querySelector('#epg .g-cell')`, 30000));
+    t.check('TV Guide: the next page starts where the first ended', await b.ev(`[...document.querySelectorAll('#epg .g-cell')].every(c => Number(c.dataset.start) >= guideStart(1))`));
+    t.check('TV Guide: on the same channel, at its first listing', await b.ev(`(() => { const a = document.activeElement, row = a.closest('.g-row');
+      return !!row && row.dataset.ch === ${JSON.stringify(ch)} && a === row.querySelector('.g-cell'); })()`),
+      await b.ev(`(document.activeElement.closest('.g-row') || {}).dataset?.ch + ' ' + document.activeElement.className`));
+    t.check('TV Guide: the day shows in the corner, no now line', await b.ev(`/^◀ /.test($('#epg .g-when').textContent) && !document.querySelector('#epg .g-now')`),
+      await b.ev(`$('#epg .g-when').textContent`));
+    // A later show on this page, as the computer's Guide sees it (the TV's listings come from the same place)
+    t.check('TV Guide: a later page\'s listing is found for OK', await b.ev(`(() => { const c = document.querySelector('#epg .g-cell[data-act="g-air"]');
+      if (!c) return true; return !!(allChannels().find(x => x.channel_id === c.dataset.ch) || {}).airings?.[Number(c.dataset.i)]; })()`));
+    await key('ArrowLeft');
+    t.check('TV Guide: ◀ past the first listing comes back a page, to the row\'s last', await b.waitFor(`state.guidePage === 0 && document.activeElement.closest('.g-row')?.dataset.ch === ${JSON.stringify(ch)}
+      && document.activeElement === [...document.activeElement.closest('.g-row').querySelectorAll('.g-cell')].pop()`, 30000));
+    t.check('TV Guide: the first page has its now line again', await b.ev(`!!document.querySelector('#epg .g-now')`));
+    await b.ev(`focusEl(document.querySelector('#epg .g-row .g-cell')), true`);
+    await key('ArrowLeft');
+    await sleep(300);
+    t.check('TV Guide: ◀ from the first page goes to the menu', await b.ev(`!!document.activeElement.closest('.rail') && state.guidePage === 0`));
+    await b.ev(`localStorage.setItem('tv_live_view', 'list'), true`);
+  },
+
   // TV view: only one caption track shows. Something else turning on a second (hls.js, a second
   // caption channel) drew two sets of captions over each other until CC was toggled (1.4.4 forum report)
   async tvcaptions(b, t) {

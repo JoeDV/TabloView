@@ -148,6 +148,8 @@ h2 { font-size: 1.7vw; margin: 2.4vw 0 1.2vw; color: var(--dim); font-weight: 60
 .g-logo img { max-width: 5.6vw; max-height: 3vw; object-fit: contain; }
 .g-cells { position: relative; flex-shrink: 0; }
 .g-time { position: absolute; top: 0.7vw; padding-left: 0.5vw; border-left: 0.1vw solid var(--surface-2); color: var(--dim); font-size: 1.1vw; }
+.g-time.g-day { color: var(--text); font-weight: 600; }
+.g-head .g-when { align-items: center; padding-left: 0.5vw; color: var(--text); font-size: 1.1vw; font-weight: 600; }
 .g-now { position: absolute; top: 0; bottom: 0; width: 0.25vw; background: var(--rec); }
 .g-cell { position: absolute; top: 0.3vw; bottom: 0.3vw; padding: 0.6vw 0.8vw; border-radius: 0.5vw; background: var(--surface);
   border-right: 0.25vw solid var(--bg); overflow: hidden; overflow: clip; display: flex; flex-direction: column; justify-content: center; }
