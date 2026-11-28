@@ -119,7 +119,10 @@ class TextGZip:
         self.gzip = GZipMiddleware(app, minimum_size=1024)
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and not scope["path"].startswith(self.SKIP)                 and not scope["path"].endswith((".ts", ".m3u8", ".jpg", ".png")):
+        path = scope.get("path", "")
+        # (/app: the TV app, already a zip; Downloader saved what it was sent)
+        if (scope["type"] == "http" and not path.startswith(self.SKIP)
+                and not path.endswith((".ts", ".m3u8", ".jpg", ".png")) and path != "/app"):
             await self.gzip(scope, receive, send)
         else:
             await self.app(scope, receive, send)
@@ -406,7 +409,9 @@ async def serve_remote():
 TV_APP_LATEST = "https://github.com/JoeDV/TabloView/releases/latest/download/TabloView-TV.apk"
 
 
-@app.get("/app")
+# HEAD too: Downloader asks that first (the file's type and size), and a refusal (405) sent it back to
+# the address it was given, without a word (a forum user, Fire TV 4K Max, 2026-11-27; GitHub's link worked)
+@app.api_route("/app", methods=["GET", "HEAD"])
 async def tv_app():
     for apk in (RESOURCE_DIR / "tvapp" / "TabloView-TV.apk", BASE_DIR / "dist" / "TabloView-TV.apk"):
         if apk.is_file():
